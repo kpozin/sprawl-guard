@@ -1,0 +1,40 @@
+---
+title: Sprawl Guard
+description: Keep source trees navigable with code-line and directory fan-out limits.
+template: splash
+hero:
+  image:
+    file: ../../assets/sprawl-guard-shield-clamp.svg
+    alt: ""
+  tagline: Enforce code-line and directory fan-out limits. Record existing violations so they can shrink but not grow.
+  actions:
+    - text: Get started
+      link: ./quick-start/
+      icon: right-arrow
+      variant: primary
+    - text: Adopt Sprawl Guard
+      link: ./adopt-existing-repository/
+      icon: right-arrow
+    - text: Browse reference
+      link: ./reference/cli-and-output/
+      icon: right-arrow
+---
+
+Keep coding agents from adding oversized files and crowded directories.
+
+Sprawl Guard supports every language bundled with
+[Tokei](https://github.com/xampprocky/tokei), including Rust, TypeScript, JavaScript, Python, Go,
+Java, Kotlin, Swift, C, and C++. Run `sprawl-guard languages` for the complete list and default file
+globs. It counts code lines; comments and blank lines do not count.
+
+## Sprawl Guard or ESLint?
+
+If a JavaScript or TypeScript linter's file-length rule is enough, use the
+`max-lines` rule in [ESLint](https://eslint.org/docs/latest/rules/max-lines) or
+[Oxlint](https://oxc.rs/docs/guide/usage/linter/rules/eslint/max-lines). Choose Sprawl Guard when
+you also need directory fan-out limits, separate limits for production and test code, existing
+violations that can shrink but not grow, or support for polyglot repositories.
+
+Browse the [source](https://github.com/kpozin/sprawl-guard) and
+[releases](https://github.com/kpozin/sprawl-guard/releases), or
+[open an issue](https://github.com/kpozin/sprawl-guard/issues).

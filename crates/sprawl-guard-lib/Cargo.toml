@@ -1,0 +1,30 @@
+[package]
+name = "sprawl-guard-lib"
+version = "0.1.0"
+edition = "2024"
+description = "Implementation library for the sprawl-guard CLI."
+documentation = "https://docs.rs/sprawl-guard-lib"
+homepage = "https://github.com/kpozin/sprawl-guard"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/kpozin/sprawl-guard"
+keywords = ["lint", "repository", "architecture", "tooling"]
+categories = ["development-tools"]
+exclude = ["BUILD.bazel"]
+
+[dependencies]
+globset.workspace = true
+ignore.workspace = true
+nutype = { workspace = true, features = ["serde"] }
+proc-macro2.workspace = true
+rayon.workspace = true
+serde = { workspace = true, features = ["derive"] }
+syn.workspace = true
+thiserror.workspace = true
+tokei.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true

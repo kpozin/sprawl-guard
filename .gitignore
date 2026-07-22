@@ -1,0 +1,16 @@
+/node_modules/
+/npm/.stage/
+/npm/node_modules/
+/npm/.stage/
+/npm/.stage.tmp-*/
+/target/
+/release-artifact-archives/
+/release-artifacts/
+/downloaded-release-artifacts/
+/npm-publication-candidate/
+/npm/sprawl-guard/dist/
+/npm/sprawl-guard/node_modules/
+/npm/packages/*/node_modules/
+site/node_modules/
+site/dist/
+site/.astro/

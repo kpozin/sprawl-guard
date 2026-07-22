@@ -1,0 +1,30 @@
+[package]
+name = "sprawl-guard"
+version = "0.1.0"
+edition = "2024"
+description = "Repository sprawl checker CLI."
+documentation = "https://docs.rs/sprawl-guard"
+homepage = "https://github.com/kpozin/sprawl-guard"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/kpozin/sprawl-guard"
+keywords = ["lint", "repository", "architecture", "ratchet"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["BUILD.bazel"]
+
+[dependencies]
+askama.workspace = true
+clap = { workspace = true, features = ["derive"] }
+indoc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sprawl-guard-lib = { version = "=0.1.0", path = "../sprawl-guard-lib" }
+thiserror.workspace = true
+toml.workspace = true
+
+[dev-dependencies]
+assert_fs.workspace = true
+
+[[test]]
+name = "cli"
+path = "tests/cli/mod.rs"

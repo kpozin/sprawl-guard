@@ -1,0 +1,31 @@
+name: Packaging problem
+description: Report an install or release artifact problem.
+title: "[Packaging]: "
+labels:
+  - packaging
+body:
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Install surface
+      options:
+        - cargo install
+        - npm wrapper
+        - native npm package
+        - WASM fallback package
+        - GitHub Release artifact
+    validations:
+      required: true
+  - type: textarea
+    id: failure
+    attributes:
+      label: Failure details
+      description: Include the failing command, logs, and platform details.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: sprawl-guard version
+    validations:
+      required: true

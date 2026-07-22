@@ -1,0 +1,454 @@
+{
+  "schema_version": 2,
+  "commands": [
+    {
+      "path": [
+        "sprawl-guard"
+      ],
+      "usage": "Usage: sprawl-guard [OPTIONS] <COMMAND>",
+      "arguments": [
+        {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Config file path. Relative paths are resolved under `--root`",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "color",
+          "syntax": "--color <COLOR>",
+          "help": "Color output mode",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": [
+            {
+              "name": "auto",
+              "help": "Detect whether color should be emitted"
+            },
+            {
+              "name": "always",
+              "help": "Always emit color"
+            },
+            {
+              "name": "never",
+              "help": "Never emit color"
+            }
+          ]
+        },
+        {
+          "id": "quiet",
+          "syntax": "--quiet",
+          "help": "Suppress non-essential output",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "version",
+          "syntax": "-V, --version",
+          "help": "Print version",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "init"
+      ],
+      "usage": "Usage: sprawl-guard init [OPTIONS]",
+      "arguments": [
+        {
+          "id": "languages",
+          "syntax": "--languages <LANGUAGES>",
+          "help": "Language IDs to enable in the generated config",
+          "conflicts_with": [
+            "--all-languages"
+          ],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "all_languages",
+          "syntax": "--all-languages",
+          "help": "Enable every supported language in the generated config",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "dry_run",
+          "syntax": "--dry-run",
+          "help": "Print planned config and advisory output without creating files",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "languages"
+      ],
+      "usage": "Usage: sprawl-guard languages [OPTIONS]",
+      "arguments": [
+        {
+          "id": "format",
+          "syntax": "--format <FORMAT>",
+          "help": "Output format",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": [
+            {
+              "name": "human",
+              "help": "Human-readable text output"
+            },
+            {
+              "name": "json",
+              "help": "JSON output"
+            }
+          ]
+        },
+        {
+          "id": "detected",
+          "syntax": "--detected",
+          "help": "List languages detected under the root instead of every supported language",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "check"
+      ],
+      "usage": "Usage: sprawl-guard check [OPTIONS] [PATHS]...",
+      "arguments": [
+        {
+          "id": "format",
+          "syntax": "--format <FORMAT>",
+          "help": "Output format",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": [
+            {
+              "name": "human",
+              "help": "Human-readable text output"
+            },
+            {
+              "name": "json",
+              "help": "JSON output"
+            },
+            {
+              "name": "sarif",
+              "help": "SARIF output"
+            }
+          ]
+        },
+        {
+          "id": "require_ratchet_current",
+          "syntax": "--require-ratchet-current",
+          "help": "Fail if the ratchet file is stale",
+          "conflicts_with": [
+            "--no-require-ratchet-current"
+          ],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "no_require_ratchet_current",
+          "syntax": "--no-require-ratchet-current",
+          "help": "Allow stale ratchet entries for exploratory local checks",
+          "conflicts_with": [
+            "--require-ratchet-current"
+          ],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "traversal_error_policy",
+          "syntax": "--traversal-error-policy <TRAVERSAL_ERROR_POLICY>",
+          "help": "Override how recoverable descendant traversal errors affect this check",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": [
+            {
+              "name": "fail",
+              "help": "Collect recoverable traversal incidents, then fail the run"
+            },
+            {
+              "name": "warn",
+              "help": "Report recoverable traversal incidents as warnings and continue"
+            }
+          ]
+        },
+        {
+          "id": "paths",
+          "syntax": "[PATHS]...",
+          "help": "Paths to check. Defaults to the repository root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "baseline"
+      ],
+      "usage": "Usage: sprawl-guard baseline [OPTIONS] [PATHS]...",
+      "arguments": [
+        {
+          "id": "write",
+          "syntax": "--write",
+          "help": "Write the ratchet changes instead of only previewing them",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "all",
+          "syntax": "--all",
+          "help": "Replace the whole ratchet file",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "allow_raises",
+          "syntax": "--allow-raises",
+          "help": "Permit existing ratchet ceilings to increase",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "paths",
+          "syntax": "[PATHS]...",
+          "help": "Paths whose ratchet entries should be previewed or replaced",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "ratchet"
+      ],
+      "usage": "Usage: sprawl-guard ratchet [OPTIONS] [PATHS]...",
+      "arguments": [
+        {
+          "id": "write",
+          "syntax": "--write",
+          "help": "Write the ratchet changes instead of only previewing them",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "paths",
+          "syntax": "[PATHS]...",
+          "help": "Paths whose ratchet entries should be evaluated",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "config"
+      ],
+      "usage": "Usage: sprawl-guard config [OPTIONS] <COMMAND>",
+      "arguments": [
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "config",
+        "resolved"
+      ],
+      "usage": "Usage: sprawl-guard config resolved [OPTIONS]",
+      "arguments": [
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "config",
+        "export"
+      ],
+      "usage": "Usage: sprawl-guard config export [OPTIONS]",
+      "arguments": [
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "explain"
+      ],
+      "usage": "Usage: sprawl-guard explain [OPTIONS] <PATH>",
+      "arguments": [
+        {
+          "id": "format",
+          "syntax": "--format <FORMAT>",
+          "help": "Output format",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": [
+            {
+              "name": "human",
+              "help": "Human-readable text output"
+            },
+            {
+              "name": "json",
+              "help": "JSON output"
+            }
+          ]
+        },
+        {
+          "id": "path",
+          "syntax": "<PATH>",
+          "help": "Path to explain",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "machine"
+      ],
+      "usage": "Usage: sprawl-guard machine [OPTIONS] <COMMAND>",
+      "arguments": [
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "machine",
+        "run"
+      ],
+      "usage": "Usage: sprawl-guard machine run [OPTIONS]",
+      "arguments": [
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    }
+  ]
+}

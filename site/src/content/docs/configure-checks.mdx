@@ -1,0 +1,98 @@
+---
+title: Configure checks
+description: Match Sprawl Guard's source classification and limits to a repository.
+---
+
+import { TabItem, Tabs } from "@astrojs/starlight/components";
+
+Add the sections below to `sprawl-guard.toml` at the repository root.
+
+## Select source files
+
+Enable each language under `[languages.<id>]`. Language IDs are case-insensitive; use
+`sprawl-guard languages` to see accepted keys and built-in globs.
+
+```toml title="sprawl-guard.toml"
+[languages.rust]
+enabled = true
+
+[languages.typescript]
+enabled = true
+include = ["src/**/*.ts"]
+exclude = ["src/generated/**"]
+```
+
+`[files].exclude` removes paths before language classification. Each language's `include` and
+`exclude` globs then determine which files it owns. Avoid overlapping includes: a file matched by
+more than one enabled language is ambiguous.
+
+## Set limits and classify tests
+
+```toml title="sprawl-guard.toml"
+[limits.max_lines_per_file]
+code_non_test = 400
+code = 800
+
+[limits.max_leaf_files_per_directory]
+production = 8
+test = "unlimited"
+
+[tests]
+check_path_tests = true
+globs = ["tests/**", "**/*.test.*"]
+```
+
+Global and language-specific test globs classify whole files as test code. Test files use the
+`code` and `test` limits; production files use `code_non_test` and `production`. Setting
+`check_path_tests` to `false` omits path-classified tests. For production Rust files, Sprawl Guard
+can also exclude top-level `cfg(test)` items from the non-test line count.
+
+## Add overrides
+
+Overrides apply in declaration order. Each matching override changes only the limit fields it
+sets, so a later match wins for those fields.
+
+```toml title="sprawl-guard.toml"
+[[overrides]]
+paths = ["src/legacy/**"]
+max_lines_per_file = { code_non_test = 1000 }
+reason = "Legacy subsystem"
+
+[[overrides]]
+paths = ["src/legacy/small/**"]
+max_lines_per_file = { code_non_test = 500 }
+reason = "Smaller legacy modules"
+```
+
+Inspect the effective policy and a specific path before running the check:
+
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
+
+```sh
+sprawl-guard config resolved
+sprawl-guard explain src/example.rs
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+```sh
+npm exec -- sprawl-guard config resolved
+npm exec -- sprawl-guard explain src/example.rs
+```
+
+  </TabItem>
+  <TabItem label="pnpm">
+
+```sh
+pnpm exec sprawl-guard config resolved
+pnpm exec sprawl-guard explain src/example.rs
+```
+
+  </TabItem>
+</Tabs>
+
+See the [configuration reference](/sprawl-guard/reference/configuration/) for every field and
+default. Once the policy matches the repository,
+[record existing violations](/sprawl-guard/adopt-existing-repository/).

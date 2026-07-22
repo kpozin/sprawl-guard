@@ -1,0 +1,239 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: stable
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Check workspace
+        run: cargo check --locked --workspace --all-targets
+
+      - name: Test workspace
+        run: cargo test --locked --workspace
+
+      - name: Package workspace crates
+        run: cargo package --locked --workspace
+
+      - name: Validate crate archives
+        env:
+          PYTHONPATH: .github/scripts
+        run: python3 -m sprawl_guard_public_archive target/package
+
+      - name: Dry-run publish library crate
+        run: cargo publish --locked --dry-run -p sprawl-guard-lib
+
+  runtime-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            rust_target: aarch64-apple-darwin
+            built_binary_path: target/aarch64-apple-darwin/debug/sprawl-guard
+          - runner: macos-15-intel
+            rust_target: x86_64-apple-darwin
+            built_binary_path: target/x86_64-apple-darwin/debug/sprawl-guard
+          - runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            built_binary_path: target/aarch64-unknown-linux-gnu/debug/sprawl-guard
+          - runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+            built_binary_path: target/x86_64-unknown-linux-gnu/debug/sprawl-guard
+          - runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-musl
+            built_binary_path: target/x86_64-unknown-linux-musl/debug/sprawl-guard
+          - runner: windows-2025
+            rust_target: x86_64-pc-windows-msvc
+            built_binary_path: target/x86_64-pc-windows-msvc/debug/sprawl-guard.exe
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+
+      - name: Resolve CLI version
+        run: >-
+          node --eval
+          "const assert = require('node:assert/strict');
+          const metadata = JSON.parse(
+          require('node:child_process').execFileSync(
+          'cargo',
+          ['metadata', '--no-deps', '--format-version', '1'],
+          { encoding: 'utf8' }));
+          const packages = metadata.packages.filter(
+          (candidate) => candidate.name === 'sprawl-guard');
+          assert.equal(packages.length, 1);
+          require('node:fs').appendFileSync(
+          process.env.GITHUB_ENV,
+          'SPRAWL_GUARD_VERSION=' + packages[0].version + '\n')"
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: npm/pnpm-lock.yaml
+
+      - name: Install musl linker
+        if: ${{ matrix.rust_target == 'x86_64-unknown-linux-musl' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+
+      - name: Build native CLI
+        run: cargo build --locked --package sprawl-guard --target "${{ matrix.rust_target }}"
+
+      - name: Run native CLI
+        run: >-
+          node --eval
+          "require('node:child_process').execFileSync(
+          process.env.SPRAWL_GUARD_BINARY,
+          ['--help'],
+          { stdio: 'inherit' })"
+        env:
+          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
+      - name: Check native CLI version
+        run: >-
+          node --eval
+          "const assert = require('node:assert/strict');
+          const result = require('node:child_process').spawnSync(
+          process.env.SPRAWL_GUARD_BINARY,
+          ['--version'],
+          { encoding: 'utf8' });
+          assert.equal(result.error, undefined);
+          assert.equal(result.status, 0);
+          assert.equal(
+          result.stdout,
+          'sprawl-guard ' + process.env.SPRAWL_GUARD_VERSION + '\n');
+          assert.equal(result.stderr, '')"
+        env:
+          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
+      - name: Install npm workspace dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Build npm wrapper
+        working-directory: npm
+        run: pnpm run build
+
+      - name: Run npm wrapper
+        working-directory: npm
+        run: node ./sprawl-guard/dist/bin/sprawl-guard.js --help
+        env:
+          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
+      - name: Check npm wrapper version
+        working-directory: npm
+        run: >-
+          node --eval
+          "const assert = require('node:assert/strict');
+          const result = require('node:child_process').spawnSync(
+          process.execPath,
+          ['./sprawl-guard/dist/bin/sprawl-guard.js', '--version'],
+          { encoding: 'utf8' });
+          assert.equal(result.error, undefined);
+          assert.equal(result.status, 0);
+          assert.equal(
+          result.stdout,
+          'sprawl-guard ' + process.env.SPRAWL_GUARD_VERSION + '\n');
+          assert.equal(result.stderr, '')"
+        env:
+          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
+  npm:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: npm/pnpm-lock.yaml
+
+      - name: Install npm workspace dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Check npm workspace
+        working-directory: npm
+        run: pnpm run check
+
+      - name: Install rendered publish workspace
+        working-directory: npm
+        run: pnpm run install:rendered-publish-workspace
+
+  docs:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: site/pnpm-lock.yaml
+
+      - name: Install documentation dependencies
+        working-directory: site
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Check documentation
+        working-directory: site
+        run: pnpm run check

@@ -1,0 +1,38 @@
+{
+  "name": "@kpozin/sprawl-guard",
+  "version": "0.1.0",
+  "description": "Node.js wrapper for the sprawl-guard CLI.",
+  "license": "(MIT OR Apache-2.0)",
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kpozin/sprawl-guard.git"
+  },
+  "homepage": "https://github.com/kpozin/sprawl-guard",
+  "bugs": {
+    "url": "https://github.com/kpozin/sprawl-guard/issues"
+  },
+  "bin": {
+    "sprawl-guard": "./dist/bin/sprawl-guard.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-result": "2.9.2",
+    "zod": "4.4.3"
+  },
+  "private": true,
+  "files": [
+    "README.md",
+    "dist/",
+    "!dist/lib/*.test.js"
+  ],
+  "scripts": {
+    "build": "pnpm run clean && pnpm --dir .. exec tsc -p sprawl-guard/tsconfig.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prepack": "pnpm build",
+    "test": "node --test dist/lib/*.test.js"
+  }
+}

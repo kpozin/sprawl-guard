@@ -1,0 +1,165 @@
+---
+title: CLI and output reference
+description: Commands, options, formats, diagnostics, and exit codes.
+---
+
+import CliCommandReference from "../../../components/CliCommandReference.astro";
+
+## Global options
+
+These options may appear before or after a command:
+
+<CliCommandReference path="sprawl-guard" />
+
+The `--color` option is accepted but currently does not affect output.
+
+## Commands
+
+### `init`
+
+Creates `sprawl-guard.toml`, or the path selected by `--config`.
+
+<CliCommandReference path="sprawl-guard init" />
+
+With neither language option, `init` enables detected languages. It refuses to overwrite an
+existing configuration when writing. Pass comma-separated language IDs to `--languages`.
+
+### `languages`
+
+Lists every supported language, or only the languages detected under the root. The report includes
+configuration keys and default include, exclude, and test globs. `--format` defaults to `human`.
+
+<CliCommandReference path="sprawl-guard languages" />
+
+### `check [PATHS]...`
+
+Checks the whole repository when no paths are given, or only the supplied scopes.
+
+<CliCommandReference path="sprawl-guard check" />
+
+The two ratchet-current options conflict. A `warn` traversal policy can produce a successful but
+partial report; explicit scope failures and failures reading measured source files remain errors.
+
+### `baseline [PATHS]...`
+
+Prints proposed ratchet contents by default.
+
+<CliCommandReference path="sprawl-guard baseline" />
+
+Without an existing ratchet file, omitting the scope covers the whole repository. With an existing
+file, choose `--all` or one or more paths to make the replacement scope explicit. `--all` and path
+arguments are mutually exclusive.
+
+### `ratchet [PATHS]...`
+
+Prints downward updates for existing ratchet entries.
+
+<CliCommandReference path="sprawl-guard ratchet" />
+
+With no paths it evaluates the complete ratchet; path arguments restrict the update.
+
+### `config resolved` and `config export`
+
+`resolved` prints the built-in defaults merged with the selected root configuration and included
+override fragments. `export` prints the same policy as a complete configuration suitable for
+committing.
+
+<CliCommandReference path="sprawl-guard config resolved" />
+
+<CliCommandReference path="sprawl-guard config export" />
+
+### `explain PATH`
+
+Explains ignore handling, language ownership, test classification, effective limits, matching
+overrides, and Rust `cfg(test)` handling for one path.
+
+<CliCommandReference path="sprawl-guard explain" />
+
+### `machine run`
+
+Reads one versioned JSON integration request from stdin and writes one JSON response. Packaged
+wrappers use this protocol. The `argv` field contains ordinary CLI arguments without the binary
+name, and every path must remain under the declared workspace root. Use the ordinary commands
+unless you are building a runtime wrapper.
+
+<CliCommandReference path="sprawl-guard machine run" />
+
+The transport process exits `0` after emitting a response, even for malformed requests and invoked
+command failures. Inspect `result.kind` to determine the result:
+
+- `completed` contains the invoked command's `exit_code`, `stdout`, `stderr`, and optional payload.
+- `request_error` contains request errors.
+- `runtime_error` contains an error code and stderr.
+
+A failure while reading stdin or writing the response is a transport error and can make the process
+exit `2`.
+
+## Output formats
+
+- Human output groups failures by file size, test file size, production directory fan-out, test
+  directory fan-out, and ratchet state.
+- JSON emits a structured report with root, counter provenance, coverage, warnings, and violations.
+- SARIF emits SARIF 2.1.0 for check results.
+
+The default comes from `[output].format`; `check --format` takes precedence. Other diagnostic
+commands that expose `--format` support only `human` and `json`.
+
+A JSON report with one file violation looks like:
+
+```json
+{
+  "status": "failed",
+  "root": "/repo",
+  "coverage": {
+    "kind": "complete"
+  },
+  "counter": {
+    "backend": "tokei",
+    "version": "14.0.0"
+  },
+  "warnings": [],
+  "violations": [
+    {
+      "kind": "file_loc",
+      "path": "src/large.py",
+      "language": "Python",
+      "actual": 430,
+      "limit": 400,
+      "ratchet": null
+    }
+  ]
+}
+```
+
+`status` is `passed` or `failed` for a completed policy check. `coverage` reports whether the
+repository scan was complete, `counter` identifies the code-line counter, and `warnings` and
+`violations` contain structured diagnostics.
+
+Collected traversal failures also produce structured output and use `status: "error"`. Other
+operational failures can write only human-readable stderr, even when `--format json` or
+`--format sarif` was requested. Check the exit code before parsing stdout.
+
+### SARIF rule IDs
+
+| Rule ID                              | Finding                                                |
+| ------------------------------------ | ------------------------------------------------------ |
+| `sprawl-guard/file-loc`              | Production file non-test code lines exceed the limit.  |
+| `sprawl-guard/test-file-loc`         | Test file code lines exceed the limit.                 |
+| `sprawl-guard/directory-fanout`      | Production leaf-file fan-out exceeds the limit.        |
+| `sprawl-guard/test-directory-fanout` | Test leaf-file fan-out exceeds the limit.              |
+| `sprawl-guard/ratchet-increase`      | A baselined measurement increased.                     |
+| `sprawl-guard/ratchet-stale`         | A ratchet entry no longer matches a current violation. |
+
+Configuration, path, I/O, parsing, and unrecoverable traversal diagnostics are operational errors,
+not policy findings.
+
+## Exit codes
+
+| Code | Meaning                                                                                                            |
+| ---- | ------------------------------------------------------------------------------------------------------------------ |
+| `0`  | Command completed successfully; a check found no policy failures.                                                  |
+| `1`  | A check found one or more limit or ratchet violations.                                                             |
+| `2`  | An operational error occurred in configuration, arguments, paths, I/O, parsing, traversal, or internal processing. |
+
+These are process exit codes for ordinary commands. For `machine run`, use the status inside the
+JSON response; the transport process normally exits `0` even when that response reports failure.

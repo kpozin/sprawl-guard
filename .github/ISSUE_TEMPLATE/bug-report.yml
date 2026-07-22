@@ -1,0 +1,33 @@
+name: Bug report
+description: Report a functional bug in sprawl-guard.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and the expected behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Include config, commands, and a small tree or fixture.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: sprawl-guard version
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: OS, architecture, and install path.
+    validations:
+      required: true

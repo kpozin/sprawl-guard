@@ -1,0 +1,847 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_commit:
+        description: Full commit SHA recorded when the release candidate was frozen
+        required: true
+        type: string
+      release_tag:
+        description: Existing v-prefixed git tag to attach to the draft release
+        required: true
+        type: string
+      npm_channel:
+        description: npm release channel
+        default: latest
+        options:
+          - latest
+          - next
+          - beta
+          - rc
+          - canary
+          - custom
+        required: true
+        type: choice
+      custom_npm_tag:
+        description: npm dist-tag used only when npm_channel is custom
+        default: ""
+        required: false
+        type: string
+      verify_crates:
+        description: Verify the locally published Cargo crates from clean registry installs
+        default: false
+        required: false
+        type: boolean
+      verify_npm:
+        description: Verify the locally published npm packages on every runtime target
+        default: false
+        required: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sprawl-guard-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
+jobs:
+  release-metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_commit: ${{ steps.resolve.outputs.release_commit }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      release_version: ${{ steps.resolve.outputs.release_version }}
+      npm_dist_tag: ${{ steps.npm-channel.outputs.npm_dist_tag }}
+      github_prerelease: ${{ steps.resolve.outputs.github_prerelease }}
+      github_latest: ${{ steps.resolve.outputs.github_latest }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ inputs.release_commit }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: 1.97.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Install npm workspace dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve npm release channel
+        id: npm-channel
+        shell: bash
+        run: |
+          npm_dist_tag="$(node npm/scripts/npm-dist-tag.ts "${NPM_CHANNEL}" "${CUSTOM_NPM_TAG}")"
+          printf 'npm_dist_tag=%s\n' "${npm_dist_tag}" >> "${GITHUB_OUTPUT}"
+        env:
+          CUSTOM_NPM_TAG: ${{ inputs.custom_npm_tag }}
+          NPM_CHANNEL: ${{ inputs.npm_channel }}
+
+      - name: Resolve and validate release metadata
+        id: resolve
+        run: pnpm --dir npm run release:metadata
+        env:
+          GITHUB_EVENT_COMMIT: ${{ github.sha }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          NPM_DIST_TAG: ${{ steps.npm-channel.outputs.npm_dist_tag }}
+
+  artifact-build:
+    needs: release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package_target: darwin-arm64
+            runner: macos-15
+            rust_target: aarch64-apple-darwin
+            built_artifact_path: target/aarch64-apple-darwin/release/sprawl-guard
+            artifact_file_name: sprawl-guard
+          - package_target: darwin-x64
+            runner: macos-15-intel
+            rust_target: x86_64-apple-darwin
+            built_artifact_path: target/x86_64-apple-darwin/release/sprawl-guard
+            artifact_file_name: sprawl-guard
+          - package_target: linux-arm64-gnu
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            built_artifact_path: target/aarch64-unknown-linux-gnu/release/sprawl-guard
+            artifact_file_name: sprawl-guard
+          - package_target: linux-x64-gnu
+            runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+            built_artifact_path: target/x86_64-unknown-linux-gnu/release/sprawl-guard
+            artifact_file_name: sprawl-guard
+          - package_target: linux-x64-musl
+            runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-musl
+            built_artifact_path: target/x86_64-unknown-linux-musl/release/sprawl-guard
+            artifact_file_name: sprawl-guard
+          - package_target: win32-x64-msvc
+            runner: windows-2025
+            rust_target: x86_64-pc-windows-msvc
+            built_artifact_path: target/x86_64-pc-windows-msvc/release/sprawl-guard.exe
+            artifact_file_name: sprawl-guard.exe
+          - package_target: wasm32-wasip1
+            runner: ubuntu-24.04
+            rust_target: wasm32-wasip1
+            built_artifact_path: target/wasm32-wasip1/release/sprawl-guard.wasm
+            artifact_file_name: sprawl-guard.wasm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: 1.97.1
+          targets: ${{ matrix.rust_target }}
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - name: Install musl linker
+        if: ${{ matrix.rust_target == 'x86_64-unknown-linux-musl' }}
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+      - name: Build release artifact
+        shell: bash
+        run: cargo build --locked --release --package sprawl-guard --target "${RUST_TARGET}"
+        env:
+          RUST_TARGET: ${{ matrix.rust_target }}
+
+      - name: Smoke-test native binary
+        if: ${{ matrix.package_target != 'wasm32-wasip1' }}
+        shell: bash
+        run: |
+          "${BUILT_ARTIFACT_PATH}" --help
+        env:
+          BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
+
+      - name: Check native binary version
+        if: ${{ matrix.package_target != 'wasm32-wasip1' }}
+        shell: bash
+        run: |
+          test "$("${BUILT_ARTIFACT_PATH}" --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+        env:
+          BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Verify WASM module exists
+        if: ${{ matrix.package_target == 'wasm32-wasip1' }}
+        shell: bash
+        run: test -s "${BUILT_ARTIFACT_PATH}"
+        env:
+          BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
+
+      - name: Normalize release artifact payload
+        shell: bash
+        run: |
+          mkdir -p "release-artifacts/${PACKAGE_TARGET}"
+          cp "${BUILT_ARTIFACT_PATH}" "release-artifacts/${PACKAGE_TARGET}/${ARTIFACT_FILE_NAME}"
+        env:
+          ARTIFACT_FILE_NAME: ${{ matrix.artifact_file_name }}
+          BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
+          PACKAGE_TARGET: ${{ matrix.package_target }}
+
+      - name: Archive release artifact payload
+        shell: bash
+        run: tar -C "release-artifacts/${PACKAGE_TARGET}" -cf "release-${PACKAGE_TARGET}.tar" "${ARTIFACT_FILE_NAME}"
+        env:
+          ARTIFACT_FILE_NAME: ${{ matrix.artifact_file_name }}
+          PACKAGE_TARGET: ${{ matrix.package_target }}
+
+      - name: Package POSIX GitHub Release asset
+        if: ${{ matrix.package_target != 'win32-x64-msvc' }}
+        shell: bash
+        run: |
+          mkdir -p github-release-assets
+          archive_stem="sprawl-guard-${RELEASE_VERSION}-${RUST_TARGET}"
+          tar -C "release-artifacts/${PACKAGE_TARGET}" -czf "github-release-assets/${archive_stem}.tar.gz" "${ARTIFACT_FILE_NAME}"
+        env:
+          ARTIFACT_FILE_NAME: ${{ matrix.artifact_file_name }}
+          PACKAGE_TARGET: ${{ matrix.package_target }}
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+
+      - name: Package Windows GitHub Release asset
+        if: ${{ matrix.package_target == 'win32-x64-msvc' }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path github-release-assets | Out-Null
+          $archive = "github-release-assets/sprawl-guard-$env:RELEASE_VERSION-$env:RUST_TARGET.zip"
+          Compress-Archive -LiteralPath $env:BUILT_ARTIFACT_PATH -DestinationPath $archive
+        env:
+          BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+
+      - name: Verify POSIX GitHub Release asset
+        if: ${{ matrix.package_target != 'win32-x64-msvc' }}
+        shell: bash
+        run: |
+          archive="github-release-assets/sprawl-guard-${RELEASE_VERSION}-${RUST_TARGET}.tar.gz"
+          test "$(tar -tzf "${archive}")" = "${ARTIFACT_FILE_NAME}"
+          mkdir verified-release-asset
+          tar -xzf "${archive}" -C verified-release-asset
+          cmp "${BUILT_ARTIFACT_PATH}" "verified-release-asset/${ARTIFACT_FILE_NAME}"
+          if [[ "${PACKAGE_TARGET}" != "wasm32-wasip1" ]]; then
+            test -x "verified-release-asset/${ARTIFACT_FILE_NAME}"
+          fi
+        env:
+          ARTIFACT_FILE_NAME: ${{ matrix.artifact_file_name }}
+          BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
+          PACKAGE_TARGET: ${{ matrix.package_target }}
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+
+      - name: Verify Windows GitHub Release asset
+        if: ${{ matrix.package_target == 'win32-x64-msvc' }}
+        shell: pwsh
+        run: |
+          $archive = "github-release-assets/sprawl-guard-$env:RELEASE_VERSION-$env:RUST_TARGET.zip"
+          Expand-Archive -LiteralPath $archive -DestinationPath verified-release-asset
+          $entries = @(Get-ChildItem -Force -Recurse -Path verified-release-asset)
+          if ($entries.Count -ne 1 -or $entries[0].PSIsContainer -or $entries[0].Name -ne "sprawl-guard.exe") {
+            throw "Windows release archive must contain only sprawl-guard.exe"
+          }
+          $builtHash = (Get-FileHash -Algorithm SHA256 $env:BUILT_ARTIFACT_PATH).Hash
+          $archiveHash = (Get-FileHash -Algorithm SHA256 $entries[0].FullName).Hash
+          if ($builtHash -ne $archiveHash) {
+            throw "Windows release archive payload differs from the built executable"
+          }
+        env:
+          BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: release-${{ matrix.package_target }}
+          path: |
+            release-${{ matrix.package_target }}.tar
+            github-release-assets
+
+  package-assembly:
+    needs:
+      - artifact-build
+      - release-metadata
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Download built release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          merge-multiple: true
+          path: release-artifact-archives
+          pattern: release-*
+
+      - name: Restore release artifact payloads
+        shell: bash
+        run: |
+          declare -A artifact_files=(
+            [darwin-arm64]=sprawl-guard
+            [darwin-x64]=sprawl-guard
+            [linux-arm64-gnu]=sprawl-guard
+            [linux-x64-gnu]=sprawl-guard
+            [linux-x64-musl]=sprawl-guard
+            [wasm32-wasip1]=sprawl-guard.wasm
+            [win32-x64-msvc]=sprawl-guard.exe
+          )
+          test "$(find release-artifact-archives -mindepth 1 -maxdepth 1 -type f -name 'release-*.tar' | wc -l)" -eq "${#artifact_files[@]}"
+          mkdir release-artifacts
+          for package_target in "${!artifact_files[@]}"; do
+            artifact_file="${artifact_files[${package_target}]}"
+            archive="release-artifact-archives/release-${package_target}.tar"
+            test -f "${archive}"
+            test ! -L "${archive}"
+            test "$(find "${archive}" -links 1 -print)" = "${archive}"
+            test "$(tar -tf "${archive}")" = "${artifact_file}"
+            [[ "$(tar -tvf "${archive}")" == -* ]]
+            mkdir "release-artifacts/${package_target}"
+            tar -xOf "${archive}" "${artifact_file}" > "release-artifacts/${package_target}/${artifact_file}"
+            if [[ "${package_target}" != "wasm32-wasip1" ]]; then
+              chmod 755 "release-artifacts/${package_target}/${artifact_file}"
+            fi
+          done
+
+      - name: Install npm workspace dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Build npm wrapper
+        run: pnpm --dir npm run build
+
+      - name: Render and verify staged npm wrapper
+        run: pnpm --dir npm run check:rendered-publish-workspace
+
+      - name: Stage package payloads
+        run: pnpm --dir npm run stage:publish-payloads ../release-artifacts
+
+      - name: Verify staged package packs
+        run: pnpm --dir npm run verify:staged-payload-packs
+
+      - name: Prepare assembled npm publication candidate
+        run: pnpm --dir npm run release:prepare-npm ../npm-publication-candidate "${RELEASE_COMMIT}" "${RELEASE_TAG}" "${NPM_DIST_TAG}"
+        env:
+          NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
+          RELEASE_COMMIT: ${{ needs.release-metadata.outputs.release_commit }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+
+      - name: Upload assembled npm publication candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: npm-publication-candidate
+        with:
+          if-no-files-found: error
+          name: npm-publication-candidate
+          path: npm-publication-candidate
+
+      - name: Record npm publication candidate digest
+        run: echo "npm publication candidate artifact digest ${ARTIFACT_DIGEST}" >> "${GITHUB_STEP_SUMMARY}"
+        env:
+          ARTIFACT_DIGEST: ${{ steps.npm-publication-candidate.outputs.artifact-digest }}
+
+  verify-npm-candidate-native:
+    needs:
+      - package-assembly
+      - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            package_name: "@kpozin/sprawl-guard-darwin-arm64"
+            package_slug: darwin-arm64
+          - runner: macos-15-intel
+            package_name: "@kpozin/sprawl-guard-darwin-x64"
+            package_slug: darwin-x64
+          - runner: ubuntu-24.04-arm
+            package_name: "@kpozin/sprawl-guard-linux-arm64-gnu"
+            package_slug: linux-arm64-gnu
+          - runner: ubuntu-24.04
+            package_name: "@kpozin/sprawl-guard-linux-x64-gnu"
+            package_slug: linux-x64-gnu
+          - runner: windows-2025
+            package_name: "@kpozin/sprawl-guard-win32-x64-msvc"
+            package_slug: win32-x64-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Download assembled npm publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-publication-candidate
+          path: npm-publication-candidate
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install the exact wrapper and native carrier candidates
+        shell: bash
+        run: |
+          test ! -e install-smoke
+          mkdir install-smoke
+          printf '{"private":true}\n' > install-smoke/package.json
+          candidate_directory="$(node --eval "process.stdout.write(require('node:path').resolve('npm-publication-candidate'))")"
+          wrapper_archive="${candidate_directory}/kpozin-sprawl-guard-${SPRAWL_GUARD_VERSION}.tgz"
+          runtime_archive="${candidate_directory}/kpozin-sprawl-guard-${PACKAGE_SLUG}-${SPRAWL_GUARD_VERSION}.tgz"
+          test -f "${wrapper_archive}"
+          test -f "${runtime_archive}"
+          npm --prefix install-smoke install --save-exact --omit=optional "${wrapper_archive}" "${runtime_archive}"
+          node --eval \
+            "require('node:module').createRequire(require('node:path').resolve('install-smoke/package.json')).resolve(process.env.NATIVE_PACKAGE_NAME + '/package.json')"
+        env:
+          NATIVE_PACKAGE_NAME: ${{ matrix.package_name }}
+          PACKAGE_SLUG: ${{ matrix.package_slug }}
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Run the candidate-installed native wrapper
+        shell: bash
+        run: |
+          unset SPRAWL_GUARD_BINARY
+          test "$(npm --prefix install-smoke exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          npm --prefix install-smoke exec -- sprawl-guard --help
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  verify-npm-candidate-musl:
+    needs:
+      - package-assembly
+      - release-metadata
+    runs-on: ubuntu-24.04
+    env:
+      NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-musl"
+    steps:
+      - name: Download assembled npm publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-publication-candidate
+          path: npm-publication-candidate
+
+      - name: Run the exact candidate wrapper and carrier on Linux musl
+        shell: bash
+        run: |
+          docker run --rm \
+            --env NPM_RUNTIME_PACKAGE_NAME \
+            --env SPRAWL_GUARD_VERSION \
+            --volume "${PWD}/npm-publication-candidate:/candidate:ro" \
+            node:22-alpine sh -euxc '
+            mkdir /install-smoke
+            printf "{\"private\":true}\n" > /install-smoke/package.json
+            npm --prefix /install-smoke install --save-exact --omit=optional \
+              "/candidate/kpozin-sprawl-guard-${SPRAWL_GUARD_VERSION}.tgz" \
+              "/candidate/kpozin-sprawl-guard-linux-x64-musl-${SPRAWL_GUARD_VERSION}.tgz"
+            node --eval \
+              "require(\"node:module\").createRequire(\"/install-smoke/package.json\").resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + \"/package.json\")"
+            unset SPRAWL_GUARD_BINARY
+            test "$(npm --prefix /install-smoke exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+            npm --prefix /install-smoke exec -- sprawl-guard --help
+          '
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  verify-npm-candidate-wasi:
+    needs:
+      - package-assembly
+      - release-metadata
+    runs-on: ubuntu-24.04
+    env:
+      NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-wasm32-wasip1"
+    steps:
+      - name: Check out the pinned npm scan fixture
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+          path: scan-fixture
+          persist-credentials: false
+
+      - name: Download assembled npm publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-publication-candidate
+          path: npm-publication-candidate
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install exact native and WASI-only candidate fixtures
+        shell: bash
+        run: |
+          test ! -e install-native
+          test ! -e install-wasi
+          mkdir install-native install-wasi
+          printf '{"private":true}\n' > install-native/package.json
+          printf '{"private":true}\n' > install-wasi/package.json
+          candidate_directory="$(node --eval "process.stdout.write(require('node:path').resolve('npm-publication-candidate'))")"
+          wrapper_archive="${candidate_directory}/kpozin-sprawl-guard-${SPRAWL_GUARD_VERSION}.tgz"
+          npm --prefix install-native install --save-exact --omit=optional \
+            "${wrapper_archive}" \
+            "${candidate_directory}/kpozin-sprawl-guard-linux-x64-gnu-${SPRAWL_GUARD_VERSION}.tgz"
+          npm --prefix install-wasi install --save-exact --omit=optional \
+            "${wrapper_archive}" \
+            "${candidate_directory}/kpozin-sprawl-guard-wasm32-wasip1-${SPRAWL_GUARD_VERSION}.tgz"
+          node --eval \
+            "require('node:module').createRequire(require('node:path').resolve('install-wasi/package.json')).resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + '/package.json')"
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Compare exact candidate native and WASI scans
+        shell: bash
+        run: |
+          unset SPRAWL_GUARD_BINARY
+          test "$(npm --prefix install-native exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          test "$(npm --prefix install-wasi exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          npm --prefix install-wasi exec -- sprawl-guard --help
+          npm --prefix install-native exec -- sprawl-guard --root "${PWD}/scan-fixture" \
+            languages --detected --format json > native-languages.json
+          npm --prefix install-wasi exec -- sprawl-guard --root "${PWD}/scan-fixture" \
+            languages --detected --format json > wasi-languages.json
+          node --eval '
+            const report = require("./wasi-languages.json");
+            if (report.mode !== "detected") process.exit(1);
+            if (!report.languages.some((language) =>
+              language.config_key === "typescript" && language.source_files > 0)) process.exit(1);
+          '
+          cmp native-languages.json wasi-languages.json
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  draft-release:
+    needs:
+      - package-assembly
+      - release-metadata
+      - verify-npm-candidate-musl
+      - verify-npm-candidate-native
+      - verify-npm-candidate-wasi
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+
+      - name: Download built release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          merge-multiple: true
+          path: downloaded-release-artifacts
+          pattern: release-*
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Install npm workspace dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate release assets and generate checksums
+        run: pnpm --dir npm run release:prepare-assets ../downloaded-release-artifacts/github-release-assets "${RELEASE_VERSION}"
+        env:
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Check GitHub CLI version
+        run: gh --version
+
+      - name: Validate remote release tag
+        shell: bash
+        run: |
+          remote_tag_commit() {
+            local object_type object_sha
+            IFS=$'\t' read -r object_type object_sha < <(
+              gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object | [.type, .sha] | @tsv'
+            )
+            while [[ "${object_type}" == "tag" ]]; do
+              IFS=$'\t' read -r object_type object_sha < <(
+                gh api "repos/${GITHUB_REPOSITORY}/git/tags/${object_sha}" --jq '.object | [.type, .sha] | @tsv'
+              )
+            done
+            test "${object_type}" = "commit"
+            printf '%s\n' "${object_sha}"
+          }
+          test "$(remote_tag_commit)" = "${RELEASE_COMMIT}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ needs.release-metadata.outputs.release_commit }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+
+      - name: Create or update draft GitHub Release
+        shell: bash
+        run: |
+          release_title="sprawl-guard v${RELEASE_VERSION}"
+          release_notes="Draft release for ${RELEASE_TAG}"
+          release_state_flags=(
+            --prerelease="${GITHUB_PRERELEASE}"
+            --latest="${GITHUB_LATEST}"
+          )
+
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            release_is_draft="$(gh release view "${RELEASE_TAG}" --json isDraft --jq '.isDraft')"
+            if [[ "${release_is_draft}" != "true" ]]; then
+              echo "refusing to modify non-draft release ${RELEASE_TAG}" >&2
+              exit 1
+            fi
+            gh release edit "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}" --notes "${release_notes}"
+          else
+            gh release create "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}" --notes "${release_notes}"
+          fi
+
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_LATEST: ${{ needs.release-metadata.outputs.github_latest }}
+          GITHUB_PRERELEASE: ${{ needs.release-metadata.outputs.github_prerelease }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Replace and verify draft release assets
+        run: pnpm --dir npm run release:replace-assets "${RELEASE_TAG}" ../downloaded-release-artifacts/github-release-assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+
+  verify-published-cargo:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_crates }}
+    needs:
+      - draft-release
+      - release-metadata
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_HOME: ${{ github.workspace }}/cargo-home
+    steps:
+      - name: Check out the pinned Rust scan fixture
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: example/scan-fixture
+          ref: dc042d2f267bef4b410ef0f71cf9962c0e95a9da
+          path: scan-fixture
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: 1.97.1
+
+      - name: Install the published CLI into an absent root
+        shell: bash
+        run: |
+          test ! -e "${CARGO_HOME}"
+          test ! -e cargo-install
+          cargo install --locked --root cargo-install "sprawl-guard@${SPRAWL_GUARD_VERSION}"
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Run the Cargo-installed CLI
+        shell: bash
+        run: |
+          test "$(cargo-install/bin/sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          cargo-install/bin/sprawl-guard --help
+          cargo-install/bin/sprawl-guard --root scan-fixture \
+            languages --detected --format json > cargo-languages.json
+          node --eval '
+            const report = require("./cargo-languages.json");
+            if (report.mode !== "detected") process.exit(1);
+            if (!report.languages.some((language) =>
+              language.config_key === "rust" && language.source_files > 0)) process.exit(1);
+          '
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  verify-published-npm-native:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_npm }}
+    needs:
+      - draft-release
+      - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            package_name: "@kpozin/sprawl-guard-darwin-arm64"
+          - runner: macos-15-intel
+            package_name: "@kpozin/sprawl-guard-darwin-x64"
+          - runner: ubuntu-24.04-arm
+            package_name: "@kpozin/sprawl-guard-linux-arm64-gnu"
+          - runner: ubuntu-24.04
+            package_name: "@kpozin/sprawl-guard-linux-x64-gnu"
+          - runner: windows-2025
+            package_name: "@kpozin/sprawl-guard-win32-x64-msvc"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install the published wrapper into an absent project
+        shell: bash
+        run: |
+          test ! -e install-smoke
+          mkdir install-smoke
+          printf '{"private":true}\n' > install-smoke/package.json
+          npm --prefix install-smoke install --save-exact "@kpozin/sprawl-guard@${SPRAWL_GUARD_VERSION}"
+          node --eval \
+            "require('node:module').createRequire(require('node:path').resolve('install-smoke/package.json')).resolve(process.env.NATIVE_PACKAGE_NAME + '/package.json')"
+        env:
+          NATIVE_PACKAGE_NAME: ${{ matrix.package_name }}
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Run the registry-installed native wrapper
+        shell: bash
+        run: |
+          unset SPRAWL_GUARD_BINARY
+          test "$(npm --prefix install-smoke exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          npm --prefix install-smoke exec -- sprawl-guard --help
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  verify-published-npm-musl:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_npm }}
+    needs:
+      - draft-release
+      - release-metadata
+    runs-on: ubuntu-24.04
+    env:
+      NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-musl"
+    steps:
+      - name: Run the registry-installed wrapper on Linux musl
+        shell: bash
+        run: |
+          docker run --rm \
+            --env NPM_RUNTIME_PACKAGE_NAME \
+            --env SPRAWL_GUARD_VERSION \
+            node:22-alpine sh -euxc '
+            mkdir /install-smoke
+            printf "{\"private\":true}\n" > /install-smoke/package.json
+            npm --prefix /install-smoke install --save-exact "@kpozin/sprawl-guard@${SPRAWL_GUARD_VERSION}"
+            node --eval \
+              "require('node:module').createRequire('/install-smoke/package.json').resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + '/package.json')"
+            unset SPRAWL_GUARD_BINARY
+            test "$(npm --prefix /install-smoke exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+            npm --prefix /install-smoke exec -- sprawl-guard --help
+          '
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  verify-published-npm-wasi:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_npm }}
+    needs:
+      - draft-release
+      - release-metadata
+    runs-on: ubuntu-24.04
+    env:
+      NPM_NATIVE_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-gnu"
+      NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-wasm32-wasip1"
+    steps:
+      - name: Check out the pinned npm scan fixture
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+          path: scan-fixture
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install native and WASI-only registry fixtures
+        shell: bash
+        run: |
+          test ! -e install-native
+          test ! -e install-wasi
+          mkdir install-native install-wasi
+          printf '{"private":true}\n' > install-native/package.json
+          printf '{"private":true}\n' > install-wasi/package.json
+          npm --prefix install-native install --save-exact \
+            "@kpozin/sprawl-guard@${SPRAWL_GUARD_VERSION}"
+          npm --prefix install-wasi install --save-exact --omit=optional \
+            "@kpozin/sprawl-guard@${SPRAWL_GUARD_VERSION}" \
+            "${NPM_RUNTIME_PACKAGE_NAME}@${SPRAWL_GUARD_VERSION}"
+          node --eval \
+            "require('node:module').createRequire(require('node:path').resolve('install-native/package.json')).resolve(process.env.NPM_NATIVE_PACKAGE_NAME + '/package.json')"
+          node --eval \
+            "require('node:module').createRequire(require('node:path').resolve('install-wasi/package.json')).resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + '/package.json')"
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Compare registry-installed native and WASI scans
+        shell: bash
+        run: |
+          unset SPRAWL_GUARD_BINARY
+          test "$(npm --prefix install-native exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          test "$(npm --prefix install-wasi exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          npm --prefix install-wasi exec -- sprawl-guard --help
+          npm --prefix install-native exec -- sprawl-guard --root "${PWD}/scan-fixture" \
+            languages --detected --format json > native-languages.json
+          npm --prefix install-wasi exec -- sprawl-guard --root "${PWD}/scan-fixture" \
+            languages --detected --format json > wasi-languages.json
+          node --eval '
+            const report = require("./wasi-languages.json");
+            if (report.mode !== "detected") process.exit(1);
+            if (!report.languages.some((language) =>
+              language.config_key === "typescript" && language.source_files > 0)) process.exit(1);
+          '
+          cmp native-languages.json wasi-languages.json
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}

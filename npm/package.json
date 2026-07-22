@@ -1,0 +1,41 @@
+{
+  "name": "@kpozin/sprawl-guard-workspace",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "pnpm run check:source-wrapper-manifest && pnpm --filter @kpozin/sprawl-guard build",
+    "check": "pnpm run typecheck:scripts && pnpm run check:package-version && pnpm run test && pnpm run check:rendered-publish-workspace",
+    "check:package-version": "node ./scripts/set-public-version.ts --check",
+    "check:rendered-publish-workspace": "pnpm run render:publish-workspace && node ./scripts/verify-packed-files.ts ./.stage/sprawl-guard --require README.md --require dist/bin/sprawl-guard.js --require LICENSE-MIT --require LICENSE-APACHE --forbid-suffix .test.js",
+    "check:source-wrapper-manifest": "node ./scripts/sync-source-wrapper-manifest.ts --check",
+    "install:rendered-publish-workspace": "pnpm --dir ./.stage install --config.confirmModulesPurge=false",
+    "render:publish-workspace": "node ./scripts/render-publish-workspace.ts",
+    "release:metadata": "node ./scripts/release-metadata.ts",
+    "release:prepare-cargo": "node ./scripts/publish-cargo-crates.ts prepare",
+    "release:publish-cargo": "node ./scripts/publish-cargo-crates.ts publish",
+    "release:prepare-npm": "node ./scripts/publish-npm-packages.ts prepare",
+    "release:publish-npm": "node ./scripts/publish-npm-channel.ts",
+    "release:verify-npm": "node ./scripts/publish-npm-packages.ts verify",
+    "release:prepare-assets": "node ./scripts/release-assets.ts prepare",
+    "release:replace-assets": "node ./scripts/release-assets.ts replace",
+    "stage:publish-payloads": "node ./scripts/stage-publish-payloads.ts",
+    "sync:source-wrapper-manifest": "node ./scripts/sync-source-wrapper-manifest.ts",
+    "test": "pnpm run check:source-wrapper-manifest && node --test scripts/*.test.ts && pnpm run build && pnpm --filter @kpozin/sprawl-guard test",
+    "typecheck:scripts": "pnpm exec tsc -p tsconfig.json",
+    "verify:source-wrapper-pack": "node ./scripts/verify-packed-files.ts ./sprawl-guard --require dist/bin/sprawl-guard.js --forbid-suffix .test.js",
+    "verify:staged-payload-packs": "node ./scripts/verify-staged-payload-packs.ts"
+  },
+  "devDependencies": {
+    "@decimalturn/toml-patch": "2.0.0",
+    "@types/node": "24.6.1",
+    "@types/semver": "7.7.1",
+    "semver": "7.8.5",
+    "typescript": "6.0.3",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  }
+}

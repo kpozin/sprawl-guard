@@ -1,0 +1,18 @@
+---
+import DefaultFooter from "@astrojs/starlight/components/Footer.astro";
+---
+
+<DefaultFooter />
+<small class="copyright">© 2026 Konstantin Pozin</small>
+
+<style>
+  @layer starlight.components {
+    .copyright {
+      display: block;
+      margin-block-start: 1.5rem;
+      color: var(--sl-color-gray-4);
+      font-size: var(--sl-text-xs);
+      text-align: center;
+    }
+  }
+</style>

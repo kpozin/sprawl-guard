@@ -1,0 +1,26 @@
+name: False positive
+description: Report a policy result that should not have been flagged.
+title: "[False positive]: "
+labels:
+  - false-positive
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What was flagged?
+      description: Include the command, the reported violation, and why it is wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Repository shape
+      description: Show the relevant config and file layout.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: sprawl-guard version
+    validations:
+      required: true

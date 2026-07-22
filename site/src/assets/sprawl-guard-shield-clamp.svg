@@ -1,0 +1,111 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 0 220 246">
+  <title>Sprawl Guard shield and clamp</title>
+  <style>
+    :root {
+      color: #18242d;
+      --brace-color: #356f52;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        color: #eef4f0;
+        --brace-color: #73a98b;
+      }
+    }
+  </style>
+  <defs>
+    <path
+      id="left-brace"
+      d="M82 82h-3c-9 0-13 6-13 15v7c0 7-3 11-10 12 7 1 10 5 10 12v7c0 9 4 15 13 15h3"
+    />
+    <rect id="upper-jaw" x="123.5" y="65" width="81" height="30" rx="7" />
+    <rect id="lower-jaw" x="123.5" y="150" width="81" height="30" rx="7" />
+    <g id="handle">
+      <path d="M153 180h22v41h-22z" />
+      <rect x="146" y="213" width="36" height="25" rx="7" />
+      <rect x="129" y="219" width="70" height="13" rx="6.5" />
+      <circle cx="129" cy="225.5" r="10" />
+      <circle cx="199" cy="225.5" r="10" />
+    </g>
+    <mask id="shield-behind-clamp" maskUnits="userSpaceOnUse">
+      <rect width="220" height="246" fill="white" />
+      <use
+        href="#upper-jaw"
+        fill="black"
+        stroke="black"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="8"
+      />
+      <use
+        href="#lower-jaw"
+        fill="black"
+        stroke="black"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="8"
+      />
+      <use
+        href="#handle"
+        fill="black"
+        stroke="black"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="8"
+      />
+    </mask>
+    <mask id="screw-behind-jaws" maskUnits="userSpaceOnUse">
+      <rect width="220" height="246" fill="white" />
+      <use
+        href="#upper-jaw"
+        fill="black"
+        stroke="black"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="8"
+      />
+      <use
+        href="#lower-jaw"
+        fill="black"
+        stroke="black"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        stroke-width="8"
+      />
+    </mask>
+  </defs>
+  <path
+    d="M164 65V45L92 18 20 45v81c0 40 23 73 72 100 49-27 62-46 62-56"
+    fill="none"
+    mask="url(#shield-behind-clamp)"
+    stroke="currentColor"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="20"
+  />
+  <g
+    fill="none"
+    stroke="var(--brace-color)"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="7"
+    transform="translate(92 116) scale(.85) translate(-92 -116)"
+  >
+    <use href="#left-brace" />
+    <use href="#left-brace" transform="translate(184) scale(-1 1)" />
+  </g>
+  <g mask="url(#screw-behind-jaws)">
+    <rect x="157" y="95" width="14" height="55" rx="7" fill="currentColor" />
+    <path
+      d="m154 99 20 4m-20 5 20 4m-20 5 20 4m-20 5 20 4m-20 5 20 4m-20 5 20 4"
+      fill="none"
+      stroke="currentColor"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      stroke-width="6"
+    />
+    <use href="#handle" fill="currentColor" />
+  </g>
+  <use href="#upper-jaw" fill="currentColor" />
+  <use href="#lower-jaw" fill="currentColor" />
+</svg>

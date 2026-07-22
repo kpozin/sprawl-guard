@@ -1,0 +1,201 @@
+---
+title: Run in CI
+description: Make Sprawl Guard checks reproducible for pull requests and merges.
+---
+
+import { TabItem, Tabs } from "@astrojs/starlight/components";
+
+CI should run a read-only check of the complete repository.
+
+## Pin a release
+
+Choose a [published release](https://github.com/kpozin/sprawl-guard/releases) and replace
+`<VERSION>` below. Cargo installs the pinned binary in CI. For npm or pnpm, add the exact
+development dependency locally and commit the updated manifest and lockfile.
+
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
+
+```sh
+cargo install sprawl-guard --version <VERSION> --locked
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+```sh
+npm install --save-dev --save-exact @kpozin/sprawl-guard@<VERSION>
+```
+
+  </TabItem>
+  <TabItem label="pnpm">
+
+```sh
+pnpm add --save-dev --save-exact @kpozin/sprawl-guard@<VERSION>
+```
+
+  </TabItem>
+</Tabs>
+
+The pnpm workflow reads the package-manager version from `package.json`. Pin it alongside the
+dependency:
+
+```json title="package.json"
+{
+  "packageManager": "pnpm@<PNPM_VERSION>"
+}
+```
+
+Do not run `npm install --save-dev` or `pnpm add --save-dev` in CI. Restore the committed
+lockfile instead.
+
+## Use your existing verification command
+
+If the repository already has a `check`, `verify`, or equivalent command, add an unscoped
+`sprawl-guard check` to it. Use that command for local development, coding agents, and CI so every
+environment runs the same required checks.
+
+A scoped Sprawl Guard check can provide faster feedback while editing, but it cannot replace the
+unscoped gate. Directory limits and stale ratchet entries can depend on files outside the selected
+paths.
+
+## Add the CI job
+
+This GitHub Actions workflow runs on pull requests and pushes. Use the tab that matches the
+installation:
+
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install sprawl-guard --version <VERSION> --locked
+      - run: sprawl-guard check
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm exec -- sprawl-guard check
+```
+
+  </TabItem>
+  <TabItem label="pnpm">
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec sprawl-guard check
+```
+
+  </TabItem>
+</Tabs>
+
+Run the workflow's unscoped check from the repository root. Do not pass paths in the required CI
+job: a scoped check intentionally ignores files and stale ratchet entries outside its scope. Do
+not run `baseline --write` or `ratchet --write` in CI; developers should review those changes
+locally.
+
+## Guide coding agents
+
+Add guidance like this to the repository's agent instructions:
+
+```md
+Before declaring work complete, run `sprawl-guard check` from the repository root.
+
+Resolve new violations with meaningful refactors. Split code into cohesive, clearly named modules
+with distinct responsibilities, and place each concern where it logically belongs. Do not create
+miscellaneous “helpers,” “utils,” “common,” or overflow files merely to satisfy a limit.
+
+Do not raise limits or rewrite the ratchet merely to make the check pass. When a refactor reduces
+an existing violation, update the ratchet and commit it with the refactor.
+```
+
+## Choose output
+
+Human-readable output is the default. Use JSON for custom automation or SARIF for code-scanning
+systems:
+
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
+
+```sh
+sprawl-guard check --format json
+sprawl-guard check --format sarif
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+```sh
+npm exec -- sprawl-guard check --format json
+npm exec -- sprawl-guard check --format sarif
+```
+
+  </TabItem>
+  <TabItem label="pnpm">
+
+```sh
+pnpm exec sprawl-guard check --format json
+pnpm exec sprawl-guard check --format sarif
+```
+
+  </TabItem>
+</Tabs>
+
+Treat exit code `0` as pass, `1` as a policy failure, and `2` as an operational failure. Preserve
+the output even when the command exits nonzero. Policy reports and collected traversal failures
+honor the selected structured format. Other operational failures, including invalid arguments,
+configuration, or paths, can produce only human-readable stderr. Check the exit code before parsing
+stdout; exit code `2` does not guarantee JSON or SARIF output.
+
+Before updating CI, change the pinned version locally, run a full check, and review any changes to
+configuration, classification, measurements, or ratchets.
+
+See [CLI and output](/sprawl-guard/reference/cli-and-output/) for formats and diagnostic
+identifiers.

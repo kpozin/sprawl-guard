@@ -1,0 +1,154 @@
+---
+import cliReferenceJson from "../generated/cli-reference.json";
+
+interface CliReferencePossibleValue {
+  name: string;
+  help: string | null;
+}
+
+interface CliReferenceArgument {
+  id: string;
+  syntax: string;
+  help: string | null;
+  conflicts_with: string[];
+  default_values: string[];
+  possible_values: CliReferencePossibleValue[];
+}
+
+interface CliReferenceCommand {
+  path: string[];
+  usage: string;
+  arguments: CliReferenceArgument[];
+}
+
+interface CliReferenceDocument {
+  schema_version: number;
+  commands: CliReferenceCommand[];
+}
+
+interface InlineTextSegment {
+  kind: "text";
+  value: string;
+}
+
+interface InlineCodeSegment {
+  kind: "code";
+  value: string;
+}
+
+type InlineSegment = InlineTextSegment | InlineCodeSegment;
+
+interface Props {
+  path: string;
+}
+
+const cliReference: CliReferenceDocument = cliReferenceJson;
+if (cliReference.schema_version !== 2) {
+  throw new Error(
+    `Unsupported Sprawl Guard CLI reference schema version: ${cliReference.schema_version}`,
+  );
+}
+
+const { path } = Astro.props;
+const pathMatches = cliReference.commands.filter((command) => command.path.join(" ") === path);
+if (pathMatches.length !== 1) {
+  throw new Error(`Expected exactly one Sprawl Guard command for path: ${path}`);
+}
+const [command] = pathMatches;
+
+function inlineCodeSegments(value: string): InlineSegment[] {
+  const segments: InlineSegment[] = [];
+  const inlineCode = /`([^`]+)`/g;
+  let plainTextStart = 0;
+
+  for (const match of value.matchAll(inlineCode)) {
+    const matchStart = match.index ?? 0;
+    if (plainTextStart < matchStart) {
+      segments.push({ kind: "text", value: value.slice(plainTextStart, matchStart) });
+    }
+    segments.push({ kind: "code", value: match[1] });
+    plainTextStart = matchStart + match[0].length;
+  }
+
+  if (plainTextStart < value.length) {
+    segments.push({ kind: "text", value: value.slice(plainTextStart) });
+  }
+  return segments;
+}
+---
+
+<p><code>{command.usage}</code></p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Argument or option</th>
+      <th>Meaning</th>
+    </tr>
+  </thead>
+  <tbody>
+    {
+      command.arguments.map((argument) => {
+        return (
+          <tr>
+            <td><code>{argument.syntax}</code></td>
+            <td>
+              {
+                argument.help === null
+                  ? ""
+                  : inlineCodeSegments(argument.help).map((segment) =>
+                      segment.kind === "code" ? <code>{segment.value}</code> : segment.value,
+                    )
+              }
+              {
+                argument.default_values.length > 0 && (
+                  <div>
+                    <strong>Default:</strong> <code>{argument.default_values.join(" ")}</code>
+                  </div>
+                )
+              }
+              {
+                argument.conflicts_with.length > 0 && (
+                  <div>
+                    <strong>Conflicts with:</strong>{" "}
+                    <code>{argument.conflicts_with.join(", ")}</code>
+                  </div>
+                )
+              }
+              {
+                argument.possible_values.length > 0 && (
+                  <div>
+                    <strong>Allowed values:</strong>
+                    <ul>
+                      {
+                        argument.possible_values.map((value) => (
+                          <li>
+                            <code>{value.name}</code>
+                            {
+                              value.help === null
+                                ? ""
+                                : [
+                                    " — ",
+                                    ...inlineCodeSegments(value.help).map((segment) =>
+                                      segment.kind === "code" ? (
+                                        <code>{segment.value}</code>
+                                      ) : (
+                                        segment.value
+                                      ),
+                                    ),
+                                  ]
+                            }
+                          </li>
+                        ))
+                      }
+                    </ul>
+                  </div>
+                )
+              }
+            </td>
+          </tr>
+        );
+      })
+    }
+  </tbody>
+</table>

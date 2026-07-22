@@ -1,0 +1,105 @@
+---
+title: Adopt Sprawl Guard in an existing repository
+description: Record existing violations without allowing them to grow.
+---
+
+import { TabItem, Tabs } from "@astrojs/starlight/components";
+
+You can adopt Sprawl Guard without first fixing every file or directory that exceeds the desired
+limits.
+
+Adoption uses two files with different jobs. `sprawl-guard.toml` defines the policy. A second file
+records current measurements that exceed that policy so they may remain temporarily but cannot
+grow. Sprawl Guard calls this second file the ratchet.
+
+## Create the configuration
+
+Preview the generated configuration, then create `sprawl-guard.toml`:
+
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
+
+```sh
+sprawl-guard init --dry-run
+sprawl-guard init
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+```sh
+npm exec -- sprawl-guard init --dry-run
+npm exec -- sprawl-guard init
+```
+
+  </TabItem>
+  <TabItem label="pnpm">
+
+```sh
+pnpm exec sprawl-guard init --dry-run
+pnpm exec sprawl-guard init
+```
+
+  </TabItem>
+</Tabs>
+
+Edit the generated file to [set the desired limits](/sprawl-guard/configure-checks/), not the
+repository's current maxima. Use `sprawl-guard config resolved` to review the complete policy.
+
+## Record existing violations
+
+After setting the policy, preview the ratchet entries for existing violations before writing them:
+
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
+
+```sh
+sprawl-guard baseline --all
+sprawl-guard baseline --all --write
+sprawl-guard check
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+```sh
+npm exec -- sprawl-guard baseline --all
+npm exec -- sprawl-guard baseline --all --write
+npm exec -- sprawl-guard check
+```
+
+  </TabItem>
+  <TabItem label="pnpm">
+
+```sh
+pnpm exec sprawl-guard baseline --all
+pnpm exec sprawl-guard baseline --all --write
+pnpm exec sprawl-guard check
+```
+
+  </TabItem>
+</Tabs>
+
+A preview with one file ceiling looks like:
+
+```toml title="sprawl-guard.ratchet.toml"
+version = 1
+
+[[files]]
+path = "src/large.py"
+non_test_code_lines = 430
+```
+
+The write creates the ratchet file selected by `[ratchet].file` in `sprawl-guard.toml`. Its default
+path is `sprawl-guard.ratchet.toml`. Review every entry. Each should cover maintained code that is
+expected to improve. Exclude generated or third-party code, and use a documented override for a
+deliberate long-term exception.
+
+If a ratchet file already exists, `--all` replaces it. A replacement that would raise a ceiling is
+refused unless you add `--allow-raises`; review any increase carefully. Use path arguments instead
+of `--all` to replace only selected files or directories.
+
+Commit the configuration and ratchet files together. Confirm that the unchanged tree passes. Then
+temporarily increase one baselined measurement to verify that the ratchet rejects growth.
+
+Next, [run an unscoped check in CI](/sprawl-guard/run-in-ci/).

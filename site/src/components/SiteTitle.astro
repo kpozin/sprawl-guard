@@ -1,0 +1,48 @@
+---
+import DefaultSiteTitle from "@astrojs/starlight/components/SiteTitle.astro";
+
+const releaseVersion = import.meta.env.PUBLIC_SPRAWL_GUARD_VERSION;
+const releaseTag = releaseVersion ? `v${releaseVersion}` : null;
+---
+
+<div class="site-title-with-version">
+  <DefaultSiteTitle />
+  {
+    releaseTag && (
+      <a
+        class="version"
+        href={`https://github.com/kpozin/sprawl-guard/releases/tag/${releaseTag}`}
+        aria-label={`Sprawl Guard ${releaseTag} release notes`}
+      >
+        {releaseTag}
+      </a>
+    )
+  }
+</div>
+
+<style>
+  @layer starlight.components {
+    .site-title-with-version {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 0;
+    }
+
+    .version {
+      flex: none;
+      border: 1px solid var(--sl-color-gray-5);
+      border-radius: 0.25rem;
+      padding: 0.15rem 0.35rem;
+      color: var(--sl-color-gray-3);
+      font-size: var(--sl-text-xs);
+      line-height: 1;
+      text-decoration: none;
+    }
+
+    .version:hover {
+      border-color: var(--sl-color-gray-4);
+      color: var(--sl-color-gray-2);
+    }
+  }
+</style>
