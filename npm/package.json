@@ -15,8 +15,6 @@
     "install:rendered-publish-workspace": "pnpm --dir ./.stage install --config.confirmModulesPurge=false",
     "render:publish-workspace": "node ./scripts/render-publish-workspace.ts",
     "release:metadata": "node ./scripts/release-metadata.ts",
-    "release:prepare-cargo": "node ./scripts/publish-cargo-crates.ts prepare",
-    "release:publish-cargo": "node ./scripts/publish-cargo-crates.ts publish",
     "release:prepare-npm": "node ./scripts/publish-npm-packages.ts prepare",
     "release:publish-npm": "node ./scripts/publish-npm-channel.ts",
     "release:verify-npm": "node ./scripts/publish-npm-packages.ts verify",
