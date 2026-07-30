@@ -121,26 +121,3 @@ impl<'de> Deserialize<'de> for LeafFiles {
         Self::new(u32::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
-
-/// Measured count of code lines; zero is valid for empty or comment-only files.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
-#[serde(transparent)]
-pub struct CountedCodeLines(u32);
-
-impl CountedCodeLines {
-    /// Creates a measured code-line count.
-    pub fn new(value: u32) -> Self {
-        Self(value)
-    }
-
-    /// Returns the raw measured count.
-    pub const fn get(self) -> u32 {
-        self.0
-    }
-}
-
-impl fmt::Display for CountedCodeLines {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(formatter)
-    }
-}

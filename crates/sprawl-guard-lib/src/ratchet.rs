@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CodeLines, CountedCodeLines, LeafFiles, RelativePath, Result, SprawlError};
+use crate::{CodeLines, LeafFiles, LineCount, RelativePath, Result, SprawlError};
 
 const SUPPORTED_RATCHET_VERSION: u32 = 1;
 
@@ -116,7 +116,7 @@ impl RatchetCount {
     }
 
     /// Converts a measured code-line count to a ratchet comparison count.
-    pub const fn from_counted_code_lines(value: CountedCodeLines) -> Self {
+    pub const fn from_line_count(value: LineCount) -> Self {
         Self(value.get())
     }
 

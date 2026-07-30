@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use crate::classification::{ClassifiedSource, SourceKind, discover_sources_report};
-use crate::code_line_counter::{CodeLineCounter, TokeiCodeLineCounter};
+use crate::code_line_counter::{CodeLineCounter, LocMeasurement, TokeiCodeLineCounter};
 use crate::config::{Config, TraversalErrorPolicy};
 use crate::resolved_limits::LimitResolver;
 use crate::rust_cfg::{RustCfgTestStatus, preprocess_rust_cfg_test, rust_cfg_test_policy_info};
 use crate::source_file::{ensure_source_file_size, read_source_to_string};
 use crate::value::path::{normalize_under_root, resolve_root};
-use crate::{CodeLines, CountedCodeLines, RelativePath, Result};
+use crate::{CodeLines, IncludedLineTypes, LineCount, RelativePath, Result};
 
 use super::directory_fanout::directory_fanout_checks;
 use super::ratchet::{
@@ -218,8 +218,15 @@ fn ratchet_violation_sort_order(kind: RatchetViolationKind) -> u8 {
 pub(super) struct FileMeasurement {
     pub(super) kind: FileViolationKind,
     pub(super) path: RelativePath,
-    pub(super) actual: CountedCodeLines,
+    pub(super) loc: LocMeasurement,
     pub(super) limit: CodeLines,
+}
+
+impl FileMeasurement {
+    /// Returns the code-only aggregate used by the current resolved policy.
+    pub(super) fn current_code_lines(&self) -> LineCount {
+        current_code_lines(&self.loc)
+    }
 }
 
 pub(super) enum SourceCheck {
@@ -228,6 +235,7 @@ pub(super) enum SourceCheck {
         warnings: Vec<CheckWarning>,
     },
     Exceeded {
+        measurement: FileMeasurement,
         violation: FileLocViolation,
         warnings: Vec<CheckWarning>,
     },
@@ -236,13 +244,9 @@ pub(super) enum SourceCheck {
 impl SourceCheck {
     pub(super) fn measurement(&self) -> FileMeasurement {
         match self {
-            Self::WithinLimit { measurement, .. } => measurement.clone(),
-            Self::Exceeded { violation, .. } => FileMeasurement {
-                kind: violation.kind,
-                path: violation.path.clone(),
-                actual: violation.actual,
-                limit: violation.limit,
-            },
+            Self::WithinLimit { measurement, .. } | Self::Exceeded { measurement, .. } => {
+                measurement.clone()
+            }
         }
     }
 
@@ -295,8 +299,11 @@ fn check_source(
     source: ClassifiedSource,
 ) -> Result<SourceCheck> {
     let absolute_path = root.join(source.path.to_path_buf());
-    let CountedSource { actual, warnings } =
-        count_source(config, counter, &source, &absolute_path)?;
+    let CountedSource {
+        measurement: loc,
+        warnings,
+    } = count_source(config, counter, &source, &absolute_path)?;
+    let actual = current_code_lines(&loc);
     let kind = match source.kind {
         SourceKind::Production => FileViolationKind::FileLoc,
         SourceKind::Test => FileViolationKind::TestFileLoc,
@@ -305,7 +312,7 @@ fn check_source(
     let measurement = FileMeasurement {
         kind,
         path: source.path.clone(),
-        actual,
+        loc,
         limit: limit.value,
     };
 
@@ -317,6 +324,7 @@ fn check_source(
     }
 
     Ok(SourceCheck::Exceeded {
+        measurement,
         violation: FileLocViolation {
             kind,
             path: source.path,
@@ -329,8 +337,12 @@ fn check_source(
     })
 }
 
+fn current_code_lines(measurement: &LocMeasurement) -> LineCount {
+    measurement.line_counts().code
+}
+
 struct CountedSource {
-    actual: CountedCodeLines,
+    measurement: LocMeasurement,
     warnings: Vec<CheckWarning>,
 }
 
@@ -343,7 +355,11 @@ fn count_source(
     ensure_source_file_size(absolute_path, config.traversal.max_file_bytes)?;
     let Some(preprocess_info) = rust_cfg_test_policy_info(config, source) else {
         return Ok(CountedSource {
-            actual: counter.count_path(absolute_path, source.language)?,
+            measurement: counter.count_path(
+                absolute_path,
+                source.language,
+                IncludedLineTypes::Code,
+            )?,
             warnings: vec![],
         });
     };
@@ -351,20 +367,28 @@ fn count_source(
         && preprocess_info.status != RustCfgTestStatus::PrefilterSkipped
     {
         return Ok(CountedSource {
-            actual: counter.count_path(absolute_path, source.language)?,
+            measurement: counter.count_path(
+                absolute_path,
+                source.language,
+                IncludedLineTypes::Code,
+            )?,
             warnings: vec![],
         });
     }
 
     let source_text = read_source_to_string(absolute_path, config.traversal.max_file_bytes)?;
     let result = preprocess_rust_cfg_test(&source_text);
-    let actual = counter.count_source(&result.source, source.language)?;
+    let measurement =
+        counter.count_source(&result.source, source.language, IncludedLineTypes::Code)?;
     let warnings = result
         .warning
         .into_iter()
         .map(|warning| CheckWarning::rust_cfg_test_parse_failed(source.path.clone(), warning))
         .collect();
-    Ok(CountedSource { actual, warnings })
+    Ok(CountedSource {
+        measurement,
+        warnings,
+    })
 }
 /// Normalized set of path prefixes that limit which files a check considers.
 ///

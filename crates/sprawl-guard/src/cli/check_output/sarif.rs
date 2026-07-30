@@ -268,8 +268,8 @@ mod tests {
         RatchetStaleViolationKind, RatchetViolation,
     };
     use sprawl_guard_lib::{
-        CheckWarning, CheckWarningKind, CodeLines, CountedCodeLines, DiagnosticDetail, LanguageId,
-        LeafFiles, RatchetCount, RelativePath,
+        CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail, LanguageId, LeafFiles,
+        LineCount, RatchetCount, RelativePath,
     };
 
     use super::*;
@@ -291,7 +291,7 @@ mod tests {
             kind,
             path: RelativePath::new(path).unwrap(),
             language: LanguageId::new("Rust").unwrap(),
-            actual: CountedCodeLines::new(3),
+            actual: LineCount::new(3),
             limit: CodeLines::new(2).unwrap(),
             ratchet: None,
         }

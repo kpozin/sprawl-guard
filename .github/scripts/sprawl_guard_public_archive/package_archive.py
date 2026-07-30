@@ -110,6 +110,10 @@ LIBRARY_PACKAGE = PackageSpec(
         default_features=DefaultFeaturesExpectation.DISABLED,
     ),
     allowed_content_directories=(PurePosixPath("src"),),
+    required_extra_files=(
+        PurePosixPath("testdata/line_counts/markdown.md"),
+        PurePosixPath("testdata/line_counts/rust_doc_comment.rs"),
+    ),
 )
 
 CLI_PACKAGE = PackageSpec(

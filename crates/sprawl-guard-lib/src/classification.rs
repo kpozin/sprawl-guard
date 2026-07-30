@@ -1,5 +1,7 @@
 //! Source discovery and path classification.
 
+mod bundled_filenames;
+mod bundled_languages;
 mod classifier;
 mod explain;
 mod source_discovery;

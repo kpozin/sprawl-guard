@@ -88,11 +88,11 @@ impl ExcludedItemCount {
     }
 }
 
-/// Blanks top-level Rust items that can compile only when `test` is enabled.
+/// Removes top-level Rust items that can compile only when `test` is enabled.
 ///
-/// The returned source preserves the original line structure. Parse failures
-/// are intentionally non-fatal because the policy should still produce LOC
-/// results for files using syntax not yet accepted by the pinned parser.
+/// Parse failures are intentionally non-fatal because the policy should still
+/// produce LOC results for files using syntax not yet accepted by the pinned
+/// parser.
 pub(crate) fn preprocess_rust_cfg_test(source: &str) -> RustCfgTestPreprocessResult<'_> {
     if !looks_like_cfg_test(source) {
         return RustCfgTestPreprocessResult {
@@ -120,7 +120,7 @@ pub(crate) fn preprocess_rust_cfg_test(source: &str) -> RustCfgTestPreprocessRes
     let source = if excluded.ranges.is_empty() {
         Cow::Borrowed(source)
     } else {
-        Cow::Owned(blank_ranges(source, &excluded.ranges))
+        Cow::Owned(remove_ranges(source, &excluded.ranges))
     };
 
     RustCfgTestPreprocessResult {
@@ -167,7 +167,10 @@ fn looks_like_cfg_test(source: &str) -> bool {
 fn excluded_ranges(syntax: &syn::File, source: &str) -> ExcludedRanges {
     if syntax.attrs.iter().any(attr_requires_test) {
         return ExcludedRanges {
-            ranges: file_ranges(syntax, source),
+            ranges: vec![SourceRange {
+                start: 0,
+                end: source.len(),
+            }],
             excluded_items: ExcludedItemCount::from_len(syntax.items.len()),
         };
     }
@@ -186,25 +189,6 @@ fn excluded_item_ranges(items: &[Item], source: &str) -> Vec<SourceRange> {
         .filter(|item| item_requires_test(item))
         .filter_map(|item| item_range(item, &source_index))
         .collect()
-}
-
-fn file_ranges(syntax: &syn::File, source: &str) -> Vec<SourceRange> {
-    let source_index = SourceIndex::new(source);
-    let start = syntax
-        .attrs
-        .iter()
-        .map(|attr| attr.span().start())
-        .min()
-        .and_then(|location| source_index.offset(location))
-        .unwrap_or(0);
-    let end = syntax
-        .items
-        .iter()
-        .map(|item| item.span().end())
-        .max()
-        .and_then(|location| source_index.offset(location))
-        .unwrap_or(source.len());
-    vec![SourceRange { start, end }]
 }
 
 fn item_requires_test(item: &Item) -> bool {
@@ -274,16 +258,32 @@ fn item_range(item: &Item, source_index: &SourceIndex<'_>) -> Option<SourceRange
     })
 }
 
-fn blank_ranges(source: &str, ranges: &[SourceRange]) -> String {
-    let mut bytes = source.as_bytes().to_vec();
+fn remove_ranges(source: &str, ranges: &[SourceRange]) -> String {
+    let mut excluded = vec![false; source.len()];
     for range in ranges {
-        for byte in &mut bytes[range.start..range.end] {
-            if *byte != b'\n' && *byte != b'\r' {
-                *byte = b' ';
-            }
-        }
+        excluded[range.start..range.end].fill(true);
     }
-    String::from_utf8(bytes).expect("blanking preserves valid UTF-8")
+
+    let mut retained = Vec::with_capacity(source.len());
+    let mut line_start = 0;
+    for line in source.as_bytes().split_inclusive(|byte| *byte == b'\n') {
+        let line_end = line_start + line.len();
+        let line_exclusions = &excluded[line_start..line_end];
+        let retained_line = line
+            .iter()
+            .zip(line_exclusions)
+            .filter_map(|(byte, excluded)| (!excluded).then_some(*byte))
+            .collect::<Vec<_>>();
+
+        if !line_exclusions.iter().any(|excluded| *excluded)
+            || !retained_line.iter().all(u8::is_ascii_whitespace)
+        {
+            retained.extend(retained_line);
+        }
+        line_start = line_end;
+    }
+
+    String::from_utf8(retained).expect("removing parsed Rust ranges must preserve UTF-8")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -328,7 +328,7 @@ impl<'source> SourceIndex<'source> {
             .unwrap_or(self.source.len());
         let line = &self.source[line_start..line_end];
         // Span columns are offsets into the original source line; keep them as
-        // byte offsets because blanking operates on byte ranges.
+        // byte offsets because removal operates on byte ranges.
         let column_offset = location.column.min(line.len());
         if !line.is_char_boundary(column_offset) {
             return None;
@@ -364,7 +364,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn it_blanks_a_cfg_test_module() {
+        fn it_removes_a_cfg_test_module() {
             let result = preprocess(indoc! {r#"
                 fn production() {}
 
@@ -378,11 +378,10 @@ mod tests {
             assert_eq!(result.info.excluded_items.get(), 1);
             assert!(result.source.contains("fn production() {}"));
             assert!(!result.source.contains("fixture"));
-            assert_eq!(result.source.lines().count(), 6);
         }
 
         #[test]
-        fn it_blanks_a_cfg_test_function() {
+        fn it_removes_a_cfg_test_function() {
             let result = preprocess(indoc! {r#"
                 #[cfg(test)]
                 fn fixture() -> u32 {
@@ -395,7 +394,7 @@ mod tests {
         }
 
         #[test]
-        fn it_does_not_blank_following_code_after_multibyte_text_on_the_same_line() {
+        fn it_preserves_following_code_after_multibyte_text_on_the_same_line() {
             let result = preprocess(
                 r#"#[cfg(test)] fn fixture() { let value = "éééééé"; } fn production() {}"#,
             );
@@ -406,7 +405,7 @@ mod tests {
         }
 
         #[test]
-        fn it_blanks_stacked_outer_attributes_and_doc_comments() {
+        fn it_removes_stacked_outer_attributes_and_doc_comments() {
             let result = preprocess(indoc! {r#"
                 /// fixture docs
                 #[allow(dead_code)]
@@ -427,7 +426,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn it_blanks_the_whole_file() {
+        fn it_removes_the_whole_file() {
             let result = preprocess(indoc! {r#"
                 #![cfg(test)]
 
@@ -439,7 +438,6 @@ mod tests {
             assert_eq!(result.info.excluded_items.get(), 2);
             assert!(!result.source.contains("fixture_one"));
             assert!(!result.source.contains("fixture_two"));
-            assert_eq!(result.source.lines().count(), 4);
         }
     }
 

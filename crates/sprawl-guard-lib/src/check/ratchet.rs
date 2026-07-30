@@ -43,7 +43,7 @@ fn apply_file_ratchet(
             .collect();
     };
     let measurement = source_check.measurement();
-    let actual = measurement.actual;
+    let actual = measurement.current_code_lines();
     if source_check.has_violation() && actual.get() > ceiling.get() {
         if let Some(violation) = source_check.violation_mut() {
             violation.ratchet = Some(ceiling);
@@ -74,7 +74,7 @@ fn increased_file_ratchet_violation(
     RatchetViolation::Increased(RatchetIncreasedViolation {
         kind: file_ratchet_increased_kind(measurement.kind),
         path: measurement.path.clone(),
-        actual: RatchetCount::from_counted_code_lines(measurement.actual),
+        actual: RatchetCount::from_line_count(measurement.current_code_lines()),
         limit: RatchetCount::from_code_lines(measurement.limit),
         ratchet: RatchetCount::from_code_lines(ceiling),
     })
@@ -88,7 +88,7 @@ fn stale_file_ratchet_violation(
         RatchetStaleMeasuredViolation {
             kind: file_ratchet_stale_kind(measurement.kind),
             path: measurement.path.clone(),
-            actual: RatchetCount::from_counted_code_lines(measurement.actual),
+            actual: RatchetCount::from_line_count(measurement.current_code_lines()),
             limit: Some(RatchetCount::from_code_lines(measurement.limit)),
             ratchet: RatchetCount::from_code_lines(ceiling),
         },

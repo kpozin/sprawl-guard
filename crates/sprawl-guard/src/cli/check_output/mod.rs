@@ -331,9 +331,9 @@ mod tests {
     use indoc::indoc;
     use serde_json::json;
     use sprawl_guard_lib::{
-        CheckViolation, CheckWarning, CheckWarningKind, CodeLines, CountedCodeLines,
-        DiagnosticDetail, DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation,
-        LeafFiles, NonEmptyTraversalIncidents, RelativePath, TraversalIncidentSeverity,
+        CheckViolation, CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail,
+        DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation, LeafFiles, LineCount,
+        NonEmptyTraversalIncidents, RelativePath, TraversalIncidentSeverity,
     };
 
     use super::*;
@@ -366,7 +366,7 @@ mod tests {
             kind,
             path: RelativePath::new(path).unwrap(),
             language: sprawl_guard_lib::LanguageId::new("Rust").unwrap(),
-            actual: CountedCodeLines::new(3),
+            actual: LineCount::new(3),
             limit: CodeLines::new(2).unwrap(),
             ratchet: None,
         }

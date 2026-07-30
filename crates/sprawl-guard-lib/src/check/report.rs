@@ -9,7 +9,7 @@ use serde::{Serialize, Serializer};
 use crate::classification::TraversalIncident;
 use crate::ratchet::RatchetCount;
 use crate::rust_cfg::RustCfgTestWarning;
-use crate::{CodeLines, CountedCodeLines, DiagnosticDetail, LanguageId, LeafFiles, RelativePath};
+use crate::{CodeLines, DiagnosticDetail, LanguageId, LeafFiles, LineCount, RelativePath};
 
 /// Successful result of one `sprawl-guard check` run.
 ///
@@ -566,7 +566,7 @@ pub struct FileLocViolation {
     /// Language used for LOC counting.
     pub language: LanguageId,
     /// Measured code lines.
-    pub actual: CountedCodeLines,
+    pub actual: LineCount,
     /// Configured code-line limit.
     pub limit: CodeLines,
     /// Ratchet limit that covers this violation, when available.

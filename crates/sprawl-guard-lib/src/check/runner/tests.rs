@@ -84,6 +84,70 @@ fn check_with_config(
     })
 }
 
+fn count_rust_production_source(root: &Path, source_text: &str) -> CountedSource {
+    const SOURCE_PATH: &str = "src/lib.rs";
+
+    write_rust_enabled_config(root);
+    write_file(root, SOURCE_PATH, source_text);
+    let config = load_config(root);
+    let source = ClassifiedSource {
+        path: RelativePath::new(Path::new(SOURCE_PATH)).unwrap(),
+        language: crate::LanguageId::new("Rust").unwrap(),
+        kind: SourceKind::Production,
+    };
+    count_source(
+        &config,
+        &TokeiCodeLineCounter,
+        &source,
+        &root.join(SOURCE_PATH),
+    )
+    .unwrap()
+}
+
+struct CommentsInclusiveCounter;
+
+impl CommentsInclusiveCounter {
+    fn measurement() -> LocMeasurement {
+        LocMeasurement::new(
+            IncludedLineTypes::CodeAndComments,
+            crate::LineCounts::new(
+                crate::LineCount::new(1),
+                crate::LineCount::new(100),
+                crate::LineCount::new(0),
+            ),
+        )
+        .unwrap()
+    }
+}
+
+impl CodeLineCounter for CommentsInclusiveCounter {
+    fn count_path(
+        &self,
+        _path: &Path,
+        _language: crate::LanguageId,
+        _included_line_types: IncludedLineTypes,
+    ) -> Result<LocMeasurement> {
+        Ok(Self::measurement())
+    }
+
+    fn count_source(
+        &self,
+        _source: &str,
+        _language: crate::LanguageId,
+        _included_line_types: IncludedLineTypes,
+    ) -> Result<LocMeasurement> {
+        Ok(Self::measurement())
+    }
+
+    fn backend_id(&self) -> &'static str {
+        "comments-inclusive-test-counter"
+    }
+
+    fn backend_version(&self) -> &'static str {
+        "1"
+    }
+}
+
 fn file_violations(report: &CheckReport) -> Vec<&FileLocViolation> {
     report
         .violations()
@@ -132,6 +196,33 @@ fn single_directory_violation(report: &CheckReport) -> &DirectoryFanoutViolation
     let violations = directory_violations(report);
     assert_eq!(violations.len(), 1);
     violations[0]
+}
+
+mod when_an_injected_counter_uses_different_included_line_types {
+    use super::*;
+
+    #[test]
+    fn it_applies_the_current_code_only_policy_to_the_line_breakdown() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_rust_file_limit_config(tempdir.path(), 1);
+        write_file(tempdir.path(), "src/lib.rs", "fn production() {}\n");
+        let config = load_config(tempdir.path());
+
+        let report = check_with_counter(
+            CheckOptions {
+                root: tempdir.path().to_path_buf(),
+                config: &config,
+                paths: vec![],
+                require_ratchet_current: None,
+                traversal_error_policy: None,
+            },
+            &CommentsInclusiveCounter,
+        )
+        .unwrap();
+
+        assert_eq!(report.status(), CheckStatus::Passed);
+        assert!(report.violations().is_empty());
+    }
 }
 
 mod when_source_exceeds_the_production_file_limit {
@@ -373,31 +464,54 @@ mod when_rust_production_source_contains_cfg_test_items {
     #[test]
     fn it_excludes_file_wide_cfg_test_sources_from_the_production_file_count() {
         let tempdir = tempfile::tempdir().unwrap();
-        write_config(
+        let counted = count_rust_production_source(
             tempdir.path(),
-            indoc! {r#"
-                [limits.max_lines_per_file]
-                code_non_test = 1
-
-                [languages.rust]
-                enabled = true
-            "#},
-        );
-        write_file(
-            tempdir.path(),
-            "src/lib.rs",
             indoc! {r#"
                 #![cfg(test)]
 
                 fn fixture_one() {}
                 fn fixture_two() {}
+
+                // trailing test-only comment
+
             "#},
         );
 
-        let report = check_root(tempdir.path()).unwrap();
+        assert_eq!(
+            counted.measurement.line_counts(),
+            crate::LineCounts::new(
+                crate::LineCount::new(0),
+                crate::LineCount::new(0),
+                crate::LineCount::new(0),
+            ),
+        );
+    }
 
-        assert_eq!(report.status(), CheckStatus::Passed);
-        assert!(report.violations().is_empty());
+    #[test]
+    fn it_excludes_cfg_test_items_from_every_logical_line_category() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let counted = count_rust_production_source(
+            tempdir.path(),
+            indoc! {r#"
+                fn production() {}
+
+                #[cfg(test)]
+                mod tests {
+                    // fixture comment
+
+                    fn fixture() {}
+                }
+            "#},
+        );
+
+        assert_eq!(
+            counted.measurement.line_counts(),
+            crate::LineCounts::new(
+                crate::LineCount::new(1),
+                crate::LineCount::new(0),
+                crate::LineCount::new(1),
+            ),
+        );
     }
 }
 
@@ -468,6 +582,34 @@ mod when_rust_cfg_test_preprocessing_fails {
         assert_eq!(report.warnings()[0].path.as_str(), "src/lib.rs");
         assert!(!report.warnings()[0].detail.is_empty());
         assert_eq!(report.status(), CheckStatus::Failed);
+    }
+
+    #[test]
+    fn it_preserves_every_logical_line_category_from_the_original_source() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let counted = count_rust_production_source(
+            tempdir.path(),
+            indoc! {r#"
+                #[cfg(test)]
+                fn broken( {
+                // comment
+
+            "#},
+        );
+
+        assert_eq!(
+            counted.measurement.line_counts(),
+            crate::LineCounts::new(
+                crate::LineCount::new(2),
+                crate::LineCount::new(1),
+                crate::LineCount::new(1),
+            ),
+        );
+        assert_eq!(counted.warnings.len(), 1);
+        assert_eq!(
+            counted.warnings[0].kind,
+            CheckWarningKind::RustCfgTestParseFailed,
+        );
     }
 }
 

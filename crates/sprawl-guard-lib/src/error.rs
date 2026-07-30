@@ -232,7 +232,7 @@ pub enum SprawlError {
         /// Counted source path.
         path: PathBuf,
         /// Backend-reported count.
-        count: usize,
+        count: u64,
     },
 }
 
