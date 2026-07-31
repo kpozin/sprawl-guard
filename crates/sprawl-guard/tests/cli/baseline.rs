@@ -25,6 +25,22 @@ mod when_writing_the_initial_baseline {
         assert_eq!(file.non_test_code_lines.get(), 2);
         assert_eq!(stderr(&output), "");
     }
+
+    #[test]
+    fn it_records_the_automatic_source_group_for_directory_entries() {
+        let root = TempDir::new().unwrap();
+        write_rust_directory_fanout_fixture(&root);
+
+        let output = sprawl_guard(&root)
+            .args(["baseline", "--write"])
+            .output()
+            .unwrap();
+        let ratchet = read_ratchet_file(&root);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(ratchet.directories.len(), 1);
+        assert_eq!(ratchet.directories[0].group.as_str(), "source");
+    }
 }
 
 mod when_the_ratchet_file_already_exists {

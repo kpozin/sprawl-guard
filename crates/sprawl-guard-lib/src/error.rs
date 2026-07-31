@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::classification::TraversalIncident;
-use crate::{LanguageId, RelativePath};
+use crate::{LanguageGroupId, LanguageId, RelativePath};
 
 /// Error type for recoverable `sprawl-guard` library failures.
 #[derive(Debug, thiserror::Error)]
@@ -140,6 +140,16 @@ pub enum SprawlError {
         /// Ratchet section containing the duplicate.
         section: &'static str,
         /// Duplicate ratchet path.
+        path: RelativePath,
+    },
+    /// A ratchet file contained a duplicate grouped directory entry.
+    #[error("duplicate directory ratchet entry in [[{section}]] for group {group} and path {path}")]
+    DuplicateDirectoryRatchetEntry {
+        /// Ratchet section containing the duplicate.
+        section: &'static str,
+        /// Duplicate language group.
+        group: LanguageGroupId,
+        /// Duplicate directory path.
         path: RelativePath,
     },
     /// An included config fragment was not a TOML table.

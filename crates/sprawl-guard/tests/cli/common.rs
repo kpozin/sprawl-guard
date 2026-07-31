@@ -3,7 +3,7 @@ use std::process::{Command, Output, Stdio};
 
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
-use indoc::formatdoc;
+use indoc::{formatdoc, indoc};
 use sprawl_guard_lib::ratchet::{FileRatchet, RatchetFile};
 use toml::Value as TomlValue;
 
@@ -162,6 +162,21 @@ pub(crate) fn write_rust_source_with_function_count(
         .map(|index| format!("fn function_{index}() {{}}\n"))
         .collect::<String>();
     write_file(root, path, &contents);
+}
+
+pub(crate) fn write_rust_directory_fanout_fixture(root: &TempDir) {
+    write_config(
+        root,
+        indoc! {r#"
+            [limits]
+            max_leaf_files_per_directory = { production = 1 }
+
+            [languages.rust]
+            enabled = true
+        "#},
+    );
+    write_file(root, "src/a.rs", "fn a() {}\n");
+    write_file(root, "src/b.rs", "fn b() {}\n");
 }
 
 pub(crate) fn write_oversized_rust_source(root: &TempDir, path: &str) {

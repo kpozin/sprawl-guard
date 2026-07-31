@@ -8,8 +8,8 @@ use sprawl_guard_lib::check::check_without_ratchet;
 use sprawl_guard_lib::config::{LoadOptions, load_resolved_config};
 use sprawl_guard_lib::{
     CheckOptions, CheckReport, CheckViolation, CodeLines, DirectoryRatchet, DirectoryViolationKind,
-    FileRatchet, FileViolationKind, RatchetFile, RatchetVersion, TestDirectoryRatchet,
-    TestFileRatchet,
+    FileRatchet, FileViolationKind, LanguageGroupId, RatchetFile, RatchetVersion,
+    TestDirectoryRatchet, TestFileRatchet,
 };
 
 use super::{BaselineArgs, RatchetArgs};
@@ -198,12 +198,14 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
                 DirectoryViolationKind::DirectoryFanout => {
                     ratchet.directories.push(DirectoryRatchet {
                         path: violation.path.clone(),
+                        group: LanguageGroupId::Source,
                         leaf_source_files: violation.actual,
                     });
                 }
                 DirectoryViolationKind::TestDirectoryFanout => {
                     ratchet.test_directories.push(TestDirectoryRatchet {
                         path: violation.path.clone(),
+                        group: LanguageGroupId::Source,
                         leaf_test_files: violation.actual,
                     });
                 }

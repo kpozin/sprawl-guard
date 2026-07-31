@@ -177,18 +177,7 @@ mod when_production_directory_exceeds_the_leaf_file_limit {
     #[test]
     fn it_serializes_a_directory_violation_in_json_output() {
         let root = TempDir::new().unwrap();
-        write_config(
-            &root,
-            indoc! {r#"
-                [limits]
-                max_leaf_files_per_directory = { production = 1 }
-
-                [languages.rust]
-                enabled = true
-            "#},
-        );
-        write_file(&root, "src/a.rs", "fn a() {}\n");
-        write_file(&root, "src/b.rs", "fn b() {}\n");
+        write_rust_directory_fanout_fixture(&root);
 
         let (output, json) = run_check_json(&root);
 

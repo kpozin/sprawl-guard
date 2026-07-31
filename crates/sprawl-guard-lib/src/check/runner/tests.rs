@@ -44,6 +44,21 @@ fn write_rust_source_with_function_count(root: &Path, path: &str, function_count
     write_file(root, path, &contents);
 }
 
+fn write_rust_directory_fanout_fixture(root: &Path) {
+    write_config(
+        root,
+        indoc! {r#"
+            [limits]
+            max_leaf_files_per_directory = { production = 1 }
+
+            [languages.rust]
+            enabled = true
+        "#},
+    );
+    write_file(root, "src/a.rs", "fn a() {}\n");
+    write_file(root, "src/b.rs", "fn b() {}\n");
+}
+
 fn check_root(root: &Path) -> Result<CheckReport> {
     let config = load_config(root);
     check_with_config(root, &config, vec![], None, None)
@@ -1249,16 +1264,7 @@ mod when_checking_with_a_ratchet_file {
     #[test]
     fn it_applies_directory_ratchet_ceilings() {
         let tempdir = tempfile::tempdir().unwrap();
-        write_config(
-            tempdir.path(),
-            indoc! {r#"
-                [limits]
-                max_leaf_files_per_directory = { production = 1 }
-
-                [languages.rust]
-                enabled = true
-            "#},
-        );
+        write_rust_directory_fanout_fixture(tempdir.path());
         write_ratchet(
             tempdir.path(),
             indoc! {r#"
@@ -1266,16 +1272,47 @@ mod when_checking_with_a_ratchet_file {
 
                 [[directories]]
                 path = "src"
+                group = "source"
                 leaf_source_files = 2
             "#},
         );
-        write_file(tempdir.path(), "src/a.rs", "fn a() {}\n");
-        write_file(tempdir.path(), "src/b.rs", "fn b() {}\n");
 
         let report = check_root(tempdir.path()).unwrap();
 
         assert_eq!(report.status(), CheckStatus::Passed);
         assert!(report.violations().is_empty());
+    }
+
+    mod when_a_directory_ratchet_belongs_to_another_group {
+        use super::*;
+
+        #[test]
+        fn it_does_not_cover_the_source_measurement_at_the_same_path() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_rust_directory_fanout_fixture(tempdir.path());
+            write_ratchet(
+                tempdir.path(),
+                indoc! {r#"
+                    version = 1
+
+                    [[directories]]
+                    path = "src"
+                    group = "documentation"
+                    leaf_source_files = 2
+                "#},
+            );
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            assert_eq!(directory_violations(&report).len(), 1);
+            let ratchets = ratchet_violations(&report);
+            assert_eq!(ratchets.len(), 1);
+            assert!(ratchets[0].actual().is_none());
+            assert_eq!(
+                serde_json::to_value(ratchets[0]).unwrap()["group"],
+                serde_json::json!("documentation")
+            );
+        }
     }
 }
 

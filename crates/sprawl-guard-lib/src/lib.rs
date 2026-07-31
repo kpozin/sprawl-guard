@@ -15,11 +15,12 @@ mod value;
 
 pub use check::{
     AnalysisCoverage, CheckErrorKind, CheckOptions, CheckReport, CheckStatus, CheckViolation,
-    CheckWarning, CheckWarningKind, DirectoryFanoutViolation, DirectoryViolationKind,
-    FileLocViolation, FileViolationKind, NonEmptyTraversalIncidents, RatchetIncreasedViolation,
-    RatchetIncreasedViolationKind, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
-    RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation, RatchetViolationKind,
-    ReportRoot, ReportRootError, check_without_ratchet,
+    CheckWarning, CheckWarningKind, DirectoryFanoutViolation,
+    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind, FileLocViolation,
+    FileRatchetStaleMissingViolation, FileViolationKind, NonEmptyTraversalIncidents,
+    RatchetIncreasedViolation, RatchetIncreasedViolationKind, RatchetStaleMeasuredViolation,
+    RatchetStaleMissingViolation, RatchetStaleViolation, RatchetStaleViolationKind,
+    RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError, check_without_ratchet,
 };
 pub use classification::{TraversalIncident, TraversalIncidentKind, TraversalIncidentSeverity};
 pub use config::{
@@ -28,8 +29,8 @@ pub use config::{
 };
 pub use error::{Result, SprawlError};
 pub use ratchet::{
-    DirectoryRatchet, FileRatchet, RatchetCount, RatchetFile, RatchetVersion, TestDirectoryRatchet,
-    TestFileRatchet,
+    DirectoryRatchet, DirectoryRatchetKey, FileRatchet, RatchetCount, RatchetFile, RatchetVersion,
+    TestDirectoryRatchet, TestFileRatchet,
 };
 pub use resolved_limits::{
     MatchedOverride, OverrideOrdinal, ResolvedCodeLineLimit, ResolvedLeafFileLimit,

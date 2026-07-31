@@ -13,6 +13,26 @@ use sprawl_guard_lib::{TraversalIncident, TraversalIncidentKind};
 use super::CheckFormat;
 use crate::error::{CliError, Result};
 
+#[cfg(test)]
+fn missing_directory_ratchet(
+    group: sprawl_guard_lib::LanguageGroupId,
+    ratchet: u32,
+) -> CheckViolation {
+    use sprawl_guard_lib::{
+        DirectoryRatchetStaleMissingViolation, RatchetCount, RatchetStaleMissingViolation,
+        RatchetStaleViolation, RatchetStaleViolationKind,
+    };
+
+    CheckViolation::Ratchet(RatchetViolation::Stale(RatchetStaleViolation::Missing(
+        RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
+            kind: RatchetStaleViolationKind::DirectoryFanoutStale,
+            path: sprawl_guard_lib::RelativePath::new("src").unwrap(),
+            group,
+            ratchet: RatchetCount::new(ratchet),
+        }),
+    )))
+}
+
 pub(super) fn render_check_report(
     report: &CheckReport,
     format: CheckFormat,
@@ -281,8 +301,12 @@ fn ratchet_violation_message(violation: &RatchetViolation) -> String {
         .limit()
         .map(|value| value.get().to_string())
         .unwrap_or_else(|| "none".to_owned());
+    let group = violation
+        .group()
+        .map(|group| format!("    group: {group}\n"))
+        .unwrap_or_default();
     format!(
-        "  {}\n    kind: {}\n    actual: {}\n    limit: {}\n    ratchet: {}\n\n",
+        "  {}\n    kind: {}\n{group}    actual: {}\n    limit: {}\n    ratchet: {}\n\n",
         violation.path(),
         ratchet_kind_message(violation.kind()),
         actual,
@@ -332,8 +356,8 @@ mod tests {
     use serde_json::json;
     use sprawl_guard_lib::{
         CheckViolation, CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail,
-        DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation, LeafFiles, LineCount,
-        NonEmptyTraversalIncidents, RelativePath, TraversalIncidentSeverity,
+        DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation, LanguageGroupId,
+        LeafFiles, LineCount, NonEmptyTraversalIncidents, RelativePath, TraversalIncidentSeverity,
     };
 
     use super::*;
@@ -451,6 +475,43 @@ mod tests {
             assert!(output.contains("Test directory fan-out budget exceeded:"));
             assert!(output.contains("leaf test files: 3 / 2"));
             assert!(output.contains("tests/a.rs"));
+        }
+
+        #[test]
+        fn it_distinguishes_missing_directory_ratchets_for_groups_at_the_same_path() {
+            let report = CheckReport::complete(
+                report_root(),
+                counter_info(),
+                vec![],
+                vec![
+                    missing_directory_ratchet(LanguageGroupId::Source, 4),
+                    missing_directory_ratchet(LanguageGroupId::Documentation, 5),
+                ],
+            );
+
+            let output = human_check_report(&report, false);
+
+            assert_eq!(
+                output,
+                indoc! {"
+                    Ratchet failures:
+
+                      src
+                        kind: directory fan-out ratchet is stale
+                        group: source
+                        actual: not measured
+                        limit: none
+                        ratchet: 4
+
+                      src
+                        kind: directory fan-out ratchet is stale
+                        group: documentation
+                        actual: not measured
+                        limit: none
+                        ratchet: 5
+
+                "}
+            );
         }
 
         #[test]

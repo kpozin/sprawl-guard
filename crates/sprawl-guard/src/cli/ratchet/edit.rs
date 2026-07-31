@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use sprawl_guard_lib::{
-    CodeLines, DirectoryRatchet, FileRatchet, LeafFiles, RatchetFile, RatchetVersion, RelativePath,
-    TestDirectoryRatchet, TestFileRatchet,
+    CodeLines, DirectoryRatchet, DirectoryRatchetKey, FileRatchet, LeafFiles, RatchetFile,
+    RatchetVersion, RelativePath, TestDirectoryRatchet, TestFileRatchet,
 };
 
 use super::scope::RatchetScope;
@@ -73,9 +73,10 @@ pub(super) fn lower_ratchet_scope(
                     return Some(entry);
                 }
                 current
-                    .directory_value(&entry.path)
+                    .directory_value(&entry.key())
                     .map(|value| DirectoryRatchet {
                         path: entry.path,
+                        group: entry.group,
                         leaf_source_files: std::cmp::min(entry.leaf_source_files, value),
                     })
             })
@@ -88,9 +89,10 @@ pub(super) fn lower_ratchet_scope(
                     return Some(entry);
                 }
                 current
-                    .test_directory_value(&entry.path)
+                    .test_directory_value(&entry.key())
                     .map(|value| TestDirectoryRatchet {
                         path: entry.path,
+                        group: entry.group,
                         leaf_test_files: std::cmp::min(entry.leaf_test_files, value),
                     })
             })
@@ -129,7 +131,7 @@ pub(super) fn ratchet_raise_count(previous: &RatchetFile, current: &RatchetFile)
             .iter()
             .filter(|entry| {
                 previous
-                    .directory_value(&entry.path)
+                    .directory_value(&entry.key())
                     .is_some_and(|value| entry.leaf_source_files > value)
             })
             .count()
@@ -138,7 +140,7 @@ pub(super) fn ratchet_raise_count(previous: &RatchetFile, current: &RatchetFile)
             .iter()
             .filter(|entry| {
                 previous
-                    .test_directory_value(&entry.path)
+                    .test_directory_value(&entry.key())
                     .is_some_and(|value| entry.leaf_test_files > value)
             })
             .count()
@@ -173,8 +175,8 @@ fn preserve_out_of_scope(previous: RatchetFile, scope: &RatchetScope) -> Ratchet
 struct RatchetLookup {
     files: BTreeMap<RelativePath, CodeLines>,
     test_files: BTreeMap<RelativePath, CodeLines>,
-    directories: BTreeMap<RelativePath, LeafFiles>,
-    test_directories: BTreeMap<RelativePath, LeafFiles>,
+    directories: BTreeMap<DirectoryRatchetKey, LeafFiles>,
+    test_directories: BTreeMap<DirectoryRatchetKey, LeafFiles>,
 }
 
 impl RatchetLookup {
@@ -193,12 +195,12 @@ impl RatchetLookup {
             directories: file
                 .directories
                 .into_iter()
-                .map(|entry| (entry.path, entry.leaf_source_files))
+                .map(|entry| (entry.key(), entry.leaf_source_files))
                 .collect(),
             test_directories: file
                 .test_directories
                 .into_iter()
-                .map(|entry| (entry.path, entry.leaf_test_files))
+                .map(|entry| (entry.key(), entry.leaf_test_files))
                 .collect(),
         }
     }
@@ -211,12 +213,12 @@ impl RatchetLookup {
         self.test_files.get(path).copied()
     }
 
-    fn directory_value(&self, path: &RelativePath) -> Option<LeafFiles> {
-        self.directories.get(path).copied()
+    fn directory_value(&self, key: &DirectoryRatchetKey) -> Option<LeafFiles> {
+        self.directories.get(key).copied()
     }
 
-    fn test_directory_value(&self, path: &RelativePath) -> Option<LeafFiles> {
-        self.test_directories.get(path).copied()
+    fn test_directory_value(&self, key: &DirectoryRatchetKey) -> Option<LeafFiles> {
+        self.test_directories.get(key).copied()
     }
 }
 
@@ -227,10 +229,122 @@ pub(super) fn sort_ratchet(ratchet: &mut RatchetFile) {
     ratchet
         .test_files
         .sort_by(|left, right| left.path.cmp(&right.path));
-    ratchet
-        .directories
-        .sort_by(|left, right| left.path.cmp(&right.path));
+    ratchet.directories.sort_by_key(DirectoryRatchet::key);
     ratchet
         .test_directories
-        .sort_by(|left, right| left.path.cmp(&right.path));
+        .sort_by_key(TestDirectoryRatchet::key);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use indoc::indoc;
+    use sprawl_guard_lib::LanguageGroupId;
+
+    use super::*;
+
+    fn parse_ratchet(input: &str) -> RatchetFile {
+        RatchetFile::parse(Path::new("sprawl-guard.ratchet.toml"), input).unwrap()
+    }
+
+    mod when_directory_groups_share_a_path {
+        use super::*;
+
+        #[test]
+        fn lowering_matches_the_complete_group_and_path_key() {
+            let previous = parse_ratchet(indoc! {r#"
+                version = 1
+
+                [[directories]]
+                path = "src"
+                group = "source"
+                leaf_source_files = 5
+
+                [[directories]]
+                path = "src"
+                group = "documentation"
+                leaf_source_files = 7
+            "#});
+            let current = parse_ratchet(indoc! {r#"
+                version = 1
+
+                [[directories]]
+                path = "src"
+                group = "source"
+                leaf_source_files = 3
+            "#});
+
+            let next = lower_ratchet_scope(previous, current, &RatchetScope::All);
+
+            assert_eq!(next.directories.len(), 1);
+            assert_eq!(next.directories[0].group, LanguageGroupId::Source);
+            assert_eq!(next.directories[0].leaf_source_files.get(), 3);
+        }
+
+        #[test]
+        fn raise_detection_compares_each_group_independently() {
+            let previous = parse_ratchet(indoc! {r#"
+                version = 1
+
+                [[directories]]
+                path = "src"
+                group = "source"
+                leaf_source_files = 5
+
+                [[directories]]
+                path = "src"
+                group = "documentation"
+                leaf_source_files = 2
+            "#});
+            let current = parse_ratchet(indoc! {r#"
+                version = 1
+
+                [[directories]]
+                path = "src"
+                group = "source"
+                leaf_source_files = 4
+
+                [[directories]]
+                path = "src"
+                group = "documentation"
+                leaf_source_files = 3
+            "#});
+
+            assert_eq!(ratchet_raise_count(&previous, &current), 1);
+        }
+
+        #[test]
+        fn sorting_orders_groups_before_paths() {
+            let mut ratchet = parse_ratchet(indoc! {r#"
+                version = 1
+
+                [[directories]]
+                path = "z"
+                group = "source"
+                leaf_source_files = 1
+
+                [[directories]]
+                path = "z"
+                group = "documentation"
+                leaf_source_files = 1
+
+                [[directories]]
+                path = "a"
+                group = "source"
+                leaf_source_files = 1
+            "#});
+
+            sort_ratchet(&mut ratchet);
+
+            assert_eq!(
+                ratchet
+                    .directories
+                    .iter()
+                    .map(|entry| (entry.group.as_str(), entry.path.as_str()))
+                    .collect::<Vec<_>>(),
+                vec![("source", "a"), ("source", "z"), ("documentation", "z"),]
+            );
+        }
+    }
 }

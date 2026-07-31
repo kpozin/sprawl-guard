@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CodeLines, LeafFiles, LineCount, RelativePath, Result, SprawlError};
+use crate::{CodeLines, LanguageGroupId, LeafFiles, LineCount, RelativePath, Result, SprawlError};
 
 const SUPPORTED_RATCHET_VERSION: u32 = 1;
 
@@ -151,14 +151,47 @@ pub struct TestFileRatchet {
     pub code_lines: CodeLines,
 }
 
+/// Identity of one persisted directory fan-out measurement.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct DirectoryRatchetKey {
+    group: LanguageGroupId,
+    path: RelativePath,
+}
+
+impl DirectoryRatchetKey {
+    /// Creates a directory-ratchet key from its language group and path.
+    pub fn new(group: LanguageGroupId, path: RelativePath) -> Self {
+        Self { group, path }
+    }
+
+    /// Returns the language group measured at the directory.
+    pub fn group(&self) -> &LanguageGroupId {
+        &self.group
+    }
+
+    /// Returns the repository-relative directory path.
+    pub fn path(&self) -> &RelativePath {
+        &self.path
+    }
+}
+
 /// Production directory fan-out ratchet ceiling.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryRatchet {
     /// Repository-relative directory path. The repository root is `""`.
     pub path: RelativePath,
+    /// Language group measured at this directory.
+    pub group: LanguageGroupId,
     /// Grandfathered direct production leaf-file ceiling.
     pub leaf_source_files: LeafFiles,
+}
+
+impl DirectoryRatchet {
+    /// Returns the group-and-path identity of this ratchet entry.
+    pub fn key(&self) -> DirectoryRatchetKey {
+        DirectoryRatchetKey::new(self.group.clone(), self.path.clone())
+    }
 }
 
 /// Path-classified test directory fan-out ratchet ceiling.
@@ -167,8 +200,17 @@ pub struct DirectoryRatchet {
 pub struct TestDirectoryRatchet {
     /// Repository-relative directory path. The repository root is `""`.
     pub path: RelativePath,
+    /// Language group measured at this directory.
+    pub group: LanguageGroupId,
     /// Grandfathered direct test leaf-file ceiling.
     pub leaf_test_files: LeafFiles,
+}
+
+impl TestDirectoryRatchet {
+    /// Returns the group-and-path identity of this ratchet entry.
+    pub fn key(&self) -> DirectoryRatchetKey {
+        DirectoryRatchetKey::new(self.group.clone(), self.path.clone())
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -199,13 +241,19 @@ impl TryFrom<RawRatchetFile> for RatchetFile {
             "test_files",
             value.test_files.iter().map(|entry| &entry.path),
         )?;
-        reject_duplicate_paths(
+        reject_duplicate_directory_keys(
             "directories",
-            value.directories.iter().map(|entry| &entry.path),
+            value
+                .directories
+                .iter()
+                .map(|entry| (&entry.group, &entry.path)),
         )?;
-        reject_duplicate_paths(
+        reject_duplicate_directory_keys(
             "test_directories",
-            value.test_directories.iter().map(|entry| &entry.path),
+            value
+                .test_directories
+                .iter()
+                .map(|entry| (&entry.group, &entry.path)),
         )?;
         Ok(Self {
             version: RatchetVersion::current(),
@@ -226,6 +274,23 @@ fn reject_duplicate_paths<'path>(
         if !seen.insert(path) {
             return Err(SprawlError::DuplicateRatchetEntry {
                 section,
+                path: path.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn reject_duplicate_directory_keys<'entry>(
+    section: &'static str,
+    entries: impl Iterator<Item = (&'entry LanguageGroupId, &'entry RelativePath)>,
+) -> Result<()> {
+    let mut seen = BTreeSet::new();
+    for (group, path) in entries {
+        if !seen.insert((group, path)) {
+            return Err(SprawlError::DuplicateDirectoryRatchetEntry {
+                section,
+                group: group.clone(),
                 path: path.clone(),
             });
         }
@@ -264,10 +329,12 @@ mod tests {
 
                         [[directories]]
                         path = "src/api"
+                        group = "source"
                         leaf_source_files = 17
 
                         [[test_directories]]
                         path = "src/api/tests"
+                        group = "documentation"
                         leaf_test_files = 31
                     "#},
                 )
@@ -279,6 +346,84 @@ mod tests {
                 assert_eq!(file.test_files[0].code_lines.get(), 1200);
                 assert_eq!(file.directories[0].leaf_source_files.get(), 17);
                 assert_eq!(file.test_directories[0].leaf_test_files.get(), 31);
+            }
+        }
+
+        mod when_a_directory_entry_omits_its_group {
+            use super::*;
+
+            #[test]
+            fn it_rejects_the_file() {
+                let error = RatchetFile::parse(
+                    Path::new("sprawl-guard.ratchet.toml"),
+                    indoc! {r#"
+                        version = 1
+
+                        [[directories]]
+                        path = "src/api"
+                        leaf_source_files = 17
+                    "#},
+                )
+                .unwrap_err();
+
+                assert!(error.to_string().contains("missing field `group`"));
+            }
+        }
+
+        mod when_directory_groups_share_a_path {
+            use super::*;
+
+            #[test]
+            fn it_reads_each_group_as_a_distinct_entry() {
+                let file = RatchetFile::parse(
+                    Path::new("sprawl-guard.ratchet.toml"),
+                    indoc! {r#"
+                        version = 1
+
+                        [[directories]]
+                        path = "src/api"
+                        group = "source"
+                        leaf_source_files = 17
+
+                        [[directories]]
+                        path = "src/api"
+                        group = "documentation"
+                        leaf_source_files = 4
+                    "#},
+                )
+                .unwrap();
+
+                assert_eq!(file.directories.len(), 2);
+            }
+        }
+
+        mod when_a_directory_section_repeats_a_group_and_path {
+            use super::*;
+
+            #[test]
+            fn it_rejects_the_duplicate_key() {
+                let error = RatchetFile::parse(
+                    Path::new("sprawl-guard.ratchet.toml"),
+                    indoc! {r#"
+                        version = 1
+
+                        [[directories]]
+                        path = "src/api"
+                        group = "source"
+                        leaf_source_files = 17
+
+                        [[directories]]
+                        path = "src/api"
+                        group = "source"
+                        leaf_source_files = 4
+                    "#},
+                )
+                .unwrap_err();
+
+                assert_eq!(
+                    error.to_string(),
+                    "duplicate directory ratchet entry in [[directories]] for group source and path src/api"
+                );
             }
         }
 

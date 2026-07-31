@@ -177,7 +177,7 @@ fn ratchet_result(violation: &RatchetViolation) -> Value {
         | RatchetViolationKind::DirectoryFanoutStale
         | RatchetViolationKind::TestDirectoryFanoutStale => RATCHET_STALE_RULE_ID,
     };
-    json!({
+    let mut result = json!({
         "ruleId": rule_id,
         "level": "error",
         "message": {
@@ -191,10 +191,18 @@ fn ratchet_result(violation: &RatchetViolation) -> Value {
             "limit": violation.limit(),
             "ratchet": violation.ratchet()
         }
-    })
+    });
+    if let Some(group) = violation.group() {
+        result["properties"]["group"] = json!(group);
+    }
+    result
 }
 
 fn ratchet_message(violation: &RatchetViolation) -> String {
+    let subject = match violation.group() {
+        Some(group) => format!("{} in group {group}", display_path(violation.path())),
+        None => display_path(violation.path()).to_owned(),
+    };
     match violation.kind() {
         RatchetViolationKind::FileLocIncreased
         | RatchetViolationKind::TestFileLocIncreased
@@ -205,8 +213,7 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
                 .map(|value| value.get().to_string())
                 .unwrap_or_else(|| "not measured".to_owned());
             format!(
-                "{} increased to {actual} above ratchet ceiling {}.",
-                display_path(violation.path()),
+                "{subject} increased to {actual} above ratchet ceiling {}.",
                 violation.ratchet().get()
             )
         }
@@ -215,14 +222,12 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
         | RatchetViolationKind::DirectoryFanoutStale
         | RatchetViolationKind::TestDirectoryFanoutStale => match violation.actual() {
             Some(actual) => format!(
-                "{} has stale ratchet ceiling {}; current value is {}.",
-                display_path(violation.path()),
+                "{subject} has stale ratchet ceiling {}; current value is {}.",
                 violation.ratchet().get(),
                 actual.get()
             ),
             None => format!(
-                "{} has stale ratchet ceiling {} but is no longer measured.",
-                display_path(violation.path()),
+                "{subject} has stale ratchet ceiling {} but is no longer measured.",
                 violation.ratchet().get()
             ),
         },
@@ -263,13 +268,13 @@ mod tests {
     use serde_json::json;
     use sprawl_guard_lib::check::{
         CounterInfo, DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation,
-        FileViolationKind, RatchetIncreasedViolation, RatchetIncreasedViolationKind,
-        RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
-        RatchetStaleViolationKind, RatchetViolation,
+        FileRatchetStaleMissingViolation, FileViolationKind, RatchetIncreasedViolation,
+        RatchetIncreasedViolationKind, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
+        RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation,
     };
     use sprawl_guard_lib::{
-        CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail, LanguageId, LeafFiles,
-        LineCount, RatchetCount, RelativePath,
+        CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail, LanguageGroupId, LanguageId,
+        LeafFiles, LineCount, RatchetCount, RelativePath,
     };
 
     use super::*;
@@ -620,11 +625,13 @@ mod tests {
         #[test]
         fn it_reports_deleted_ratchet_entries_as_no_longer_measured() {
             let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
-                RatchetStaleViolation::Missing(RatchetStaleMissingViolation {
-                    kind: RatchetStaleViolationKind::FileLocStale,
-                    path: RelativePath::new("src/deleted.rs").unwrap(),
-                    ratchet: RatchetCount::new(4),
-                }),
+                RatchetStaleViolation::Missing(RatchetStaleMissingViolation::File(
+                    FileRatchetStaleMissingViolation {
+                        kind: RatchetStaleViolationKind::FileLocStale,
+                        path: RelativePath::new("src/deleted.rs").unwrap(),
+                        ratchet: RatchetCount::new(4),
+                    },
+                )),
             ))]);
 
             let output = sarif_check_report(&report);
@@ -641,6 +648,43 @@ mod tests {
                     "actual": null,
                     "message": "src/deleted.rs has stale ratchet ceiling 4 but is no longer measured.",
                 })
+            );
+        }
+
+        #[test]
+        fn it_distinguishes_missing_directory_ratchets_for_groups_at_the_same_path() {
+            let report = report_with(vec![
+                crate::cli::check_output::missing_directory_ratchet(LanguageGroupId::Source, 4),
+                crate::cli::check_output::missing_directory_ratchet(
+                    LanguageGroupId::Documentation,
+                    5,
+                ),
+            ]);
+
+            let output = sarif_check_report(&report);
+            let results = &output["runs"][0]["results"];
+
+            assert_eq!(
+                json!([
+                    {
+                        "group": results[0]["properties"]["group"],
+                        "message": results[0]["message"]["text"],
+                    },
+                    {
+                        "group": results[1]["properties"]["group"],
+                        "message": results[1]["message"]["text"],
+                    },
+                ]),
+                json!([
+                    {
+                        "group": "source",
+                        "message": "src in group source has stale ratchet ceiling 4 but is no longer measured.",
+                    },
+                    {
+                        "group": "documentation",
+                        "message": "src in group documentation has stale ratchet ceiling 5 but is no longer measured.",
+                    },
+                ])
             );
         }
     }
