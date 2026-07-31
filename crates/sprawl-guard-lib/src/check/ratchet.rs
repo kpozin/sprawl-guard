@@ -6,10 +6,12 @@ use crate::ratchet::{DirectoryRatchetKey, RatchetCount, RatchetFile};
 use crate::{CodeLines, LanguageGroupId, LeafFiles, RelativePath, Result};
 
 use super::directory_fanout::{DirectoryFanoutCheck, DirectoryFanoutMeasurement};
+use super::report::{CheckViolation, DirectoryViolationKind, FileViolationKind};
 use super::report::{
-    CheckViolation, DirectoryViolationKind, FileViolationKind, RatchetIncreasedViolation,
-    RatchetIncreasedViolationKind, RatchetStaleMeasuredViolation, RatchetStaleViolation,
-    RatchetStaleViolationKind, RatchetViolation,
+    DirectoryRatchetIncreasedViolation, DirectoryRatchetStaleMeasuredViolation,
+    FileRatchetIncreasedViolation, FileRatchetStaleMeasuredViolation, RatchetIncreasedViolation,
+    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetStaleViolationKind,
+    RatchetViolation,
 };
 use super::runner::{CheckScope, FileMeasurement, SourceCheck};
 
@@ -73,13 +75,15 @@ fn increased_file_ratchet_violation(
     measurement: &FileMeasurement,
     ceiling: CodeLines,
 ) -> RatchetViolation {
-    RatchetViolation::Increased(RatchetIncreasedViolation {
-        kind: file_ratchet_increased_kind(measurement.kind),
-        path: measurement.path.clone(),
-        actual: RatchetCount::from_line_count(measurement.current_code_lines()),
-        limit: RatchetCount::from_code_lines(measurement.limit),
-        ratchet: RatchetCount::from_code_lines(ceiling),
-    })
+    RatchetViolation::Increased(RatchetIncreasedViolation::File(
+        FileRatchetIncreasedViolation {
+            kind: measurement.kind,
+            path: measurement.path.clone(),
+            actual: RatchetCount::from_line_count(measurement.current_code_lines()),
+            limit: RatchetCount::from_code_lines(measurement.limit),
+            ratchet: RatchetCount::from_code_lines(ceiling),
+        },
+    ))
 }
 
 fn stale_file_ratchet_violation(
@@ -87,28 +91,14 @@ fn stale_file_ratchet_violation(
     ceiling: CodeLines,
 ) -> RatchetViolation {
     RatchetViolation::Stale(RatchetStaleViolation::Measured(
-        RatchetStaleMeasuredViolation {
-            kind: file_ratchet_stale_kind(measurement.kind),
+        RatchetStaleMeasuredViolation::File(FileRatchetStaleMeasuredViolation {
+            kind: measurement.kind,
             path: measurement.path.clone(),
             actual: RatchetCount::from_line_count(measurement.current_code_lines()),
-            limit: Some(RatchetCount::from_code_lines(measurement.limit)),
+            limit: RatchetCount::from_code_lines(measurement.limit),
             ratchet: RatchetCount::from_code_lines(ceiling),
-        },
+        }),
     ))
-}
-
-fn file_ratchet_increased_kind(kind: FileViolationKind) -> RatchetIncreasedViolationKind {
-    match kind {
-        FileViolationKind::FileLoc => RatchetIncreasedViolationKind::FileLocIncreased,
-        FileViolationKind::TestFileLoc => RatchetIncreasedViolationKind::TestFileLocIncreased,
-    }
-}
-
-fn file_ratchet_stale_kind(kind: FileViolationKind) -> RatchetStaleViolationKind {
-    match kind {
-        FileViolationKind::FileLoc => RatchetStaleViolationKind::FileLocStale,
-        FileViolationKind::TestFileLoc => RatchetStaleViolationKind::TestFileLocStale,
-    }
 }
 
 pub(super) fn directory_violations_with_ratchet(
@@ -124,11 +114,8 @@ pub(super) fn directory_violations_with_ratchet(
             .collect();
     };
     let measurement = directory_check.measurement();
-    let ceiling = ratchet.directory_ceiling(
-        measurement.kind,
-        &LanguageGroupId::Source,
-        &measurement.path,
-    );
+    let ceiling =
+        ratchet.directory_ceiling(measurement.kind, &measurement.group, &measurement.path);
     apply_directory_ratchet(directory_check, ceiling, current_policy)
 }
 
@@ -173,17 +160,21 @@ fn increased_directory_ratchet_violation(
     measurement: &DirectoryFanoutMeasurement,
     ceiling: LeafFiles,
 ) -> RatchetViolation {
-    RatchetViolation::Increased(RatchetIncreasedViolation {
-        kind: directory_ratchet_increased_kind(measurement.kind),
-        path: measurement.path.clone(),
-        actual: RatchetCount::from_leaf_files(measurement.actual),
-        limit: RatchetCount::from_leaf_files(
-            measurement
-                .limit
-                .expect("increased directory ratchet must have a finite configured limit"),
-        ),
-        ratchet: RatchetCount::from_leaf_files(ceiling),
-    })
+    RatchetViolation::Increased(RatchetIncreasedViolation::Directory(
+        DirectoryRatchetIncreasedViolation {
+            kind: measurement.kind,
+            path: measurement.path.clone(),
+            group: measurement.group.clone(),
+            actual: RatchetCount::from_leaf_files(measurement.actual),
+            limit: RatchetCount::from_leaf_files(
+                measurement
+                    .limit
+                    .finite()
+                    .expect("increased directory ratchet must have a finite configured limit"),
+            ),
+            ratchet: RatchetCount::from_leaf_files(ceiling),
+        },
+    ))
 }
 
 fn stale_directory_ratchet_violation(
@@ -191,34 +182,15 @@ fn stale_directory_ratchet_violation(
     ceiling: LeafFiles,
 ) -> RatchetViolation {
     RatchetViolation::Stale(RatchetStaleViolation::Measured(
-        RatchetStaleMeasuredViolation {
-            kind: directory_ratchet_stale_kind(measurement.kind),
+        RatchetStaleMeasuredViolation::Directory(DirectoryRatchetStaleMeasuredViolation {
+            kind: measurement.kind,
             path: measurement.path.clone(),
+            group: measurement.group.clone(),
             actual: RatchetCount::from_leaf_files(measurement.actual),
-            limit: measurement.limit.map(RatchetCount::from_leaf_files),
+            limit: RatchetLimit::from(measurement.limit),
             ratchet: RatchetCount::from_leaf_files(ceiling),
-        },
+        }),
     ))
-}
-
-fn directory_ratchet_increased_kind(kind: DirectoryViolationKind) -> RatchetIncreasedViolationKind {
-    match kind {
-        DirectoryViolationKind::DirectoryFanout => {
-            RatchetIncreasedViolationKind::DirectoryFanoutIncreased
-        }
-        DirectoryViolationKind::TestDirectoryFanout => {
-            RatchetIncreasedViolationKind::TestDirectoryFanoutIncreased
-        }
-    }
-}
-
-fn directory_ratchet_stale_kind(kind: DirectoryViolationKind) -> RatchetStaleViolationKind {
-    match kind {
-        DirectoryViolationKind::DirectoryFanout => RatchetStaleViolationKind::DirectoryFanoutStale,
-        DirectoryViolationKind::TestDirectoryFanout => {
-            RatchetStaleViolationKind::TestDirectoryFanoutStale
-        }
-    }
 }
 
 pub(super) fn stale_missing_ratchets(
@@ -259,7 +231,7 @@ impl MeasuredRatchets {
             DirectoryViolationKind::TestDirectoryFanout => &mut self.test_directory_fanout,
         };
         paths.insert(DirectoryRatchetKey::new(
-            LanguageGroupId::Source,
+            measurement.group.clone(),
             measurement.path.clone(),
         ));
     }

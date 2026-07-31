@@ -138,7 +138,7 @@ pub(crate) fn rust_cfg_test_policy_info(
     config: &Config,
     source: &ClassifiedSource,
 ) -> Option<RustCfgTestInfo> {
-    if source.language.as_tokei() != LanguageType::Rust {
+    if source.language().as_tokei() != LanguageType::Rust {
         return None;
     }
     if source.kind == SourceKind::Test {
@@ -148,7 +148,7 @@ pub(crate) fn rust_cfg_test_policy_info(
     }
     let rust = config
         .languages()
-        .get(&source.language)
+        .get(&source.language())
         .and_then(|language| language.rust());
     match rust.map(|config| config.cfg_test_exclusion) {
         Some(RustCfgTestExclusion::Enabled) => Some(RustCfgTestInfo::without_exclusions(

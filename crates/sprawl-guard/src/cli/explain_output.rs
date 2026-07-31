@@ -47,8 +47,10 @@ fn source_message(explanation: &SourceExplanation) -> String {
         SourceKind::Test => "test code",
     };
     let mut message = format!(
-        "{}: {kind} ({})",
-        explanation.source.path, explanation.source.language
+        "{}: {kind} ({}; group: {})",
+        explanation.source.path,
+        explanation.source.language(),
+        explanation.source.group()
     );
     if let Some(limits) = &explanation.resolved_limits {
         message.push_str(&resolved_limits_message(limits));
@@ -64,21 +66,19 @@ fn source_message(explanation: &SourceExplanation) -> String {
 }
 
 fn resolved_limits_message(limits: &SourceResolvedLimits) -> String {
-    let mut message = format!("; file LOC limit: {}", limits.file.value);
-    if let Some(directory) = &limits.directory {
-        message.push_str(&format!("; directory leaf-file limit: {}", directory.value));
-    }
+    let mut message = format!(
+        "; file LOC limit: {}; directory leaf-file limit: {}",
+        limits.file.value, limits.directory.value
+    );
     let file_overrides = matching_overrides_message(&limits.file.matched_overrides);
     if !file_overrides.is_empty() {
         message.push_str("; matched file overrides: ");
         message.push_str(&file_overrides);
     }
-    if let Some(directory) = &limits.directory {
-        let directory_overrides = matching_overrides_message(&directory.matched_overrides);
-        if !directory_overrides.is_empty() {
-            message.push_str("; matched directory overrides: ");
-            message.push_str(&directory_overrides);
-        }
+    let directory_overrides = matching_overrides_message(&limits.directory.matched_overrides);
+    if !directory_overrides.is_empty() {
+        message.push_str("; matched directory overrides: ");
+        message.push_str(&directory_overrides);
     }
     message
 }
@@ -110,7 +110,10 @@ fn rust_cfg_test_status_message(status: RustCfgTestStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use sprawl_guard_lib::classification::ClassifiedSource;
-    use sprawl_guard_lib::{ExcludedItemCount, LanguageId, RelativePath, RustCfgTestInfo};
+    use sprawl_guard_lib::{
+        CodeLines, ExcludedItemCount, LanguageId, LeafFileLimit, MatchedOverride, RelativePath,
+        ResolvedCodeLineLimit, ResolvedLeafFileLimit, RustCfgTestInfo, SourceResolvedLimits,
+    };
 
     use super::*;
 
@@ -118,13 +121,13 @@ mod tests {
         RelativePath::new(value).unwrap()
     }
 
-    fn source(path: &str, kind: SourceKind) -> SourceExplanation {
+    fn source(path: &str, language: &str, kind: SourceKind) -> SourceExplanation {
         SourceExplanation {
-            source: ClassifiedSource {
-                path: RelativePath::new(path).unwrap(),
-                language: LanguageId::new("rust").unwrap(),
+            source: ClassifiedSource::new(
+                RelativePath::new(path).unwrap(),
+                LanguageId::new(language).unwrap(),
                 kind,
-            },
+            ),
             resolved_limits: None,
             rust_cfg_test: None,
         }
@@ -204,7 +207,7 @@ mod tests {
 
             #[test]
             fn it_reports_the_status_and_excluded_item_count() {
-                let mut explanation = source("src/lib.rs", SourceKind::Production);
+                let mut explanation = source("src/lib.rs", "rust", SourceKind::Production);
                 explanation.rust_cfg_test = Some(RustCfgTestInfo {
                     status: RustCfgTestStatus::Parsed,
                     excluded_items: ExcludedItemCount::new(2),
@@ -214,7 +217,52 @@ mod tests {
 
                 assert_eq!(
                     message,
-                    "src/lib.rs: production source (Rust); rust cfg(test): parsed; excluded top-level items: 2"
+                    "src/lib.rs: production source (Rust; group: source); rust cfg(test): parsed; excluded top-level items: 2"
+                );
+            }
+        }
+
+        mod when_a_documentation_source_is_classified {
+            use super::*;
+
+            #[test]
+            fn it_reports_the_automatic_group() {
+                let explanation = source("docs/guide.md", "markdown", SourceKind::Production);
+
+                let message = explain_message(&PathClassification::Source(explanation));
+
+                assert_eq!(
+                    message,
+                    "docs/guide.md: production source (Markdown; group: documentation)"
+                );
+            }
+        }
+    }
+
+    mod resolved_limits_message_tests {
+        use super::*;
+
+        mod when_the_directory_limit_is_unlimited {
+            use super::*;
+
+            #[test]
+            fn it_reports_the_explicit_limit() {
+                let limits = SourceResolvedLimits {
+                    file: ResolvedCodeLineLimit {
+                        value: CodeLines::new(400).unwrap(),
+                        matched_overrides: Vec::<MatchedOverride>::new(),
+                    },
+                    directory: ResolvedLeafFileLimit {
+                        value: LeafFileLimit::Unlimited,
+                        matched_overrides: Vec::new(),
+                    },
+                };
+
+                let message = resolved_limits_message(&limits);
+
+                assert_eq!(
+                    message,
+                    "; file LOC limit: 400; directory leaf-file limit: unlimited"
                 );
             }
         }

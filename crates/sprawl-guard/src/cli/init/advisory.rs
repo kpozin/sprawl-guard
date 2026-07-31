@@ -111,12 +111,12 @@ impl SourceSummary {
             BTreeMap<LanguageId, usize>,
         > = BTreeMap::new();
         for source in sources {
-            *language_counts.entry(source.language).or_insert(0) += 1;
+            *language_counts.entry(source.language()).or_insert(0) += 1;
             if let Some(segment) = generated_vendor_segment(source) {
                 *generated_vendor_counts
                     .entry(segment.to_owned())
                     .or_default()
-                    .entry(source.language)
+                    .entry(source.language())
                     .or_insert(0) += 1;
             }
         }

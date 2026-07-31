@@ -131,14 +131,18 @@ fn directory_fanout_result(violation: &DirectoryFanoutViolation) -> Value {
         "level": "error",
         "message": {
             "text": format!(
-                "{} has {} direct {source_kind} leaf files, exceeding limit {}.",
-                display_path(&violation.path), violation.actual, violation.limit
+                "{} in group {} has {} direct {source_kind} leaf files, exceeding limit {}.",
+                display_path(&violation.path),
+                violation.group,
+                violation.actual,
+                violation.limit
             )
         },
         "locations": [location(&violation.path)],
         "properties": {
             "kind": violation.kind,
             "path": violation.path,
+            "group": violation.group,
             "actual": violation.actual,
             "limit": violation.limit,
             "ratchet": violation.ratchet,
@@ -269,12 +273,13 @@ mod tests {
     use sprawl_guard_lib::check::{
         CounterInfo, DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation,
         FileRatchetStaleMissingViolation, FileViolationKind, RatchetIncreasedViolation,
-        RatchetIncreasedViolationKind, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
-        RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation,
+        RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
+        RatchetStaleViolationKind, RatchetViolation,
     };
     use sprawl_guard_lib::{
-        CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail, LanguageGroupId, LanguageId,
-        LeafFiles, LineCount, RatchetCount, RelativePath,
+        CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail,
+        DirectoryRatchetStaleMeasuredViolation, FileRatchetIncreasedViolation, LanguageGroupId,
+        LanguageId, LeafFiles, LineCount, RatchetCount, RatchetLimit, RelativePath,
     };
 
     use super::*;
@@ -307,8 +312,18 @@ mod tests {
         path: &str,
         files: Vec<&str>,
     ) -> DirectoryFanoutViolation {
+        directory_fanout_violation_in_group(kind, path, LanguageGroupId::Source, files)
+    }
+
+    fn directory_fanout_violation_in_group(
+        kind: DirectoryViolationKind,
+        path: &str,
+        group: LanguageGroupId,
+        files: Vec<&str>,
+    ) -> DirectoryFanoutViolation {
         DirectoryFanoutViolation {
             kind,
+            group,
             path: RelativePath::new(path).unwrap(),
             actual: LeafFiles::new(2).unwrap(),
             limit: LeafFiles::new(1).unwrap(),
@@ -537,6 +552,40 @@ mod tests {
                 output["runs"][0]["results"][0]["ruleId"],
                 TEST_DIRECTORY_FANOUT_RULE_ID
             );
+            assert_eq!(
+                output["runs"][0]["results"][0]["properties"]["group"],
+                "source"
+            );
+        }
+
+        #[test]
+        fn it_identifies_groups_when_directory_findings_share_a_path() {
+            let report = report_with(vec![
+                CheckViolation::DirectoryFanout(directory_fanout_violation_in_group(
+                    DirectoryViolationKind::DirectoryFanout,
+                    "src",
+                    LanguageGroupId::Source,
+                    vec!["src/a.rs", "src/b.rs"],
+                )),
+                CheckViolation::DirectoryFanout(directory_fanout_violation_in_group(
+                    DirectoryViolationKind::DirectoryFanout,
+                    "src",
+                    LanguageGroupId::Documentation,
+                    vec!["src/a.md", "src/b.md"],
+                )),
+            ]);
+
+            let output = sarif_check_report(&report);
+            let results = &output["runs"][0]["results"];
+
+            assert_eq!(
+                results[0]["message"]["text"],
+                "src in group source has 2 direct production leaf files, exceeding limit 1."
+            );
+            assert_eq!(
+                results[1]["message"]["text"],
+                "src in group documentation has 2 direct production leaf files, exceeding limit 1."
+            );
         }
     }
 
@@ -571,13 +620,13 @@ mod tests {
         #[test]
         fn it_maps_increases_to_the_ratchet_increase_rule() {
             let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Increased(
-                RatchetIncreasedViolation {
-                    kind: RatchetIncreasedViolationKind::FileLocIncreased,
+                RatchetIncreasedViolation::File(FileRatchetIncreasedViolation {
+                    kind: FileViolationKind::FileLoc,
                     path: RelativePath::new("src/lib.rs").unwrap(),
                     actual: RatchetCount::new(5),
                     limit: RatchetCount::new(2),
                     ratchet: RatchetCount::new(4),
-                },
+                }),
             ))]);
 
             let output = sarif_check_report(&report);
@@ -601,18 +650,22 @@ mod tests {
                     },
                 })
             );
+            assert!(result["properties"].get("group").is_none());
         }
 
         #[test]
         fn it_maps_stale_entries_to_the_ratchet_stale_rule() {
             let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
-                RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation {
-                    kind: RatchetStaleViolationKind::DirectoryFanoutStale,
-                    path: RelativePath::new("src").unwrap(),
-                    actual: RatchetCount::new(1),
-                    limit: Some(RatchetCount::new(2)),
-                    ratchet: RatchetCount::new(4),
-                }),
+                RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::Directory(
+                    DirectoryRatchetStaleMeasuredViolation {
+                        kind: DirectoryViolationKind::DirectoryFanout,
+                        path: RelativePath::new("src").unwrap(),
+                        group: LanguageGroupId::Source,
+                        actual: RatchetCount::new(1),
+                        limit: RatchetLimit::Finite(RatchetCount::new(2)),
+                        ratchet: RatchetCount::new(4),
+                    },
+                )),
             ))]);
 
             let output = sarif_check_report(&report);
@@ -620,6 +673,7 @@ mod tests {
 
             assert_eq!(result["ruleId"], RATCHET_STALE_RULE_ID);
             assert_eq!(result["properties"]["kind"], "directory_fanout_stale");
+            assert_eq!(result["properties"]["group"], "source");
         }
 
         #[test]

@@ -72,7 +72,7 @@ mod discover_sources {
             let sources = discover_sources(tempdir.path(), &load_config(tempdir.path())).unwrap();
 
             assert_eq!(source_paths(&sources), vec!["src/shared"]);
-            assert_eq!(sources[0].language, LanguageId::new("go").unwrap());
+            assert_eq!(sources[0].language(), LanguageId::new("go").unwrap());
         }
     }
 }

@@ -39,7 +39,7 @@ mod when_explaining_rust_cfg_test_preprocessing {
         assert_eq!(
             stdout(&output),
             indoc! {"
-                src/lib.rs: production source (Rust); file LOC limit: 400; directory leaf-file limit: 8; rust cfg(test): parsed; excluded top-level items: 1
+                src/lib.rs: production source (Rust; group: source); file LOC limit: 400; directory leaf-file limit: 8; rust cfg(test): parsed; excluded top-level items: 1
             "}
         );
         assert_eq!(stderr(&output), "");
@@ -86,7 +86,7 @@ mod when_explaining_matching_overrides {
         assert_eq!(
             stdout(&output),
             indoc! {"
-                src/legacy/lib.rs: production source (Rust); file LOC limit: 4; directory leaf-file limit: 3; matched file overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]; matched directory overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]; rust cfg(test): skipped by prefilter; excluded top-level items: 0
+                src/legacy/lib.rs: production source (Rust; group: source); file LOC limit: 4; directory leaf-file limit: 3; matched file overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]; matched directory overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]; rust cfg(test): skipped by prefilter; excluded top-level items: 0
             "}
         );
         assert_eq!(stderr(&output), "");
@@ -122,7 +122,7 @@ mod when_explaining_matching_overrides {
         assert_eq!(
             stdout(&output),
             indoc! {"
-                src/lib.rs: production source (Rust); file LOC limit: 400; directory leaf-file limit: 3; matched directory overrides: #1 paths=[src]; rust cfg(test): skipped by prefilter; excluded top-level items: 0
+                src/lib.rs: production source (Rust; group: source); file LOC limit: 400; directory leaf-file limit: 3; matched directory overrides: #1 paths=[src]; rust cfg(test): skipped by prefilter; excluded top-level items: 0
             "}
         );
         assert_eq!(stderr(&output), "");

@@ -6,6 +6,18 @@ use serde::{Serialize, Serializer};
 use crate::ratchet::RatchetCount;
 use crate::{LanguageGroupId, RelativePath};
 
+use super::{DirectoryViolationKind, FileViolationKind};
+
+mod kind;
+mod limit;
+
+pub use kind::{RatchetIncreasedViolationKind, RatchetStaleViolationKind, RatchetViolationKind};
+use kind::{
+    directory_ratchet_increased_kind, directory_ratchet_stale_kind, file_ratchet_increased_kind,
+    file_ratchet_stale_kind,
+};
+pub use limit::RatchetLimit;
+
 /// A ratchet entry that failed current-check semantics.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RatchetViolation {
@@ -19,48 +31,92 @@ impl RatchetViolation {
     /// Returns the stable violation kind rendered in machine-readable output.
     pub fn kind(&self) -> RatchetViolationKind {
         match self {
-            Self::Increased(violation) => violation.kind.into(),
+            Self::Increased(violation) => violation.kind().into(),
             Self::Stale(violation) => violation.kind().into(),
         }
     }
 
     /// Returns the repository-relative file or directory path.
     pub fn path(&self) -> &RelativePath {
-        match self {
-            Self::Increased(violation) => &violation.path,
-            Self::Stale(violation) => violation.path(),
+        if let Some(measured) = self.measured() {
+            return measured.path();
         }
+        self.missing()
+            .expect("unmeasured ratchet diagnostics are missing entries")
+            .path()
     }
 
     /// Returns the current measured value, when the path is still measured.
     pub fn actual(&self) -> Option<RatchetCount> {
-        match self {
-            Self::Increased(violation) => Some(violation.actual),
-            Self::Stale(violation) => violation.actual(),
-        }
+        self.measured().map(|measured| measured.actual())
     }
 
-    /// Returns the current configured limit, when finite and applicable.
-    pub fn limit(&self) -> Option<RatchetCount> {
-        match self {
-            Self::Increased(violation) => Some(violation.limit),
-            Self::Stale(violation) => violation.limit(),
-        }
+    /// Returns the current configured limit, when the path is still measured.
+    pub fn limit(&self) -> Option<RatchetLimit> {
+        self.measured().and_then(|measured| measured.limit())
     }
 
     /// Returns the stored ratchet ceiling.
     pub fn ratchet(&self) -> RatchetCount {
+        if let Some(measured) = self.measured() {
+            return measured.ratchet();
+        }
+        self.missing()
+            .expect("unmeasured ratchet diagnostics are missing entries")
+            .ratchet()
+    }
+
+    /// Returns the language group for a directory diagnostic.
+    pub fn group(&self) -> Option<&LanguageGroupId> {
+        self.measured()
+            .and_then(|measured| measured.group())
+            .or_else(|| self.missing().and_then(RatchetStaleMissingViolation::group))
+    }
+
+    fn measured(&self) -> Option<MeasuredRatchetViolationRef<'_>> {
         match self {
-            Self::Increased(violation) => violation.ratchet,
-            Self::Stale(violation) => violation.ratchet(),
+            Self::Increased(RatchetIncreasedViolation::File(violation)) => {
+                Some(MeasuredRatchetViolationRef::File {
+                    path: &violation.path,
+                    actual: violation.actual,
+                    limit: RatchetLimit::Finite(violation.limit),
+                    ratchet: violation.ratchet,
+                })
+            }
+            Self::Increased(RatchetIncreasedViolation::Directory(violation)) => {
+                Some(MeasuredRatchetViolationRef::Directory {
+                    path: &violation.path,
+                    group: &violation.group,
+                    actual: violation.actual,
+                    limit: RatchetLimit::Finite(violation.limit),
+                    ratchet: violation.ratchet,
+                })
+            }
+            Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
+                violation,
+            ))) => Some(MeasuredRatchetViolationRef::File {
+                path: &violation.path,
+                actual: violation.actual,
+                limit: RatchetLimit::Finite(violation.limit),
+                ratchet: violation.ratchet,
+            }),
+            Self::Stale(RatchetStaleViolation::Measured(
+                RatchetStaleMeasuredViolation::Directory(violation),
+            )) => Some(MeasuredRatchetViolationRef::Directory {
+                path: &violation.path,
+                group: &violation.group,
+                actual: violation.actual,
+                limit: violation.limit,
+                ratchet: violation.ratchet,
+            }),
+            Self::Stale(RatchetStaleViolation::Missing(_)) => None,
         }
     }
 
-    /// Returns the persisted group for a missing directory ratchet.
-    pub fn group(&self) -> Option<&LanguageGroupId> {
+    fn missing(&self) -> Option<&RatchetStaleMissingViolation> {
         match self {
+            Self::Stale(RatchetStaleViolation::Missing(violation)) => Some(violation),
             Self::Increased(_) | Self::Stale(RatchetStaleViolation::Measured(_)) => None,
-            Self::Stale(RatchetStaleViolation::Missing(violation)) => violation.group(),
         }
     }
 }
@@ -86,11 +142,46 @@ impl Serialize for RatchetViolation {
 
 /// Ratchet increase with a current measured value and finite configured limit.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RatchetIncreasedViolation {
-    /// Which ratchet increase invariant failed.
-    pub kind: RatchetIncreasedViolationKind,
-    /// Repository-relative file or directory path.
+pub enum RatchetIncreasedViolation {
+    /// File LOC ratchet increase.
+    File(FileRatchetIncreasedViolation),
+    /// Directory fan-out ratchet increase.
+    Directory(DirectoryRatchetIncreasedViolation),
+}
+
+impl RatchetIncreasedViolation {
+    fn kind(&self) -> RatchetIncreasedViolationKind {
+        match self {
+            Self::File(violation) => file_ratchet_increased_kind(violation.kind),
+            Self::Directory(violation) => directory_ratchet_increased_kind(violation.kind),
+        }
+    }
+}
+
+/// File LOC ratchet increase with a current measurement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileRatchetIncreasedViolation {
+    /// File role whose LOC ratchet increased.
+    pub kind: FileViolationKind,
+    /// Repository-relative file path.
     pub path: RelativePath,
+    /// Current measured value.
+    pub actual: RatchetCount,
+    /// Current configured limit.
+    pub limit: RatchetCount,
+    /// Stored ratchet ceiling.
+    pub ratchet: RatchetCount,
+}
+
+/// Directory fan-out ratchet increase with a current grouped measurement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectoryRatchetIncreasedViolation {
+    /// Directory role whose fan-out ratchet increased.
+    pub kind: DirectoryViolationKind,
+    /// Repository-relative directory path.
+    pub path: RelativePath,
+    /// Language group measured at the directory.
+    pub group: LanguageGroupId,
     /// Current measured value.
     pub actual: RatchetCount,
     /// Current configured limit.
@@ -111,53 +202,109 @@ pub enum RatchetStaleViolation {
 impl RatchetStaleViolation {
     fn kind(&self) -> RatchetStaleViolationKind {
         match self {
-            Self::Measured(violation) => violation.kind,
+            Self::Measured(violation) => violation.kind(),
             Self::Missing(violation) => violation.kind(),
-        }
-    }
-
-    fn path(&self) -> &RelativePath {
-        match self {
-            Self::Measured(violation) => &violation.path,
-            Self::Missing(violation) => violation.path(),
-        }
-    }
-
-    fn actual(&self) -> Option<RatchetCount> {
-        match self {
-            Self::Measured(violation) => Some(violation.actual),
-            Self::Missing(_) => None,
-        }
-    }
-
-    fn limit(&self) -> Option<RatchetCount> {
-        match self {
-            Self::Measured(violation) => violation.limit,
-            Self::Missing(_) => None,
-        }
-    }
-
-    fn ratchet(&self) -> RatchetCount {
-        match self {
-            Self::Measured(violation) => violation.ratchet,
-            Self::Missing(violation) => violation.ratchet(),
         }
     }
 }
 
 /// Stale ratchet entry for a path that is still measured.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RatchetStaleMeasuredViolation {
-    /// Which stale ratchet invariant failed.
-    pub kind: RatchetStaleViolationKind,
-    /// Repository-relative file or directory path.
+pub enum RatchetStaleMeasuredViolation {
+    /// Stale file LOC measurement.
+    File(FileRatchetStaleMeasuredViolation),
+    /// Stale directory fan-out measurement.
+    Directory(DirectoryRatchetStaleMeasuredViolation),
+}
+
+impl RatchetStaleMeasuredViolation {
+    fn kind(&self) -> RatchetStaleViolationKind {
+        match self {
+            Self::File(violation) => file_ratchet_stale_kind(violation.kind),
+            Self::Directory(violation) => directory_ratchet_stale_kind(violation.kind),
+        }
+    }
+}
+
+/// Stale ratchet entry for a file that is still measured.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileRatchetStaleMeasuredViolation {
+    /// File role whose LOC ratchet became stale.
+    pub kind: FileViolationKind,
+    /// Repository-relative file path.
     pub path: RelativePath,
     /// Current measured value.
     pub actual: RatchetCount,
-    /// Current configured limit, when finite and applicable.
-    pub limit: Option<RatchetCount>,
+    /// Current configured limit.
+    pub limit: RatchetCount,
     /// Stored ratchet ceiling.
     pub ratchet: RatchetCount,
+}
+
+/// Stale ratchet entry for a directory that is still measured.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DirectoryRatchetStaleMeasuredViolation {
+    /// Directory role whose fan-out ratchet became stale.
+    pub kind: DirectoryViolationKind,
+    /// Repository-relative directory path.
+    pub path: RelativePath,
+    /// Language group measured at the directory.
+    pub group: LanguageGroupId,
+    /// Current measured value.
+    pub actual: RatchetCount,
+    /// Current configured finite or unlimited limit.
+    pub limit: RatchetLimit,
+    /// Stored ratchet ceiling.
+    pub ratchet: RatchetCount,
+}
+
+enum MeasuredRatchetViolationRef<'violation> {
+    File {
+        path: &'violation RelativePath,
+        actual: RatchetCount,
+        limit: RatchetLimit,
+        ratchet: RatchetCount,
+    },
+    Directory {
+        path: &'violation RelativePath,
+        group: &'violation LanguageGroupId,
+        actual: RatchetCount,
+        limit: RatchetLimit,
+        ratchet: RatchetCount,
+    },
+}
+
+impl<'violation> MeasuredRatchetViolationRef<'violation> {
+    fn path(&self) -> &'violation RelativePath {
+        match self {
+            Self::File { path, .. } | Self::Directory { path, .. } => path,
+        }
+    }
+
+    fn group(&self) -> Option<&'violation LanguageGroupId> {
+        match self {
+            Self::File { .. } => None,
+            Self::Directory { group, .. } => Some(group),
+        }
+    }
+
+    fn actual(&self) -> RatchetCount {
+        match self {
+            Self::File { actual, .. } | Self::Directory { actual, .. } => *actual,
+        }
+    }
+
+    fn limit(&self) -> Option<RatchetLimit> {
+        match self {
+            Self::File { limit, .. } | Self::Directory { limit, .. } => Some(*limit),
+        }
+    }
+
+    fn ratchet(&self) -> RatchetCount {
+        match self {
+            Self::File { ratchet, .. } | Self::Directory { ratchet, .. } => *ratchet,
+        }
+    }
 }
 
 /// Stale ratchet entry for a file or grouped directory that is no longer measured.
@@ -221,78 +368,4 @@ pub struct DirectoryRatchetStaleMissingViolation {
     pub group: LanguageGroupId,
     /// Stored ratchet ceiling.
     pub ratchet: RatchetCount,
-}
-
-/// Stable ratchet increase categories.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum RatchetIncreasedViolationKind {
-    /// Production file LOC rose above its ratchet ceiling.
-    FileLocIncreased,
-    /// Path-classified test file LOC rose above its ratchet ceiling.
-    TestFileLocIncreased,
-    /// Production directory fan-out rose above its ratchet ceiling.
-    DirectoryFanoutIncreased,
-    /// Path-classified test directory fan-out rose above its ratchet ceiling.
-    TestDirectoryFanoutIncreased,
-}
-
-/// Stable stale ratchet categories.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum RatchetStaleViolationKind {
-    /// Production file LOC improved or no longer violates policy.
-    FileLocStale,
-    /// Path-classified test file LOC improved or no longer violates policy.
-    TestFileLocStale,
-    /// Production directory fan-out improved or no longer violates policy.
-    DirectoryFanoutStale,
-    /// Path-classified test directory fan-out improved or no longer violates policy.
-    TestDirectoryFanoutStale,
-}
-
-impl From<RatchetIncreasedViolationKind> for RatchetViolationKind {
-    fn from(value: RatchetIncreasedViolationKind) -> Self {
-        match value {
-            RatchetIncreasedViolationKind::FileLocIncreased => Self::FileLocIncreased,
-            RatchetIncreasedViolationKind::TestFileLocIncreased => Self::TestFileLocIncreased,
-            RatchetIncreasedViolationKind::DirectoryFanoutIncreased => {
-                Self::DirectoryFanoutIncreased
-            }
-            RatchetIncreasedViolationKind::TestDirectoryFanoutIncreased => {
-                Self::TestDirectoryFanoutIncreased
-            }
-        }
-    }
-}
-
-impl From<RatchetStaleViolationKind> for RatchetViolationKind {
-    fn from(value: RatchetStaleViolationKind) -> Self {
-        match value {
-            RatchetStaleViolationKind::FileLocStale => Self::FileLocStale,
-            RatchetStaleViolationKind::TestFileLocStale => Self::TestFileLocStale,
-            RatchetStaleViolationKind::DirectoryFanoutStale => Self::DirectoryFanoutStale,
-            RatchetStaleViolationKind::TestDirectoryFanoutStale => Self::TestDirectoryFanoutStale,
-        }
-    }
-}
-
-/// Stable ratchet failure categories.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RatchetViolationKind {
-    /// Production file LOC rose above its ratchet ceiling.
-    FileLocIncreased,
-    /// Path-classified test file LOC rose above its ratchet ceiling.
-    TestFileLocIncreased,
-    /// Production directory fan-out rose above its ratchet ceiling.
-    DirectoryFanoutIncreased,
-    /// Path-classified test directory fan-out rose above its ratchet ceiling.
-    TestDirectoryFanoutIncreased,
-    /// Production file LOC improved or no longer violates policy.
-    FileLocStale,
-    /// Path-classified test file LOC improved or no longer violates policy.
-    TestFileLocStale,
-    /// Production directory fan-out improved or no longer violates policy.
-    DirectoryFanoutStale,
-    /// Path-classified test directory fan-out improved or no longer violates policy.
-    TestDirectoryFanoutStale,
 }

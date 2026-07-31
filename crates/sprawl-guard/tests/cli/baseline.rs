@@ -41,6 +41,24 @@ mod when_writing_the_initial_baseline {
         assert_eq!(ratchet.directories.len(), 1);
         assert_eq!(ratchet.directories[0].group.as_str(), "source");
     }
+
+    #[test]
+    fn it_records_each_group_when_directory_entries_share_a_path() {
+        let root = TempDir::new().unwrap();
+        write_mixed_group_directory_fanout_fixture(&root);
+
+        let output = sprawl_guard(&root)
+            .args(["baseline", "--write"])
+            .output()
+            .unwrap();
+        let ratchet = read_ratchet_file(&root);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            directory_ratchet_entries(&ratchet),
+            vec![("source", "src", 2), ("documentation", "src", 2),]
+        );
+    }
 }
 
 mod when_the_ratchet_file_already_exists {

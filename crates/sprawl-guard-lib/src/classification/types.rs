@@ -1,6 +1,9 @@
 use serde::Serialize;
 
-use crate::{DiagnosticDetail, LanguageId, RelativePath, RustCfgTestInfo, SourceResolvedLimits};
+use crate::{
+    DiagnosticDetail, LanguageGroupId, LanguageId, RelativePath, RustCfgTestInfo,
+    SourceResolvedLimits,
+};
 
 /// Production/test kind for an included source file.
 ///
@@ -26,9 +29,53 @@ pub struct ClassifiedSource {
     /// Repository-relative path.
     pub path: RelativePath,
     /// Matched language.
-    pub language: LanguageId,
+    language: LanguageId,
+    /// Language group used for directory fan-out measurements.
+    group: LanguageGroupId,
     /// Production/test kind.
     pub kind: SourceKind,
+}
+
+impl ClassifiedSource {
+    /// Creates a classified source with the built-in group for its language.
+    pub fn new(path: RelativePath, language: LanguageId, kind: SourceKind) -> Self {
+        let group = if language.as_tokei().is_literate() {
+            LanguageGroupId::Documentation
+        } else {
+            LanguageGroupId::Source
+        };
+        Self {
+            path,
+            language,
+            group,
+            kind,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_group(
+        path: RelativePath,
+        language: LanguageId,
+        group: LanguageGroupId,
+        kind: SourceKind,
+    ) -> Self {
+        Self {
+            path,
+            language,
+            group,
+            kind,
+        }
+    }
+
+    /// Returns the language group used for directory fan-out measurements.
+    pub fn group(&self) -> &LanguageGroupId {
+        &self.group
+    }
+
+    /// Returns the matched language.
+    pub fn language(&self) -> LanguageId {
+        self.language
+    }
 }
 
 /// Result of ignore-aware source discovery.

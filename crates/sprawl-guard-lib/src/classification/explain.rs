@@ -272,7 +272,7 @@ mod tests {
                 };
                 let resolved_limits = explanation.resolved_limits.unwrap();
                 assert_eq!(resolved_limits.file.value.get(), 5);
-                assert_eq!(resolved_limits.directory.unwrap().value.get(), 4);
+                assert_eq!(resolved_limits.directory.value.finite().unwrap().get(), 4);
                 assert_eq!(resolved_limits.file.matched_overrides.len(), 2);
                 assert_eq!(resolved_limits.file.matched_overrides[0].ordinal.get(), 1);
                 assert_eq!(resolved_limits.file.matched_overrides[1].ordinal.get(), 2);

@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::classification::{ClassifiedSource, SourceKind};
-use crate::resolved_limits::LimitResolver;
-use crate::{LeafFiles, RelativePath, Result};
+use crate::resolved_limits::{LeafFileLimit, LimitResolver};
+use crate::{LanguageGroupId, LeafFiles, RelativePath, Result};
 
 use super::{DirectoryFanoutViolation, DirectoryViolationKind};
 
@@ -17,6 +17,7 @@ pub(super) fn directory_fanout_checks(
         directories
             .entry(DirectoryKey {
                 kind: source.kind,
+                group: source.group().clone(),
                 path: directory,
             })
             .or_default()
@@ -27,20 +28,22 @@ pub(super) fn directory_fanout_checks(
     for (directory, count) in directories {
         let actual = count.actual();
         let kind = violation_kind(directory.kind);
-        let limit = limits.directory_leaf_files(directory.kind, &directory.path);
+        let limit = limits.directory_leaf_files(directory.kind, &directory.group, &directory.path);
         let measurement = DirectoryFanoutMeasurement {
             kind,
+            group: directory.group.clone(),
             path: directory.path.clone(),
             actual,
-            limit: limit.as_ref().map(|limit| limit.value),
+            limit: limit.value,
         };
-        let check = match limit {
-            Some(limit) if actual.get() > limit.value.get() => {
+        let check = match limit.value {
+            LeafFileLimit::Finite(value) if actual.get() > value.get() => {
                 DirectoryFanoutCheck::Exceeded(DirectoryFanoutViolation {
                     kind,
+                    group: directory.group,
                     path: directory.path,
                     actual,
-                    limit: limit.value,
+                    limit: value,
                     ratchet: None,
                     files: count.files.clone(),
                 })
@@ -63,9 +66,10 @@ impl DirectoryFanoutCheck {
             Self::WithinLimit(measurement) => measurement.clone(),
             Self::Exceeded(violation) => DirectoryFanoutMeasurement {
                 kind: violation.kind,
+                group: violation.group.clone(),
                 path: violation.path.clone(),
                 actual: violation.actual,
-                limit: Some(violation.limit),
+                limit: LeafFileLimit::Finite(violation.limit),
             },
         }
     }
@@ -92,14 +96,16 @@ impl DirectoryFanoutCheck {
 #[derive(Clone)]
 pub(super) struct DirectoryFanoutMeasurement {
     pub(super) kind: DirectoryViolationKind,
+    pub(super) group: LanguageGroupId,
     pub(super) path: RelativePath,
     pub(super) actual: LeafFiles,
-    pub(super) limit: Option<LeafFiles>,
+    pub(super) limit: LeafFileLimit,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 struct DirectoryKey {
     kind: SourceKind,
+    group: LanguageGroupId,
     path: RelativePath,
 }
 
@@ -133,4 +139,49 @@ fn violation_kind(kind: SourceKind) -> DirectoryViolationKind {
 fn source_parent_directory(path: &RelativePath) -> Result<RelativePath> {
     let path = path.to_path_buf();
     RelativePath::new(path.parent().unwrap_or_else(|| Path::new("")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::built_in_config;
+    use crate::{LanguageGroupId, LanguageId};
+
+    fn production_source(path: &str, language: &str, group: LanguageGroupId) -> ClassifiedSource {
+        ClassifiedSource::with_group(
+            RelativePath::new(Path::new(path)).unwrap(),
+            LanguageId::new(language).unwrap(),
+            group,
+            SourceKind::Production,
+        )
+    }
+
+    mod when_languages_share_a_directory_but_not_a_group {
+        use super::*;
+
+        #[test]
+        fn it_measures_each_group_independently() {
+            let mut config = built_in_config();
+            config.limits.max_leaf_files_per_directory.production = LeafFiles::new(1).unwrap();
+            let limits = LimitResolver::new(&config).unwrap();
+            let frontend_group = LanguageGroupId::custom("frontend").unwrap();
+            let sources = vec![
+                production_source("src/app.js", "JavaScript", frontend_group.clone()),
+                production_source("src/app.ts", "TypeScript", frontend_group.clone()),
+                production_source("src/lib.rs", "Rust", LanguageGroupId::Source),
+            ];
+
+            let checks = directory_fanout_checks(&limits, &sources).unwrap();
+            let measurements = checks
+                .iter()
+                .map(DirectoryFanoutCheck::measurement)
+                .collect::<Vec<_>>();
+
+            assert_eq!(measurements.len(), 2);
+            assert_eq!(measurements[0].group, LanguageGroupId::Source);
+            assert_eq!(measurements[0].actual.get(), 1);
+            assert_eq!(measurements[1].group, frontend_group);
+            assert_eq!(measurements[1].actual.get(), 2);
+        }
+    }
 }

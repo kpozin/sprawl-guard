@@ -176,7 +176,7 @@ fn detect_languages(root: &Path) -> Result<Vec<LanguageId>> {
     let mut config = built_in_config();
     config.enable_only_languages(supported_language_ids())?;
     let sources = discover_sources(root, &config)?;
-    let languages = sorted_unique_languages(sources.into_iter().map(|source| source.language));
+    let languages = sorted_unique_languages(sources.into_iter().map(|source| source.language()));
     if languages.is_empty() {
         return Err(CliError::NoInitLanguages);
     }

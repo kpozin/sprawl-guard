@@ -1,14 +1,15 @@
 //! Resolved policy limits after applying language and path overrides.
 
+use std::fmt;
 use std::num::NonZeroUsize;
 use std::path::Path;
 
 use globset::{Glob, GlobMatcher};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::classification::{ClassifiedSource, SourceKind};
 use crate::config::{Config, OverrideLimits, OverridePaths, OverrideReason, TestFanoutLimit};
-use crate::{CodeLines, LeafFiles, RelativePath, Result, SprawlError};
+use crate::{CodeLines, LanguageGroupId, LeafFiles, RelativePath, Result, SprawlError};
 
 const DIRECTORY_OVERRIDE_DESCENDANT_PROBE: &str = "__sprawl_guard_directory_metric__";
 
@@ -55,11 +56,63 @@ pub struct ResolvedCodeLineLimit {
     pub matched_overrides: Vec<MatchedOverride>,
 }
 
+/// Finite or unlimited policy value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FiniteOrUnlimited<Value> {
+    /// Enforce the contained value.
+    Finite(Value),
+    /// Measure without enforcing a ceiling.
+    Unlimited,
+}
+
+impl<Value> FiniteOrUnlimited<Value>
+where
+    Value: Copy,
+{
+    /// Returns the finite limit, or `None` when the metric is unlimited.
+    pub const fn finite(self) -> Option<Value> {
+        match self {
+            Self::Finite(value) => Some(value),
+            Self::Unlimited => None,
+        }
+    }
+}
+
+impl<Value> fmt::Display for FiniteOrUnlimited<Value>
+where
+    Value: fmt::Display,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Finite(value) => value.fmt(formatter),
+            Self::Unlimited => formatter.write_str("unlimited"),
+        }
+    }
+}
+
+impl<Value> Serialize for FiniteOrUnlimited<Value>
+where
+    Value: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Finite(value) => value.serialize(serializer),
+            Self::Unlimited => serializer.serialize_str("unlimited"),
+        }
+    }
+}
+
+/// Finite or unlimited direct leaf-file budget for one directory metric.
+pub type LeafFileLimit = FiniteOrUnlimited<LeafFiles>;
+
 /// Resolved leaf-file limit for one directory metric.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ResolvedLeafFileLimit {
     /// Final direct leaf-file limit after precedence is applied.
-    pub value: LeafFiles,
+    pub value: LeafFileLimit,
     /// Overrides whose path globs matched the directory metric path.
     ///
     /// A trailing `/**` pattern also matches the prefix directory itself for
@@ -73,8 +126,8 @@ pub struct ResolvedLeafFileLimit {
 pub struct SourceResolvedLimits {
     /// Resolved file LOC limit for the source's production/test kind.
     pub file: ResolvedCodeLineLimit,
-    /// Resolved directory fan-out limit for the source's parent directory, when finite.
-    pub directory: Option<ResolvedLeafFileLimit>,
+    /// Resolved directory fan-out limit for the source's parent directory.
+    pub directory: ResolvedLeafFileLimit,
 }
 
 /// Resolves configured limits for concrete file and directory metrics.
@@ -109,8 +162,11 @@ impl<'config> LimitResolver<'config> {
     pub(crate) fn source_limits(&self, source: &ClassifiedSource) -> Result<SourceResolvedLimits> {
         Ok(SourceResolvedLimits {
             file: self.file_code_lines(source),
-            directory: self
-                .directory_leaf_files(source.kind, &source_parent_directory(&source.path)?),
+            directory: self.directory_leaf_files(
+                source.kind,
+                source.group(),
+                &source_parent_directory(&source.path)?,
+            ),
         })
     }
 
@@ -151,15 +207,19 @@ impl<'config> LimitResolver<'config> {
     pub(crate) fn directory_leaf_files(
         &self,
         kind: SourceKind,
+        group: &LanguageGroupId,
         path: &RelativePath,
-    ) -> Option<ResolvedLeafFileLimit> {
-        let mut limit = match kind {
-            SourceKind::Production => {
-                Some(self.config.limits.max_leaf_files_per_directory.production)
-            }
-            SourceKind::Test => {
-                finite_test_fanout_limit(self.config.limits.max_leaf_files_per_directory.test)
-            }
+    ) -> ResolvedLeafFileLimit {
+        let mut limit = match group {
+            LanguageGroupId::Documentation => LeafFileLimit::Unlimited,
+            LanguageGroupId::Source | LanguageGroupId::Custom(_) => match kind {
+                SourceKind::Production => LeafFileLimit::Finite(
+                    self.config.limits.max_leaf_files_per_directory.production,
+                ),
+                SourceKind::Test => {
+                    leaf_file_limit(self.config.limits.max_leaf_files_per_directory.test)
+                }
+            },
         };
         let mut matched_overrides = Vec::new();
 
@@ -172,36 +232,36 @@ impl<'config> LimitResolver<'config> {
                 SourceKind::Production => {
                     if let Some(value) = override_entry.limits.production_leaf_files_per_directory()
                     {
-                        limit = Some(value);
+                        limit = LeafFileLimit::Finite(value);
                     }
                 }
                 SourceKind::Test => {
                     if let Some(value) = override_entry.limits.test_leaf_files_per_directory() {
-                        limit = finite_test_fanout_limit(value);
+                        limit = leaf_file_limit(value);
                     }
                 }
             }
         }
 
-        Some(ResolvedLeafFileLimit {
-            value: limit?,
+        ResolvedLeafFileLimit {
+            value: limit,
             matched_overrides,
-        })
+        }
     }
 
     fn production_file_code_lines(&self, source: &ClassifiedSource) -> CodeLines {
         self.config
             .languages()
-            .get(&source.language)
+            .get(&source.language())
             .and_then(|language| language.common().limits.max_lines_per_file.code_non_test)
             .unwrap_or(self.config.limits.max_lines_per_file.code_non_test)
     }
 }
 
-fn finite_test_fanout_limit(limit: TestFanoutLimit) -> Option<LeafFiles> {
+fn leaf_file_limit(limit: TestFanoutLimit) -> LeafFileLimit {
     match limit {
-        TestFanoutLimit::Finite(value) => Some(value),
-        TestFanoutLimit::Unlimited => None,
+        TestFanoutLimit::Finite(value) => LeafFileLimit::Finite(value),
+        TestFanoutLimit::Unlimited => LeafFileLimit::Unlimited,
     }
 }
 

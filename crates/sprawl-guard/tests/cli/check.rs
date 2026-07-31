@@ -186,6 +186,7 @@ mod when_production_directory_exceeds_the_leaf_file_limit {
             json["violations"][0],
             json!({
                 "kind": "directory_fanout",
+                "group": "source",
                 "path": "src",
                 "actual": 2,
                 "limit": 1,

@@ -42,7 +42,7 @@ fn source_counts_by_language(sources: &[ClassifiedSource]) -> BTreeMap<LanguageI
     let mut counts = BTreeMap::new();
     for source in sources {
         counts
-            .entry(source.language)
+            .entry(source.language())
             .and_modify(|count: &mut NonZeroUsize| {
                 *count = NonZeroUsize::new(
                     count

@@ -8,13 +8,17 @@ use serde::{Serialize, Serializer};
 
 use crate::classification::TraversalIncident;
 use crate::rust_cfg::RustCfgTestWarning;
-use crate::{CodeLines, DiagnosticDetail, LanguageId, LeafFiles, LineCount, RelativePath};
+use crate::{
+    CodeLines, DiagnosticDetail, LanguageGroupId, LanguageId, LeafFiles, LineCount, RelativePath,
+};
 
 mod ratchet;
 
 pub use ratchet::{
-    DirectoryRatchetStaleMissingViolation, FileRatchetStaleMissingViolation,
-    RatchetIncreasedViolation, RatchetIncreasedViolationKind, RatchetStaleMeasuredViolation,
+    DirectoryRatchetIncreasedViolation, DirectoryRatchetStaleMeasuredViolation,
+    DirectoryRatchetStaleMissingViolation, FileRatchetIncreasedViolation,
+    FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, RatchetIncreasedViolation,
+    RatchetIncreasedViolationKind, RatchetLimit, RatchetStaleMeasuredViolation,
     RatchetStaleMissingViolation, RatchetStaleViolation, RatchetStaleViolationKind,
     RatchetViolation, RatchetViolationKind,
 };
@@ -310,6 +314,8 @@ pub enum CheckViolation {
 pub struct DirectoryFanoutViolation {
     /// Which directory fan-out budget was exceeded.
     pub kind: DirectoryViolationKind,
+    /// Language group whose direct child files exceeded the budget.
+    pub group: LanguageGroupId,
     /// Repository-relative directory path.
     ///
     /// The repository root is represented by an empty relative path.

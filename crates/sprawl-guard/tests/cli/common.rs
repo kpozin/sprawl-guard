@@ -179,6 +179,31 @@ pub(crate) fn write_rust_directory_fanout_fixture(root: &TempDir) {
     write_file(root, "src/b.rs", "fn b() {}\n");
 }
 
+pub(crate) fn write_mixed_group_directory_fanout_fixture(root: &TempDir) {
+    write_config(
+        root,
+        indoc! {r#"
+            [limits]
+            max_leaf_files_per_directory = { production = 1 }
+
+            [[overrides]]
+            paths = ["src/**"]
+            max_leaf_files_per_directory = { production = 1 }
+            reason = "exercise grouped directory fan-out"
+
+            [languages.rust]
+            enabled = true
+
+            [languages.markdown]
+            enabled = true
+        "#},
+    );
+    write_file(root, "src/a.rs", "fn a() {}\n");
+    write_file(root, "src/b.rs", "fn b() {}\n");
+    write_file(root, "src/a.md", "# A\n");
+    write_file(root, "src/b.md", "# B\n");
+}
+
 pub(crate) fn write_oversized_rust_source(root: &TempDir, path: &str) {
     let source = root.child(path);
     std::fs::create_dir_all(source.path().parent().unwrap()).unwrap();
@@ -233,6 +258,20 @@ pub(crate) fn ratchet_file_entry<'file>(
         .files
         .iter()
         .find(|entry| entry.path.as_str() == path)
+}
+
+pub(crate) fn directory_ratchet_entries(ratchet: &RatchetFile) -> Vec<(&str, &str, u32)> {
+    ratchet
+        .directories
+        .iter()
+        .map(|entry| {
+            (
+                entry.group.as_str(),
+                entry.path.as_str(),
+                entry.leaf_source_files.get(),
+            )
+        })
+        .collect()
 }
 
 pub(crate) fn stdout(output: &Output) -> String {

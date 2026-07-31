@@ -40,6 +40,41 @@ mod discover_sources {
         symlink("real", root.join("linked")).unwrap();
     }
 
+    mod when_assigning_automatic_language_groups {
+        use super::*;
+        use crate::LanguageGroupId;
+
+        #[test]
+        fn it_assigns_literate_languages_to_documentation() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [languages.markdown]
+                    enabled = true
+                "#},
+            );
+            write_source_file(tempdir.path(), "README.md");
+
+            let sources = discover_sources(tempdir.path(), &load_config(tempdir.path())).unwrap();
+
+            assert_eq!(sources.len(), 1);
+            assert_eq!(sources[0].group(), &LanguageGroupId::Documentation);
+        }
+
+        #[test]
+        fn it_assigns_non_literate_languages_to_source() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_rust_enabled_config(tempdir.path());
+            write_source_file(tempdir.path(), "src/lib.rs");
+
+            let sources = discover_sources(tempdir.path(), &load_config(tempdir.path())).unwrap();
+
+            assert_eq!(sources.len(), 1);
+            assert_eq!(sources[0].group(), &LanguageGroupId::Source);
+        }
+    }
+
     mod when_gitignore_excludes_a_file {
         use super::*;
 

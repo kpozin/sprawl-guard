@@ -151,4 +151,38 @@ mod when_writing_updates {
         assert!(ratchet_file_entry(&ratchet, "deleted/lib.rs").is_none());
         assert_eq!(stderr(&output), "");
     }
+
+    #[test]
+    fn it_lowers_each_group_when_directory_entries_share_a_path() {
+        let root = TempDir::new().unwrap();
+        write_mixed_group_directory_fanout_fixture(&root);
+        write_ratchet(
+            &root,
+            indoc! {r#"
+                version = 1
+
+                [[directories]]
+                path = "src"
+                group = "source"
+                leaf_source_files = 3
+
+                [[directories]]
+                path = "src"
+                group = "documentation"
+                leaf_source_files = 3
+            "#},
+        );
+
+        let output = sprawl_guard(&root)
+            .args(["ratchet", "--write"])
+            .output()
+            .unwrap();
+        let ratchet = read_ratchet_file(&root);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            directory_ratchet_entries(&ratchet),
+            vec![("source", "src", 2), ("documentation", "src", 2),]
+        );
+    }
 }

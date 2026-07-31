@@ -18,10 +18,11 @@ use super::ratchet::{
     MeasuredRatchets, RatchetCurrentPolicy, RatchetState, directory_violations_with_ratchet,
     file_violations_with_ratchet, stale_missing_ratchets,
 };
+use super::report::RatchetViolationKind;
 use super::report::{
     AnalysisCoverage, CheckReport, CheckViolation, CheckWarning, CounterInfo,
     DirectoryViolationKind, FileLocViolation, FileViolationKind, NonEmptyTraversalIncidents,
-    RatchetViolationKind, ReportRoot,
+    ReportRoot,
 };
 
 /// Inputs for running `sprawl-guard check`.
@@ -327,8 +328,8 @@ fn check_source(
         measurement,
         violation: FileLocViolation {
             kind,
+            language: source.language(),
             path: source.path,
-            language: source.language,
             actual,
             limit: limit.value,
             ratchet: None,
@@ -357,7 +358,7 @@ fn count_source(
         return Ok(CountedSource {
             measurement: counter.count_path(
                 absolute_path,
-                source.language,
+                source.language(),
                 IncludedLineTypes::Code,
             )?,
             warnings: vec![],
@@ -369,7 +370,7 @@ fn count_source(
         return Ok(CountedSource {
             measurement: counter.count_path(
                 absolute_path,
-                source.language,
+                source.language(),
                 IncludedLineTypes::Code,
             )?,
             warnings: vec![],
@@ -379,7 +380,7 @@ fn count_source(
     let source_text = read_source_to_string(absolute_path, config.traversal.max_file_bytes)?;
     let result = preprocess_rust_cfg_test(&source_text);
     let measurement =
-        counter.count_source(&result.source, source.language, IncludedLineTypes::Code)?;
+        counter.count_source(&result.source, source.language(), IncludedLineTypes::Code)?;
     let warnings = result
         .warning
         .into_iter()

@@ -299,7 +299,7 @@ fn ratchet_violation_message(violation: &RatchetViolation) -> String {
         .unwrap_or_else(|| "not measured".to_owned());
     let limit = violation
         .limit()
-        .map(|value| value.get().to_string())
+        .map(|value| value.to_string())
         .unwrap_or_else(|| "none".to_owned());
     let group = violation
         .group()
@@ -345,8 +345,8 @@ fn directory_violation_message(violation: &DirectoryFanoutViolation) -> String {
         .collect::<Vec<_>>()
         .join("\n      ");
     format!(
-        "  {}\n    {metric}: {} / {}\n    files:\n      {files}\n\n",
-        path, violation.actual, violation.limit
+        "  {}\n    group: {}\n    {metric}: {} / {}\n    files:\n      {files}\n\n",
+        path, violation.group, violation.actual, violation.limit
     )
 }
 
@@ -356,8 +356,10 @@ mod tests {
     use serde_json::json;
     use sprawl_guard_lib::{
         CheckViolation, CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail,
-        DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation, LanguageGroupId,
-        LeafFiles, LineCount, NonEmptyTraversalIncidents, RelativePath, TraversalIncidentSeverity,
+        DirectoryFanoutViolation, DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind,
+        FileLocViolation, LanguageGroupId, LeafFiles, LineCount, NonEmptyTraversalIncidents,
+        RatchetCount, RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation,
+        RatchetViolation, RelativePath, TraversalIncidentSeverity,
     };
 
     use super::*;
@@ -399,6 +401,7 @@ mod tests {
     fn directory_violation(kind: DirectoryViolationKind, path: &str) -> DirectoryFanoutViolation {
         DirectoryFanoutViolation {
             kind,
+            group: sprawl_guard_lib::LanguageGroupId::Source,
             path: RelativePath::new(path).unwrap(),
             actual: LeafFiles::new(3).unwrap(),
             limit: LeafFiles::new(2).unwrap(),
@@ -470,6 +473,7 @@ mod tests {
 
             assert!(output.contains("Directory fan-out budget exceeded:"));
             assert!(output.contains("src"));
+            assert!(output.contains("group: source"));
             assert!(output.contains("leaf source files: 3 / 2"));
             assert!(output.contains("src/a.rs"));
             assert!(output.contains("Test directory fan-out budget exceeded:"));
@@ -512,6 +516,32 @@ mod tests {
 
                 "}
             );
+        }
+
+        #[test]
+        fn it_identifies_the_group_and_unlimited_limit_for_a_measured_directory_ratchet() {
+            let report = CheckReport::complete(
+                report_root(),
+                counter_info(),
+                vec![],
+                vec![CheckViolation::Ratchet(RatchetViolation::Stale(
+                    RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::Directory(
+                        DirectoryRatchetStaleMeasuredViolation {
+                            kind: DirectoryViolationKind::DirectoryFanout,
+                            path: RelativePath::new("docs").unwrap(),
+                            group: LanguageGroupId::Documentation,
+                            actual: RatchetCount::new(2),
+                            limit: RatchetLimit::Unlimited,
+                            ratchet: RatchetCount::new(3),
+                        },
+                    )),
+                ))],
+            );
+
+            let output = human_check_report(&report, false);
+
+            assert!(output.contains("group: documentation"));
+            assert!(output.contains("limit: unlimited"));
         }
 
         #[test]

@@ -1,6 +1,7 @@
 //! Readable ratchet-file model for grandfathered current violations.
 
 use std::collections::BTreeSet;
+use std::fmt;
 use std::fs;
 use std::path::Path;
 
@@ -128,6 +129,12 @@ impl RatchetCount {
     /// Returns the raw count.
     pub const fn get(self) -> u32 {
         self.0
+    }
+}
+
+impl fmt::Display for RatchetCount {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(formatter)
     }
 }
 

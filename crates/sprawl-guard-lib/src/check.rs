@@ -7,10 +7,13 @@ mod runner;
 
 pub use report::{
     AnalysisCoverage, CheckErrorKind, CheckReport, CheckStatus, CheckViolation, CheckWarning,
-    CheckWarningKind, CounterInfo, DirectoryFanoutViolation, DirectoryRatchetStaleMissingViolation,
-    DirectoryViolationKind, FileLocViolation, FileRatchetStaleMissingViolation, FileViolationKind,
+    CheckWarningKind, CounterInfo, DirectoryFanoutViolation, DirectoryRatchetIncreasedViolation,
+    DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
+    DirectoryViolationKind, FileLocViolation, FileRatchetIncreasedViolation,
+    FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
     NonEmptyTraversalIncidents, RatchetIncreasedViolation, RatchetIncreasedViolationKind,
-    RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
-    RatchetStaleViolationKind, RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError,
+    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
+    RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation, RatchetViolationKind,
+    ReportRoot, ReportRootError,
 };
 pub use runner::{CheckOptions, check, check_with_counter, check_without_ratchet};

@@ -114,16 +114,13 @@ impl<'config> Classifier<'config> {
             });
         }
 
+        let kind = if is_test {
+            SourceKind::Test
+        } else {
+            SourceKind::Production
+        };
         Ok(PathClassification::Source(SourceExplanation::classified(
-            ClassifiedSource {
-                path,
-                language: language.id,
-                kind: if is_test {
-                    SourceKind::Test
-                } else {
-                    SourceKind::Production
-                },
-            },
+            ClassifiedSource::new(path, language.id, kind),
         )))
     }
 }

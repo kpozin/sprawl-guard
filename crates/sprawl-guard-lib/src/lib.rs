@@ -15,12 +15,14 @@ mod value;
 
 pub use check::{
     AnalysisCoverage, CheckErrorKind, CheckOptions, CheckReport, CheckStatus, CheckViolation,
-    CheckWarning, CheckWarningKind, DirectoryFanoutViolation,
-    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind, FileLocViolation,
-    FileRatchetStaleMissingViolation, FileViolationKind, NonEmptyTraversalIncidents,
-    RatchetIncreasedViolation, RatchetIncreasedViolationKind, RatchetStaleMeasuredViolation,
-    RatchetStaleMissingViolation, RatchetStaleViolation, RatchetStaleViolationKind,
-    RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError, check_without_ratchet,
+    CheckWarning, CheckWarningKind, DirectoryFanoutViolation, DirectoryRatchetIncreasedViolation,
+    DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
+    DirectoryViolationKind, FileLocViolation, FileRatchetIncreasedViolation,
+    FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
+    NonEmptyTraversalIncidents, RatchetIncreasedViolation, RatchetIncreasedViolationKind,
+    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
+    RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation, RatchetViolationKind,
+    ReportRoot, ReportRootError, check_without_ratchet,
 };
 pub use classification::{TraversalIncident, TraversalIncidentKind, TraversalIncidentSeverity};
 pub use config::{
@@ -33,7 +35,7 @@ pub use ratchet::{
     TestDirectoryRatchet, TestFileRatchet,
 };
 pub use resolved_limits::{
-    MatchedOverride, OverrideOrdinal, ResolvedCodeLineLimit, ResolvedLeafFileLimit,
+    LeafFileLimit, MatchedOverride, OverrideOrdinal, ResolvedCodeLineLimit, ResolvedLeafFileLimit,
     SourceResolvedLimits,
 };
 pub use rust_cfg::{ExcludedItemCount, RustCfgTestInfo, RustCfgTestStatus};

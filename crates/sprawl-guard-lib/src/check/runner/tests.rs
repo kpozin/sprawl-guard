@@ -105,11 +105,11 @@ fn count_rust_production_source(root: &Path, source_text: &str) -> CountedSource
     write_rust_enabled_config(root);
     write_file(root, SOURCE_PATH, source_text);
     let config = load_config(root);
-    let source = ClassifiedSource {
-        path: RelativePath::new(Path::new(SOURCE_PATH)).unwrap(),
-        language: crate::LanguageId::new("Rust").unwrap(),
-        kind: SourceKind::Production,
-    };
+    let source = ClassifiedSource::new(
+        RelativePath::new(Path::new(SOURCE_PATH)).unwrap(),
+        crate::LanguageId::new("Rust").unwrap(),
+        SourceKind::Production,
+    );
     count_source(
         &config,
         &TokeiCodeLineCounter,
@@ -631,6 +631,65 @@ mod when_rust_cfg_test_preprocessing_fails {
 mod when_checking_directory_fan_out {
     use super::*;
 
+    mod when_the_documentation_group_uses_its_default_limit {
+        use super::*;
+
+        #[test]
+        fn it_does_not_enforce_the_global_production_limit() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [limits]
+                    max_leaf_files_per_directory = { production = 1 }
+
+                    [languages.markdown]
+                    enabled = true
+                "#},
+            );
+            write_file(tempdir.path(), "docs/a.md", "# A\n");
+            write_file(tempdir.path(), "docs/b.md", "# B\n");
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Passed);
+            assert!(directory_violations(&report).is_empty());
+        }
+    }
+
+    mod when_a_path_override_matches_the_documentation_group {
+        use super::*;
+
+        #[test]
+        fn it_replaces_the_unlimited_default_with_a_finite_limit() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [limits]
+                    max_leaf_files_per_directory = { production = 8 }
+
+                    [[overrides]]
+                    paths = ["docs/**"]
+                    max_leaf_files_per_directory = { production = 1 }
+                    reason = "keep documentation directories focused"
+
+                    [languages.markdown]
+                    enabled = true
+                "#},
+            );
+            write_file(tempdir.path(), "docs/a.md", "# A\n");
+            write_file(tempdir.path(), "docs/b.md", "# B\n");
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            let violation = single_directory_violation(&report);
+            assert_eq!(violation.group, crate::LanguageGroupId::Documentation);
+            assert_eq!(violation.actual.get(), 2);
+            assert_eq!(violation.limit.get(), 1);
+        }
+    }
+
     #[test]
     fn it_counts_tiny_production_files_as_production_leaves() {
         let tempdir = tempfile::tempdir().unwrap();
@@ -1123,6 +1182,32 @@ mod when_checking_with_a_ratchet_file {
         );
     }
 
+    fn write_rust_directory_ratchet_fixture(root: &Path, leaf_source_files: u32) {
+        write_config(
+            root,
+            indoc! {r#"
+                [limits]
+                max_leaf_files_per_directory = { production = 1 }
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_ratchet(
+            root,
+            &formatdoc! {r#"
+                version = 1
+
+                [[directories]]
+                path = "src"
+                group = "source"
+                leaf_source_files = {leaf_source_files}
+            "#},
+        );
+        write_file(root, "src/a.rs", "fn a() {}\n");
+        write_file(root, "src/b.rs", "fn b() {}\n");
+    }
+
     #[test]
     fn it_allows_a_file_equal_to_its_ratchet_ceiling() {
         let tempdir = tempfile::tempdir().unwrap();
@@ -1264,18 +1349,7 @@ mod when_checking_with_a_ratchet_file {
     #[test]
     fn it_applies_directory_ratchet_ceilings() {
         let tempdir = tempfile::tempdir().unwrap();
-        write_rust_directory_fanout_fixture(tempdir.path());
-        write_ratchet(
-            tempdir.path(),
-            indoc! {r#"
-                version = 1
-
-                [[directories]]
-                path = "src"
-                group = "source"
-                leaf_source_files = 2
-            "#},
-        );
+        write_rust_directory_ratchet_fixture(tempdir.path(), 2);
 
         let report = check_root(tempdir.path()).unwrap();
 
@@ -1311,6 +1385,83 @@ mod when_checking_with_a_ratchet_file {
             assert_eq!(
                 serde_json::to_value(ratchets[0]).unwrap()["group"],
                 serde_json::json!("documentation")
+            );
+        }
+    }
+
+    mod when_a_directory_measurement_increases_above_its_ratchet {
+        use super::*;
+
+        #[test]
+        fn it_carries_the_source_group_through_the_diagnostic() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_rust_directory_ratchet_fixture(tempdir.path(), 1);
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            let ratchets = ratchet_violations(&report);
+            let [ratchet] = ratchets.as_slice() else {
+                panic!("expected one ratchet violation");
+            };
+            let RatchetViolation::Increased(crate::RatchetIncreasedViolation::Directory(violation)) =
+                ratchet
+            else {
+                panic!("expected an increased directory ratchet");
+            };
+            assert_eq!(violation.group, crate::LanguageGroupId::Source);
+            assert_eq!(violation.actual.get(), 2);
+            assert_eq!(
+                serde_json::to_value(ratchet).unwrap()["group"],
+                serde_json::json!("source")
+            );
+        }
+    }
+
+    mod when_an_unlimited_directory_measurement_makes_its_ratchet_stale {
+        use super::*;
+
+        #[test]
+        fn it_carries_the_documentation_group_through_the_diagnostic() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [languages.markdown]
+                    enabled = true
+                "#},
+            );
+            write_ratchet(
+                tempdir.path(),
+                indoc! {r#"
+                    version = 1
+
+                    [[directories]]
+                    path = "docs"
+                    group = "documentation"
+                    leaf_source_files = 3
+                "#},
+            );
+            write_file(tempdir.path(), "docs/a.md", "# A\n");
+            write_file(tempdir.path(), "docs/b.md", "# B\n");
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            let ratchets = ratchet_violations(&report);
+            let [ratchet] = ratchets.as_slice() else {
+                panic!("expected one ratchet violation");
+            };
+            let RatchetViolation::Stale(crate::RatchetStaleViolation::Measured(
+                crate::RatchetStaleMeasuredViolation::Directory(violation),
+            )) = ratchet
+            else {
+                panic!("expected a stale measured directory ratchet");
+            };
+            assert_eq!(violation.group, crate::LanguageGroupId::Documentation);
+            assert_eq!(violation.actual.get(), 2);
+            assert_eq!(violation.limit, crate::RatchetLimit::Unlimited);
+            assert_eq!(
+                serde_json::to_value(ratchet).unwrap()["limit"],
+                serde_json::json!("unlimited")
             );
         }
     }
