@@ -10,3 +10,5 @@ Use the issue tracker to report problems or propose changes.
 ## Pull Requests
 
 Pull requests are not accepted yet. Use an issue to propose a change or report a problem.
+
+See [Development](docs/DEVELOPMENT.md) to build and test the project from source.

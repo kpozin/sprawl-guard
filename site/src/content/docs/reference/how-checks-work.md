@@ -6,8 +6,8 @@ description: Source discovery, measurements, limits, scopes, and ratchet semanti
 ## Discovery and language support
 
 Sprawl Guard uses the language table bundled with Tokei. Run `sprawl-guard languages` to list every
-supported language ID and its default extension globs. Run `sprawl-guard languages --detected` to
-see which of those globs match visible files in the repository.
+supported language ID, extension, and exact filename. Run `sprawl-guard languages --detected` to
+see which languages own visible files in the repository.
 
 Discovery starts at the repository root or the supplied path scopes. Sprawl Guard applies standard
 ignore files, the hidden-path policy, and traversal safety limits. It then applies global file
@@ -88,6 +88,10 @@ when `[tests].check_path_tests = false`, it is omitted entirely.
 A baseline is the set of current violations written to the ratchet file. Each entry records a
 ceiling: the maximum permitted measurement for a path that already violates the policy. It does not
 record Git history, ownership, reasons, languages, or configured limits.
+
+File ceilings are keyed by path and production/test role. Directory ceilings are keyed by path,
+role, and language group. The file stores only the measured `loc` or `leaf_files` ceiling for each
+key.
 
 Checks compare each measurement with both its configured limit and any ceiling:
 

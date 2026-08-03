@@ -3,15 +3,10 @@ title: Quick start
 description: Install Sprawl Guard and run the first repository check.
 ---
 
-import { TabItem, Tabs } from "@astrojs/starlight/components";
+import { Steps, TabItem, Tabs } from "@astrojs/starlight/components";
 
-## Choose an installation
-
-Install `sprawl-guard` with Cargo or npm (or pnpm, etc.). The examples below use Cargo's default
-user-wide installation and project-local npm and pnpm installations. The Node package requires
-Node.js 22 or newer. npm and pnpm can also install the package globally; after a global install,
-use `sprawl-guard` directly. A project-local dev dependency keeps the selected version in the
-manifest and lockfile.
+Install `sprawl-guard` with Cargo or as a project-local npm or pnpm development dependency. The
+Node package requires Node.js 22 or newer.
 
 <Tabs syncKey="package-manager">
   <TabItem label="Cargo">
@@ -22,6 +17,7 @@ sprawl-guard --version
 ```
 
   </TabItem>
+
   <TabItem label="npm">
 
 ```sh
@@ -30,6 +26,7 @@ npm exec -- sprawl-guard --version
 ```
 
   </TabItem>
+
   <TabItem label="pnpm">
 
 ```sh
@@ -40,106 +37,55 @@ pnpm exec sprawl-guard --version
   </TabItem>
 </Tabs>
 
-All three installations provide the same CLI. `-V` is the short form of `--version`.
+All installations provide the same CLI. The steps below use `sprawl-guard` directly. For a
+project-local Node dependency, run it through `npm exec -- sprawl-guard` or
+`pnpm exec sprawl-guard` instead.
 
-## Create the configuration
+<Steps>
 
-From the repository root, inspect what Sprawl Guard detects:
+1. Inspect the detected languages.
 
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
+   ```sh
+   sprawl-guard languages --detected
+   ```
 
-```sh
-sprawl-guard languages --detected
-```
+2. Preview the configuration and advisory scan, then write `sprawl-guard.toml`.
 
-  </TabItem>
-  <TabItem label="npm">
+   ```sh
+   sprawl-guard init --dry-run
+   sprawl-guard init
+   ```
 
-```sh
-npm exec -- sprawl-guard languages --detected
-```
+   The generated root configuration starts with the required schema version:
 
-  </TabItem>
-  <TabItem label="pnpm">
+   ```toml title="sprawl-guard.toml"
+   schema_version = 1
+   ```
 
-```sh
-pnpm exec sprawl-guard languages --detected
-```
+3. Run the first check.
 
-  </TabItem>
-</Tabs>
+   ```sh
+   sprawl-guard check
+   ```
 
-Preview the configuration and advisory scan, then write `sprawl-guard.toml`:
+   A passing check prints:
 
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
+   ```text
+   No sprawl-guard violations found.
+   ```
 
-```sh
-sprawl-guard init --dry-run
-sprawl-guard init
-```
+   A file-limit failure looks like:
 
-  </TabItem>
-  <TabItem label="npm">
+   ```text
+   File size budget exceeded:
 
-```sh
-npm exec -- sprawl-guard init --dry-run
-npm exec -- sprawl-guard init
-```
+     src/large.py
+       language: Python
+       included line types: code
+       configured LOC: 430 / 400
+   ```
 
-  </TabItem>
-  <TabItem label="pnpm">
-
-```sh
-pnpm exec sprawl-guard init --dry-run
-pnpm exec sprawl-guard init
-```
-
-  </TabItem>
-</Tabs>
-
-## Run the check
-
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
-
-```sh
-sprawl-guard check
-```
-
-  </TabItem>
-  <TabItem label="npm">
-
-```sh
-npm exec -- sprawl-guard check
-```
-
-  </TabItem>
-  <TabItem label="pnpm">
-
-```sh
-pnpm exec sprawl-guard check
-```
-
-  </TabItem>
-</Tabs>
-
-A passing check prints:
-
-```text
-No sprawl-guard violations found.
-```
-
-A file-limit failure looks like:
-
-```text
-File size budget exceeded:
-
-  src/large.py
-    language: Python
-    configured LOC: 430 / 400
-```
+</Steps>
 
 Exit code `0` means that the check passed. Exit code `1` means that one or more limits or ratchet
 rules failed; the output names each path, measurement, and limit. Exit code `2` reports an

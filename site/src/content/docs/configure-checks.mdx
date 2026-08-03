@@ -5,7 +5,13 @@ description: Match Sprawl Guard's source classification and limits to a reposito
 
 import { TabItem, Tabs } from "@astrojs/starlight/components";
 
-Add the sections below to `sprawl-guard.toml` at the repository root.
+Every root configuration starts with the schema version:
+
+```toml title="sprawl-guard.toml"
+schema_version = 1
+```
+
+Add only the sections needed to customize the built-in policy.
 
 ## Select source files
 

@@ -3,75 +3,37 @@ title: Clean up violations
 description: Lower or remove recorded ceilings as the source tree improves.
 ---
 
-import { TabItem, Tabs } from "@astrojs/starlight/components";
+import { Steps } from "@astrojs/starlight/components";
 
 After reducing a violation, update the ratchet to preserve the improvement.
 
-Read the failure. Note the path, measurement, configured limit, and ratchet ceiling. Split an
-oversized file, reorganize a directory with too many files, correct an unexpected classification,
-or adjust a limit only when the policy itself is wrong.
+The commands below use `sprawl-guard` directly. For a project-local Node dependency, run them
+through `npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
 
-Preview the ratchet change for the affected path:
+<Steps>
 
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
+1. Improve the source tree.
 
-```sh
-sprawl-guard ratchet path/to/improved/source
-```
+   Read the failure and note the path, measurement, configured limit, and ratchet ceiling. Split an oversized file, reorganize a directory with too many files, correct an unexpected classification, or adjust a limit only when the policy itself is wrong.
 
-  </TabItem>
-  <TabItem label="npm">
+2. Preview the ratchet update.
 
-```sh
-npm exec -- sprawl-guard ratchet path/to/improved/source
-```
+   ```sh
+   sprawl-guard ratchet path/to/improved/source
+   ```
 
-  </TabItem>
-  <TabItem label="pnpm">
+   If the measurement is still above its configured limit, its ceiling should decrease to the new measurement. If it now satisfies the limit or is no longer measured, its entry should disappear.
 
-```sh
-pnpm exec sprawl-guard ratchet path/to/improved/source
-```
+3. Write the update and recheck the repository.
 
-  </TabItem>
-</Tabs>
+   ```sh
+   sprawl-guard ratchet path/to/improved/source --write
+   sprawl-guard check
+   ```
 
-Review the preview. If the measurement is still above its configured limit, its ceiling should
-decrease to the new measurement. If it now satisfies the limit or is no longer measured, its entry
-should disappear.
+   Commit the source and ratchet changes together. The lower ceiling prevents the violation from returning to its previous size.
 
-Write the reviewed change and recheck the repository:
-
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
-
-```sh
-sprawl-guard ratchet path/to/improved/source --write
-sprawl-guard check
-```
-
-  </TabItem>
-  <TabItem label="npm">
-
-```sh
-npm exec -- sprawl-guard ratchet path/to/improved/source --write
-npm exec -- sprawl-guard check
-```
-
-  </TabItem>
-  <TabItem label="pnpm">
-
-```sh
-pnpm exec sprawl-guard ratchet path/to/improved/source --write
-pnpm exec sprawl-guard check
-```
-
-  </TabItem>
-</Tabs>
-
-Commit the code and ratchet change together. The updated ratchet prevents the violation from
-returning to its previous size.
+</Steps>
 
 If the preview is surprising, use `sprawl-guard explain PATH` and
 `sprawl-guard config resolved`, then consult

@@ -170,6 +170,11 @@ reason = "Upstream layout"
 | `file`            | path, `"sprawl-guard.ratchet.toml"` | Repository-relative ratchet file.           |
 | `require_current` | boolean, `true`                     | Fail checks when ratchet entries are stale. |
 
+This section selects the ratchet file and stale-entry policy; ratchet ceilings are stored in the
+separate file. See
+[Adopt Sprawl Guard in an existing repository](/sprawl-guard/adopt-existing-repository/) for its
+format and creation workflow.
+
 ### `[output]`
 
 | Field    | Type and default | Meaning                                                                     |

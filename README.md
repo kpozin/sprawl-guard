@@ -1,8 +1,8 @@
 # `sprawl-guard`
 
-`sprawl-guard` keeps source trees navigable by enforcing code-line and directory fan-out limits.
-It supports every language bundled with Tokei and can baseline existing violations without letting
-them grow.
+`sprawl-guard` keeps source trees navigable with configurable LOC and directory fan-out limits. It
+supports every language bundled with [Tokei](https://github.com/XAMPPRocky/tokei) and can record
+existing violations so they can shrink but not grow.
 
 Install with Cargo:
 
@@ -23,34 +23,17 @@ npm exec -- sprawl-guard init
 npm exec -- sprawl-guard check
 ```
 
-Both installations provide the same CLI.
+Both installations provide the same CLI. Run `sprawl-guard init` to create a versioned policy file,
+then commit the policy alongside your source code.
 
 For usage, see the [documentation](https://kpozin.github.io/sprawl-guard/). Start with the [quick
 start](https://kpozin.github.io/sprawl-guard/quick-start/) or the [existing-repository
 guide](https://kpozin.github.io/sprawl-guard/adopt-existing-repository/).
 
-## Local development
-
-You need a current stable Rust toolchain, Node.js 24, and pnpm 11.7.0. Fetch the dependencies:
-
-```sh
-cargo fetch --locked
-pnpm --dir npm install --frozen-lockfile
-```
-
-Run the core checks:
-
-```sh
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all --check
-pnpm --dir npm run check
-```
-
 ## Links
 
 - [Documentation](https://kpozin.github.io/sprawl-guard/)
+- [Build and test from source](docs/DEVELOPMENT.md)
 - [Releases](https://github.com/kpozin/sprawl-guard/releases)
 - [Issues](https://github.com/kpozin/sprawl-guard/issues)
 - [Report a security vulnerability](https://github.com/kpozin/sprawl-guard/security/advisories/new)

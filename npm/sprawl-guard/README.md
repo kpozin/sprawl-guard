@@ -1,19 +1,45 @@
-# `@kpozin/sprawl-guard`
+# @kpozin/sprawl-guard
 
-This package provides the `sprawl-guard` command for Node.js projects. It requires Node 22 or newer.
+`sprawl-guard` keeps source trees navigable with configurable LOC and directory fan-out limits. It
+can record existing violations so they can shrink but not grow.
 
-The wrapper runs the installed native package for the current platform. If no native package is
-available, it runs the WebAssembly System Interface (WASI) module from the installed
-`@kpozin/sprawl-guard-wasm32-wasip1` package.
+Every language bundled with [Tokei](https://github.com/XAMPPRocky/tokei) is enabled by default. File
+limits count configurable logical line types, and directory limits count direct source files by
+production/test role and language group.
 
-The WASI fallback preopens only the selected project root. This limits which host paths the module
-can access, but it is not a security sandbox and does not block traversal into mounted filesystems
-below that root. WASI accepts the `traversal.same_file_system` setting for configuration
-compatibility but cannot enforce it; native builds enforce it when set to `true`.
+## Install
+
+Add the CLI as a project-local development dependency. The package requires Node.js 22 or newer:
 
 ```sh
-pnpm add --save-dev @kpozin/sprawl-guard
+npm install --save-dev --save-exact @kpozin/sprawl-guard
+npm exec -- sprawl-guard --version
 ```
 
-See the [project README](https://github.com/kpozin/sprawl-guard#readme) for configuration, commands,
-CI setup, and ratchet workflows.
+## Run your first check
+
+From the repository root:
+
+```sh
+npm exec -- sprawl-guard languages --detected
+npm exec -- sprawl-guard init --dry-run
+npm exec -- sprawl-guard init
+npm exec -- sprawl-guard check
+```
+
+`init` creates a versioned `sprawl-guard.toml` policy file. A passing check prints:
+
+```text
+No sprawl-guard violations found.
+```
+
+If an existing repository exceeds the desired limits, keep the policy strict and
+[record the current violations in a ratchet](https://kpozin.github.io/sprawl-guard/adopt-existing-repository/).
+
+## Documentation
+
+- [Quick start](https://kpozin.github.io/sprawl-guard/quick-start/)
+- [Configure checks](https://kpozin.github.io/sprawl-guard/configure-checks/)
+- [Run in CI](https://kpozin.github.io/sprawl-guard/run-in-ci/)
+- [CLI and output reference](https://kpozin.github.io/sprawl-guard/reference/cli-and-output/)
+- [Source and issue tracker](https://github.com/kpozin/sprawl-guard)
