@@ -1,8 +1,12 @@
+use std::collections::BTreeMap;
+use std::path::Path;
+
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
 use crate::config::Config;
 use crate::{GlobPattern, LanguageId, RelativePath, Result, SprawlError};
 
+use super::bundled_languages::BundledLanguage;
 use super::types::{ClassifiedSource, PathClassification, SourceExplanation, SourceKind};
 
 /// Decision engine for files that are visible to ignore-aware traversal.
@@ -16,7 +20,7 @@ pub(super) struct Classifier<'config> {
     config: &'config Config,
     global_exclude: GlobSet,
     global_tests: GlobSet,
-    languages: Vec<LanguageMatcher>,
+    languages: LanguageMatchers,
 }
 
 impl<'config> Classifier<'config> {
@@ -47,6 +51,7 @@ impl<'config> Classifier<'config> {
             }
             PathClassification::Ignored { .. }
             | PathClassification::GloballyExcluded { .. }
+            | PathClassification::RatchetExcluded { .. }
             | PathClassification::NonFile { .. }
             | PathClassification::NotSource { .. }
             | PathClassification::LanguageExcluded { .. }
@@ -64,15 +69,16 @@ impl<'config> Classifier<'config> {
     /// file. Ignore decisions are not produced here because callers must run
     /// ignore-aware traversal before calling this method.
     pub(super) fn classify(&self, path: RelativePath) -> Result<PathClassification> {
+        if path.as_str() == self.config.ratchet.file.as_str() {
+            return Ok(PathClassification::RatchetExcluded { path });
+        }
         if self.global_exclude.is_match(path.as_str()) {
             return Ok(PathClassification::GloballyExcluded { path });
         }
 
-        let included_languages = self
-            .languages
-            .iter()
-            .filter(|language| language.include.is_match(path.as_str()))
-            .collect::<Vec<_>>();
+        let bundled_owner =
+            BundledLanguage::from_path(Path::new(path.as_str())).map(BundledLanguage::as_tokei);
+        let included_languages = self.languages.matching(path.as_str(), bundled_owner);
 
         if included_languages.is_empty() {
             return Ok(PathClassification::NotSource { path });
@@ -81,7 +87,7 @@ impl<'config> Classifier<'config> {
         let matches = included_languages
             .iter()
             .copied()
-            .filter(|language| !language.exclude.is_match(path.as_str()))
+            .filter(|language| !is_match(&language.exclude, path.as_str()))
             .collect::<Vec<_>>();
 
         if matches.is_empty() {
@@ -106,7 +112,7 @@ impl<'config> Classifier<'config> {
         };
 
         let is_test = self.global_tests.is_match(path.as_str())
-            || language.test_globs.is_match(path.as_str());
+            || is_match(&language.test_globs, path.as_str());
         if is_test && !self.config.tests.check_path_tests {
             return Ok(PathClassification::TestExcluded {
                 path,
@@ -128,37 +134,126 @@ impl<'config> Classifier<'config> {
 /// Compiled include, exclude, and test-classification globs for one language.
 struct LanguageMatcher {
     id: LanguageId,
-    include: GlobSet,
-    exclude: GlobSet,
-    test_globs: GlobSet,
+    authored_include: Option<GlobSet>,
+    exclude: Option<GlobSet>,
+    test_globs: Option<GlobSet>,
+}
+
+/// Enabled language matchers indexed by their two candidate-selection paths.
+struct LanguageMatchers {
+    entries: Vec<LanguageMatcher>,
+    bundled: BTreeMap<LanguageId, usize>,
+    authored: Vec<usize>,
+}
+
+impl LanguageMatchers {
+    fn matching(
+        &self,
+        path: &str,
+        bundled_owner: Option<tokei::LanguageType>,
+    ) -> Vec<&LanguageMatcher> {
+        let bundled_index = bundled_owner
+            .map(LanguageId::from_tokei)
+            .and_then(|language| self.bundled.get(&language).copied());
+        let mut matching_indices = bundled_index.map(|index| vec![index]).unwrap_or_default();
+
+        matching_indices.extend(self.authored.iter().filter_map(|index| {
+            if Some(*index) == bundled_index {
+                return None;
+            }
+            let matcher = &self.entries[*index];
+            is_match(&matcher.authored_include, path).then_some(*index)
+        }));
+        matching_indices.sort_unstable();
+        matching_indices
+            .into_iter()
+            .map(|index| &self.entries[index])
+            .collect()
+    }
 }
 
 /// Builds matchers for enabled languages only.
 ///
 /// Disabled languages produce no output, so their include patterns cannot make a
 /// path ambiguous and their test globs cannot mark a source file as test code.
-fn language_matchers(config: &Config) -> Result<Vec<LanguageMatcher>> {
-    config
+fn language_matchers(config: &Config) -> Result<LanguageMatchers> {
+    let mut entries = Vec::new();
+    let mut bundled = BTreeMap::new();
+    let mut authored = Vec::new();
+
+    for (id, language) in config
         .languages
         .iter()
         .filter(|(_, language)| language.is_enabled())
-        .map(|(id, language)| {
-            let common = language.common();
-            Ok(LanguageMatcher {
-                id: *id,
-                include: glob_set(&common.include)?,
-                exclude: glob_set(&common.exclude)?,
-                test_globs: glob_set(&common.test_globs)?,
-            })
+    {
+        let common = language.common();
+        let authored_include = optional_glob_set(
+            common
+                .include
+                .iter()
+                .flatten()
+                .chain(&common.additional_globs),
+        )?;
+        let index = entries.len();
+        if common.include.is_none() {
+            bundled.insert(*id, index);
+        }
+        if authored_include.is_some() {
+            authored.push(index);
+        }
+        entries.push(LanguageMatcher {
+            id: *id,
+            authored_include,
+            exclude: optional_glob_set(&common.exclude)?,
+            test_globs: optional_glob_set(&common.test_globs)?,
+        });
+    }
+
+    Ok(LanguageMatchers {
+        entries,
+        bundled,
+        authored,
+    })
+}
+
+fn is_match(globs: &Option<GlobSet>, path: &str) -> bool {
+    globs.as_ref().is_some_and(|globs| globs.is_match(path))
+}
+
+/// Compiles authored globs when at least one pattern exists.
+fn optional_glob_set<'pattern>(
+    patterns: impl IntoIterator<Item = &'pattern GlobPattern>,
+) -> Result<Option<GlobSet>> {
+    let mut builder = GlobSetBuilder::new();
+    let mut has_patterns = false;
+    for pattern in patterns {
+        has_patterns = true;
+        builder.add(
+            Glob::new(pattern.as_str()).map_err(|source| SprawlError::InvalidGlob {
+                pattern: pattern.to_string(),
+                source,
+            })?,
+        );
+    }
+    if !has_patterns {
+        return Ok(None);
+    }
+    builder
+        .build()
+        .map(Some)
+        .map_err(|source| SprawlError::InvalidGlob {
+            pattern: "<glob set>".to_owned(),
+            source,
         })
-        .collect()
 }
 
 /// Compiles zero or more config globs into one matcher set.
 ///
 /// An empty input produces a matcher that never matches. Invalid input produces
 /// `SprawlError::InvalidGlob` with the failing pattern when available.
-fn glob_set(patterns: &[GlobPattern]) -> Result<GlobSet> {
+fn glob_set<'pattern>(
+    patterns: impl IntoIterator<Item = &'pattern GlobPattern>,
+) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
         builder.add(

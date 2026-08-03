@@ -102,7 +102,7 @@ pub(crate) fn resolve_root(root: &Path) -> Result<PathBuf> {
 /// Repository-relative ratchet file path.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct RatchetFilePath(String);
+pub struct RatchetFilePath(RelativePath);
 
 /// Error returned when a ratchet file path is not repository-relative.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -141,7 +141,12 @@ impl RatchetFilePath {
     pub fn new(value: impl Into<String>) -> std::result::Result<Self, RatchetFilePathError> {
         let value = value.into();
         validate_ratchet_file_path(&value)?;
-        Ok(Self(value))
+        let path = RelativePath::new(&value)
+            .expect("ratchet path validation must reject every invalid relative path");
+        if path.as_str().is_empty() {
+            return Err(RatchetFilePathError::Empty);
+        }
+        Ok(Self(path))
     }
 
     /// Creates a ratchet file path from a trusted built-in value.
@@ -151,7 +156,7 @@ impl RatchetFilePath {
 
     /// Returns the normalized path string.
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
@@ -320,6 +325,17 @@ mod tests {
 
     mod ratchet_file_path {
         use super::*;
+
+        mod when_path_has_redundant_components {
+            use super::*;
+
+            #[test]
+            fn it_stores_the_canonical_repository_relative_path() {
+                let path = RatchetFilePath::new("./nested//ratchet.toml").unwrap();
+
+                assert_eq!(path.as_str(), "nested/ratchet.toml");
+            }
+        }
 
         mod when_path_uses_windows_reserved_name {
             use super::*;

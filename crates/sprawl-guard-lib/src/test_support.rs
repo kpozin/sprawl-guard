@@ -5,6 +5,7 @@ use std::path::Path;
 
 use indoc::formatdoc;
 
+use crate::GlobPattern;
 use crate::classification::ClassifiedSource;
 use crate::classification::{TraversalIncidentKind, TraversalIncidentSeverity};
 use crate::config::{
@@ -12,12 +13,19 @@ use crate::config::{
 };
 
 pub(crate) fn load_config(root: &Path) -> Config {
-    load_resolved_config(&LoadOptions {
+    let mut config = load_resolved_config(&LoadOptions {
         root: root.to_path_buf(),
         config: None,
     })
     .unwrap()
-    .config
+    .config;
+    for fixture_path in ["sprawl-guard.toml", ".sprawlrc.toml"] {
+        config
+            .files
+            .exclude
+            .push(GlobPattern::new(fixture_path).unwrap());
+    }
+    config
 }
 
 pub(crate) fn write_config(root: &Path, contents: &str) {

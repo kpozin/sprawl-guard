@@ -173,8 +173,7 @@ fn select_languages(root: &Path, args: &InitArgs) -> Result<Vec<LanguageId>> {
 }
 
 fn detect_languages(root: &Path) -> Result<Vec<LanguageId>> {
-    let mut config = built_in_config();
-    config.enable_only_languages(supported_language_ids())?;
+    let config = built_in_config();
     let sources = discover_sources(root, &config)?;
     let languages = sorted_unique_languages(sources.into_iter().map(|source| source.language()));
     if languages.is_empty() {
@@ -195,7 +194,12 @@ fn selected_language_config(
     languages: impl IntoIterator<Item = LanguageId>,
 ) -> Result<sprawl_guard_lib::config::Config> {
     let mut config = built_in_config();
-    config.enable_only_languages(languages)?;
+    let selected = languages.into_iter().collect::<BTreeSet<_>>();
+    config.disable_languages(
+        supported_language_ids()
+            .into_iter()
+            .filter(|language| !selected.contains(language)),
+    );
     Ok(config)
 }
 

@@ -65,8 +65,9 @@ impl LanguageConfig {
 impl Default for LanguageConfig {
     fn default() -> Self {
         Self::generic(CommonLanguageConfig {
-            mode: LanguageMode::Disabled,
-            include: vec![],
+            mode: LanguageMode::Enabled,
+            include: None,
+            additional_globs: vec![],
             exclude: vec![],
             test_globs: vec![],
             limits: LanguageLimits::default(),
@@ -137,8 +138,11 @@ pub struct CommonLanguageConfig {
     /// Whether this language is checked.
     #[serde(rename = "enabled")]
     pub mode: LanguageMode,
-    /// Glob patterns included for this language.
-    pub include: Vec<GlobPattern>,
+    /// Authored glob patterns that replace this language's bundled paths when present.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include: Option<Vec<GlobPattern>>,
+    /// Authored glob patterns added to the selected bundled or explicit paths.
+    pub additional_globs: Vec<GlobPattern>,
     /// Glob patterns excluded for this language.
     pub exclude: Vec<GlobPattern>,
     /// Language-specific glob patterns that classify this language's source files as test code.
@@ -271,7 +275,10 @@ pub(super) fn merge_language(
         config.common_mut().mode = value;
     }
     if let Some(value) = common.include.clone() {
-        config.common_mut().include = value;
+        config.common_mut().include = Some(value);
+    }
+    if let Some(value) = common.additional_globs.clone() {
+        config.common_mut().additional_globs = value;
     }
     if let Some(value) = common.exclude.clone() {
         config.common_mut().exclude = value;
@@ -306,6 +313,7 @@ struct PartialCommonLanguageConfig {
     #[serde(rename = "enabled")]
     mode: Option<LanguageMode>,
     include: Option<Vec<GlobPattern>>,
+    additional_globs: Option<Vec<GlobPattern>>,
     exclude: Option<Vec<GlobPattern>>,
     test_globs: Option<Vec<GlobPattern>>,
     limits: Option<PartialLanguageLimits>,

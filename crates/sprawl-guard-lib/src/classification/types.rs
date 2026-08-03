@@ -202,6 +202,11 @@ pub enum PathClassification {
         /// Repository-relative path.
         path: RelativePath,
     },
+    /// The path is the configured generated ratchet file.
+    RatchetExcluded {
+        /// Repository-relative path.
+        path: RelativePath,
+    },
     /// The path exists but is not a regular file.
     ///
     /// Source discovery checks only regular files. `explain` reports this

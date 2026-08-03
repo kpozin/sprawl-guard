@@ -5,6 +5,58 @@ use indoc::indoc;
 
 use super::common::*;
 
+mod when_explaining_the_configured_ratchet {
+    use super::*;
+
+    fn write_fixture(root: &TempDir) {
+        write_config(
+            root,
+            indoc! {r#"
+                [ratchet]
+                file = "./nested//ratchet.toml"
+            "#},
+        );
+        write_file(root, "nested/ratchet.toml", "version = 1\n");
+    }
+
+    #[test]
+    fn it_reports_the_control_file_reason_for_humans() {
+        let root = TempDir::new().unwrap();
+        write_fixture(&root);
+
+        let output = sprawl_guard(&root)
+            .args(["explain", "nested/ratchet.toml"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            stdout(&output),
+            "nested/ratchet.toml: excluded because it is the configured ratchet file\n"
+        );
+    }
+
+    #[test]
+    fn it_reports_the_control_file_reason_as_structured_output() {
+        let root = TempDir::new().unwrap();
+        write_fixture(&root);
+
+        let (output, json) = run_json(
+            &root,
+            &["explain", "--format", "json", "nested/ratchet.toml"],
+        );
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "kind": "ratchet_excluded",
+                "path": "nested/ratchet.toml",
+            })
+        );
+    }
+}
+
 mod when_explaining_rust_cfg_test_preprocessing {
     use super::*;
 

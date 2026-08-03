@@ -48,6 +48,31 @@ mod resolved {
 
         assert_config_command_outputs_full_config(&root, "resolved");
     }
+
+    #[test]
+    fn it_preserves_a_caller_authored_files_table() {
+        let root = TempDir::new().unwrap();
+        write_config(
+            &root,
+            indoc! {r#"
+                [files]
+                exclude = ["generated/**"]
+            "#},
+        );
+
+        let output = sprawl_guard(&root)
+            .args(["config", "resolved"])
+            .output()
+            .unwrap();
+        let config = parse_toml(&stdout(&output));
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            config["files"]["exclude"],
+            toml::Value::Array(vec![toml::Value::String("generated/**".to_owned())])
+        );
+        assert_eq!(stderr(&output), "");
+    }
 }
 
 mod export {

@@ -5,22 +5,41 @@ use std::path::Path;
 use tokei::LanguageType;
 
 use super::bundled_filenames::BUNDLED_FILENAMES;
+use crate::LanguageId;
+
+/// Returns the extensions canonically owned by a bundled language.
+pub fn bundled_extensions(language: LanguageId) -> Vec<&'static str> {
+    LanguageType::list()
+        .iter()
+        .find_map(|(candidate, extensions)| {
+            (*candidate == language.as_tokei()).then_some(*extensions)
+        })
+        .expect("every bundled language must have registry metadata")
+        .iter()
+        .copied()
+        .filter(|extension| {
+            LanguageType::from_file_extension(extension) == Some(language.as_tokei())
+        })
+        .collect()
+}
+
+/// Returns the exact filenames registered for a bundled language.
+pub fn bundled_filenames(language: LanguageId) -> &'static [&'static str] {
+    BUNDLED_FILENAMES
+        .iter()
+        .find_map(|(candidate, filenames)| {
+            (*candidate == language.as_tokei()).then_some(*filenames)
+        })
+        .unwrap_or_default()
+}
 
 /// A path owner and metadata view backed by the pinned `tokei` registry.
 ///
 /// Extension classification asks `tokei` for ownership so collisions keep the
 /// registry's canonical order.
-#[allow(
-    dead_code,
-    reason = "the adapter deliberately precedes the classification change that consumes it"
-)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct BundledLanguage(LanguageType);
 
-#[allow(
-    dead_code,
-    reason = "the adapter deliberately precedes the classification change that consumes it"
-)]
 impl BundledLanguage {
     /// Resolves one path to its canonical bundled language owner.
     pub(super) fn from_path(path: &Path) -> Option<Self> {
@@ -37,8 +56,8 @@ impl BundledLanguage {
             }
 
             let suffix = &normalized_filename[separator_index + 1..];
-            if is_bundled_extension(suffix) {
-                return LanguageType::from_file_extension(suffix).map(Self);
+            if let Some(language) = LanguageType::from_file_extension(suffix) {
+                return Some(Self(language));
             }
         }
 
@@ -51,19 +70,15 @@ impl BundledLanguage {
     }
 
     /// Returns the extensions registered for the resolved language.
-    pub(super) fn extensions(self) -> &'static [&'static str] {
-        LanguageType::list()
-            .iter()
-            .find_map(|(language, extensions)| (*language == self.0).then_some(*extensions))
-            .expect("every bundled language must have registry metadata")
+    #[cfg(test)]
+    pub(super) fn extensions(self) -> Vec<&'static str> {
+        bundled_extensions(LanguageId::from_tokei(self.0))
     }
 
     /// Returns the exact filenames registered for the resolved language.
+    #[cfg(test)]
     pub(super) fn filenames(self) -> &'static [&'static str] {
-        BUNDLED_FILENAMES
-            .iter()
-            .find_map(|(language, filenames)| (*language == self.0).then_some(*filenames))
-            .unwrap_or_default()
+        bundled_filenames(LanguageId::from_tokei(self.0))
     }
 }
 
@@ -74,12 +89,6 @@ fn exact_filename_owner(filename: &str) -> Option<LanguageType> {
             .any(|candidate| candidate.eq_ignore_ascii_case(filename))
             .then_some(*language)
     })
-}
-
-fn is_bundled_extension(candidate: &str) -> bool {
-    LanguageType::list()
-        .iter()
-        .any(|(_, extensions)| extensions.contains(&candidate))
 }
 
 #[test]
@@ -109,7 +118,7 @@ fn bundled_language_exposes_registry_path_metadata() {
     let bazel = BundledLanguage::from_path(Path::new("BUILD"))
         .expect("the bundled registry should classify Bazel filenames");
 
-    assert_eq!(rust.extensions(), &["rs"]);
+    assert_eq!(rust.extensions(), vec!["rs"]);
     assert!(rust.filenames().is_empty());
     assert!(
         bazel

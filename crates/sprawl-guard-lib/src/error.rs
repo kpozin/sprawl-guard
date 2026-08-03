@@ -180,6 +180,14 @@ pub enum SprawlError {
         /// Unsupported setting.
         setting: &'static str,
     },
+    /// An enabled language had neither bundled nor authored included paths.
+    #[error(
+        "enabled language {language} must use bundled paths, a nonempty include, or nonempty additional_globs"
+    )]
+    LanguageWithoutIncludedPaths {
+        /// Language whose authored path selection is empty.
+        language: LanguageId,
+    },
     /// A glob pattern is invalid.
     #[error("invalid config include glob {pattern:?}: {source}")]
     InvalidGlob {

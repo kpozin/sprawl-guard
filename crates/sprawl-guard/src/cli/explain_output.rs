@@ -9,6 +9,9 @@ pub(super) fn explain_message(classification: &PathClassification) -> String {
         PathClassification::GloballyExcluded { path } => {
             format!("{path}: excluded by global file config")
         }
+        PathClassification::RatchetExcluded { path } => {
+            format!("{path}: excluded because it is the configured ratchet file")
+        }
         PathClassification::NonFile { path } => {
             format!("{path}: not a regular file")
         }

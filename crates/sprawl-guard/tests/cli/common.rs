@@ -31,10 +31,23 @@ pub(crate) fn sprawl_guard_no_root() -> Command {
 
 pub(crate) fn write_config(root: &TempDir, contents: &str) {
     root.child("sprawl-guard.toml").write_str(contents).unwrap();
+    ignore_fixture_file(root, "sprawl-guard.toml");
 }
 
 pub(crate) fn write_alias_config(root: &TempDir, contents: &str) {
     root.child(".sprawlrc.toml").write_str(contents).unwrap();
+    ignore_fixture_file(root, ".sprawlrc.toml");
+}
+
+fn ignore_fixture_file(root: &TempDir, path: &str) {
+    let ignore_file = root.child(".gitignore");
+    let mut contents = std::fs::read_to_string(ignore_file.path()).unwrap_or_default();
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    contents.push_str(path);
+    contents.push('\n');
+    ignore_file.write_str(&contents).unwrap();
 }
 
 pub(crate) fn read_config(root: &TempDir) -> String {

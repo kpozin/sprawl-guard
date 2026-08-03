@@ -59,6 +59,39 @@ mod when_writing_the_initial_baseline {
             vec![("source", "src", 2), ("documentation", "src", 2),]
         );
     }
+
+    #[test]
+    fn it_excludes_a_custom_ratchet_from_create_and_replace_measurements() {
+        let root = TempDir::new().unwrap();
+        write_config(
+            &root,
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                code_non_test = 1
+
+                [ratchet]
+                file = "custom-ratchet.toml"
+            "#},
+        );
+        write_rust_source_with_function_count(&root, "src/lib.rs", 2);
+
+        let create = sprawl_guard(&root)
+            .args(["baseline", "--write"])
+            .output()
+            .unwrap();
+        let created = std::fs::read_to_string(root.path().join("custom-ratchet.toml")).unwrap();
+        let replace = sprawl_guard(&root)
+            .args(["baseline", "--all", "--write"])
+            .output()
+            .unwrap();
+        let replaced = std::fs::read_to_string(root.path().join("custom-ratchet.toml")).unwrap();
+        let check = sprawl_guard(&root).arg("check").output().unwrap();
+
+        assert_exit_code(&create, exit_codes::SUCCESS);
+        assert_exit_code(&replace, exit_codes::SUCCESS);
+        assert_eq!(replaced, created);
+        assert_exit_code(&check, exit_codes::SUCCESS);
+    }
 }
 
 mod when_the_ratchet_file_already_exists {
@@ -149,5 +182,47 @@ mod when_the_ratchet_file_already_exists {
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
         assert!(stderr(&output).contains("refusing to raise 1 ratchet ceiling"));
+    }
+
+    #[test]
+    fn it_removes_path_classified_test_entries_when_test_checks_are_disabled() {
+        let root = TempDir::new().unwrap();
+        write_config(
+            &root,
+            indoc! {r#"
+                [tests]
+                check_path_tests = false
+            "#},
+        );
+        write_ratchet(
+            &root,
+            indoc! {r#"
+                version = 1
+
+                [[test_files]]
+                path = "tests/integration.rs"
+                code_lines = 2
+
+                [[test_directories]]
+                path = "tests"
+                group = "source"
+                leaf_test_files = 1
+            "#},
+        );
+        write_file(
+            &root,
+            "tests/integration.rs",
+            "fn first() {}\nfn second() {}\n",
+        );
+
+        let output = sprawl_guard(&root)
+            .args(["baseline", "--all", "--write"])
+            .output()
+            .unwrap();
+        let ratchet = read_ratchet_file(&root);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert!(ratchet.test_files.is_empty());
+        assert!(ratchet.test_directories.is_empty());
     }
 }

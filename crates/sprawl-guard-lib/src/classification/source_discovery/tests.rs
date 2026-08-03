@@ -73,6 +73,24 @@ mod discover_sources {
             assert_eq!(sources.len(), 1);
             assert_eq!(sources[0].group(), &LanguageGroupId::Source);
         }
+
+        #[test]
+        fn it_uses_the_resolved_languages_group_for_a_custom_extension() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [languages.markdown]
+                    additional_globs = ["**/*.guide"]
+                "#},
+            );
+            write_source_file(tempdir.path(), "docs/start.guide");
+
+            let sources = discover_sources(tempdir.path(), &load_config(tempdir.path())).unwrap();
+
+            assert_eq!(sources.len(), 1);
+            assert_eq!(sources[0].group(), &LanguageGroupId::Documentation);
+        }
     }
 
     mod when_gitignore_excludes_a_file {

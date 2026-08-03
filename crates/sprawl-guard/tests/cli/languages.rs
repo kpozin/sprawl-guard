@@ -30,6 +30,8 @@ mod when_supported_languages_are_listed {
                 "rust": {
                     "config_key": rust["config_key"],
                     "include": rust["include"],
+                    "bundled_extensions": rust["bundled_extensions"],
+                    "bundled_filenames": rust["bundled_filenames"],
                     "test_globs": rust["test_globs"],
                     "rust": rust["rust"],
                 },
@@ -38,13 +40,49 @@ mod when_supported_languages_are_listed {
                 "mode": "supported",
                 "rust": {
                     "config_key": "rust",
-                    "include": ["**/*.rs"],
+                    "include": null,
+                    "bundled_extensions": ["rs"],
+                    "bundled_filenames": [],
                     "test_globs": ["benches/**"],
                     "rust": {"exclude_cfg_test": true},
                 },
             })
         );
         assert_eq!(stderr(&output), "");
+    }
+
+    #[test]
+    fn it_prints_bundled_path_metadata_for_humans() {
+        let root = TempDir::new().unwrap();
+
+        let output = sprawl_guard(&root).arg("languages").output().unwrap();
+        let output = stdout(&output);
+
+        assert!(output.contains("bundled extensions: rs"));
+        assert!(output.contains("bundled filenames: build, workspace, module"));
+    }
+
+    #[test]
+    fn it_reports_only_canonical_extension_owners() {
+        let root = TempDir::new().unwrap();
+
+        let (output, json) = run_json(&root, &["languages", "--format", "json"]);
+        let phix = json_language(&json, "Phix");
+        let specman_e = json_language(&json, "Specman e");
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert!(
+            phix["bundled_extensions"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("e"))
+        );
+        assert!(
+            !specman_e["bundled_extensions"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("e"))
+        );
     }
 
     #[test]
@@ -69,8 +107,8 @@ mod when_supported_languages_are_listed {
                 "include": rust["include"],
             }),
             json!({
-                "enabled": false,
-                "include": ["**/*.rs"],
+                "enabled": true,
+                "include": null,
             })
         );
         assert_eq!(stderr(&output), "");

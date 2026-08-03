@@ -4,10 +4,10 @@ use std::path::Path;
 
 use indoc::formatdoc;
 use serde_json::{Value, json};
-use sprawl_guard_lib::classification::{ClassifiedSource, discover_sources};
-use sprawl_guard_lib::config::{
-    Config, LanguageConfig, RustCfgTestExclusion, built_in_config, supported_language_ids,
+use sprawl_guard_lib::classification::{
+    ClassifiedSource, bundled_extensions, bundled_filenames, discover_sources,
 };
+use sprawl_guard_lib::config::{Config, LanguageConfig, RustCfgTestExclusion, built_in_config};
 use sprawl_guard_lib::{GlobPattern, LanguageId};
 
 use crate::error::{CliError, Result};
@@ -23,7 +23,7 @@ pub(super) fn supported_languages_report() -> LanguagesReport {
 }
 
 pub(super) fn detected_languages_report(root: &Path) -> Result<LanguagesReport> {
-    let config = config_for_init_style_detection()?;
+    let config = config_for_init_style_detection();
     let sources = discover_sources(root, &config)?;
     let detected_counts = source_counts_by_language(&sources);
     Ok(LanguagesReport {
@@ -32,10 +32,8 @@ pub(super) fn detected_languages_report(root: &Path) -> Result<LanguagesReport> 
     })
 }
 
-fn config_for_init_style_detection() -> Result<Config> {
-    let mut config = built_in_config();
-    config.enable_only_languages(supported_language_ids())?;
-    Ok(config)
+fn config_for_init_style_detection() -> Config {
+    built_in_config()
 }
 
 fn source_counts_by_language(sources: &[ClassifiedSource]) -> BTreeMap<LanguageId, NonZeroUsize> {
@@ -93,6 +91,9 @@ pub(super) fn human_report(report: &LanguagesReport) -> String {
                 accepted aliases: {aliases}
                 enabled: {enabled}
             {count}    include: {include}
+                bundled extensions: {bundled_extensions}
+                bundled filenames: {bundled_filenames}
+                additional globs: {additional_globs}
                 exclude: {exclude}
                 test globs: {test_globs}{rust}
         ",
@@ -100,7 +101,14 @@ pub(super) fn human_report(report: &LanguagesReport) -> String {
         canonical = language.id,
         aliases = language.human_aliases(),
         enabled = language.enabled,
-        include = display_list(&language.include),
+        include = language
+            .include
+            .as_ref()
+            .map(|include| display_list(include))
+            .unwrap_or_else(|| "(bundled)".to_owned()),
+        bundled_extensions = display_list(&language.bundled_extensions),
+        bundled_filenames = display_list(&language.bundled_filenames),
+        additional_globs = display_list(&language.additional_globs),
         exclude = display_list(&language.exclude),
         test_globs = display_list(&language.test_globs),
         rust = language
@@ -192,7 +200,10 @@ struct LanguageEntry {
     case_insensitive: bool,
     enabled: bool,
     source_files: Option<NonZeroUsize>,
-    include: Vec<String>,
+    include: Option<Vec<String>>,
+    bundled_extensions: Vec<String>,
+    bundled_filenames: Vec<String>,
+    additional_globs: Vec<String>,
     exclude: Vec<String>,
     test_globs: Vec<String>,
     rust: Option<RustLanguageEntry>,
@@ -209,7 +220,16 @@ impl LanguageEntry {
             case_insensitive: true,
             enabled: config.is_enabled(),
             source_files,
-            include: glob_strings(&common.include),
+            include: common.include.as_deref().map(glob_strings),
+            bundled_extensions: bundled_extensions(id)
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            bundled_filenames: bundled_filenames(id)
+                .iter()
+                .map(|value| (*value).to_owned())
+                .collect(),
+            additional_globs: glob_strings(&common.additional_globs),
             exclude: glob_strings(&common.exclude),
             test_globs: glob_strings(&common.test_globs),
             rust: config.rust().map(|rust| RustLanguageEntry {
@@ -226,6 +246,9 @@ impl LanguageEntry {
             "case_insensitive": self.case_insensitive,
             "enabled": self.enabled,
             "include": &self.include,
+            "bundled_extensions": &self.bundled_extensions,
+            "bundled_filenames": &self.bundled_filenames,
+            "additional_globs": &self.additional_globs,
             "exclude": &self.exclude,
             "test_globs": &self.test_globs,
         });

@@ -273,6 +273,16 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
             };
             merge_language(language, existing, value)?;
         }
+        for (language, value) in &config.languages {
+            if value.is_enabled()
+                && value.common().include.as_ref().is_some_and(Vec::is_empty)
+                && value.common().additional_globs.is_empty()
+            {
+                return Err(SprawlError::LanguageWithoutIncludedPaths {
+                    language: *language,
+                });
+            }
+        }
     }
     if let Some(value) = overrides {
         config.overrides = value;

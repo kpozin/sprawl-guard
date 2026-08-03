@@ -1467,6 +1467,58 @@ mod when_checking_with_a_ratchet_file {
     }
 }
 
+mod when_path_classified_tests_are_disabled {
+    use super::*;
+
+    #[test]
+    fn it_omits_current_measurements_and_treats_existing_ratchets_as_stale() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_config(
+            tempdir.path(),
+            indoc! {r#"
+                [tests]
+                check_path_tests = false
+
+                [limits]
+                max_lines_per_file = { code = 1 }
+                max_leaf_files_per_directory = { test = 1 }
+            "#},
+        );
+        write_ratchet(
+            tempdir.path(),
+            indoc! {r#"
+                version = 1
+
+                [[test_files]]
+                path = "tests/integration.rs"
+                code_lines = 2
+
+                [[test_directories]]
+                path = "tests"
+                group = "source"
+                leaf_test_files = 1
+            "#},
+        );
+        write_file(
+            tempdir.path(),
+            "tests/integration.rs",
+            "fn first() {}\nfn second() {}\n",
+        );
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        assert!(file_violations(&report).is_empty());
+        assert!(directory_violations(&report).is_empty());
+        let ratchets = ratchet_violations(&report);
+        assert_eq!(ratchets.len(), 2);
+        assert!(
+            ratchets
+                .iter()
+                .all(|violation| violation.actual().is_none())
+        );
+    }
+}
+
 mod when_multiple_files_violate {
     use super::*;
 

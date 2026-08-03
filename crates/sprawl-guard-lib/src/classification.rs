@@ -8,6 +8,7 @@ mod source_discovery;
 mod traversal;
 mod types;
 
+pub use bundled_languages::{bundled_extensions, bundled_filenames};
 pub use explain::explain_path;
 pub use source_discovery::discover_sources;
 pub(crate) use source_discovery::discover_sources_report;

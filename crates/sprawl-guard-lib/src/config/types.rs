@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::{LanguageId, Result, SprawlError};
+use crate::LanguageId;
 
 use super::{
     ConfigInclude, FilesConfig, IgnoreConfig, LanguageConfig, LanguageMode, Limits, OutputConfig,
@@ -44,33 +44,17 @@ impl Config {
         &self.languages
     }
 
-    /// Enables exactly the selected languages and disables every other supported language.
+    /// Disables the selected supported languages.
     ///
-    /// This is used by bootstrap flows that start from built-in defaults but need a narrow language
-    /// set. The method lives on `Config` so callers cannot accidentally pair a language ID with the
-    /// wrong language-specific settings.
-    pub fn enable_only_languages(
-        &mut self,
-        languages: impl IntoIterator<Item = LanguageId>,
-    ) -> Result<()> {
-        let languages = languages.into_iter().collect::<Vec<_>>();
-        for language in &languages {
-            if !self.languages.contains_key(language) {
-                return Err(SprawlError::UnknownLanguage {
-                    language: language.to_string(),
-                });
-            }
-        }
-        for config in self.languages.values_mut() {
-            config.common_mut().mode = LanguageMode::Disabled;
-        }
+    /// Every `LanguageId` is backed by the bundled registry, and resolved configs contain every
+    /// bundled ID, so this mutation cannot receive an unsupported key.
+    pub fn disable_languages(&mut self, languages: impl IntoIterator<Item = LanguageId>) {
         for language in languages {
             self.languages
                 .get_mut(&language)
-                .expect("language set was validated before mutation")
+                .expect("resolved config must contain every bundled language")
                 .common_mut()
-                .mode = LanguageMode::Enabled;
+                .mode = LanguageMode::Disabled;
         }
-        Ok(())
     }
 }

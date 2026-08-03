@@ -88,27 +88,28 @@ pub fn supported_language_ids() -> Vec<LanguageId> {
 fn default_languages() -> std::collections::BTreeMap<LanguageId, LanguageConfig> {
     LanguageType::list()
         .iter()
-        .map(|(language, extensions)| {
+        .map(|(language, _)| {
             (
                 LanguageId::from_tokei(*language),
-                default_language_config(*language, extensions),
+                default_language_config(*language),
             )
         })
         .collect()
 }
 
-fn default_language_config(language: LanguageType, extensions: &[&str]) -> LanguageConfig {
+fn default_language_config(language: LanguageType) -> LanguageConfig {
     match language {
         LanguageType::Rust => rust_language_config(),
-        _ => generic_language_config(extensions),
+        _ => generic_language_config(),
     }
 }
 
 fn rust_language_config() -> LanguageConfig {
     LanguageConfig::rust_config(
         CommonLanguageConfig {
-            mode: LanguageMode::Disabled,
-            include: glob_patterns(["**/*.rs"]),
+            mode: LanguageMode::Enabled,
+            include: None,
+            additional_globs: vec![],
             exclude: vec![],
             test_globs: glob_patterns(["benches/**"]),
             limits: LanguageLimits::default(),
@@ -119,10 +120,11 @@ fn rust_language_config() -> LanguageConfig {
     )
 }
 
-fn generic_language_config(extensions: &[&str]) -> LanguageConfig {
+fn generic_language_config() -> LanguageConfig {
     LanguageConfig::generic(CommonLanguageConfig {
-        mode: LanguageMode::Disabled,
-        include: extension_globs(extensions),
+        mode: LanguageMode::Enabled,
+        include: None,
+        additional_globs: vec![],
         exclude: vec![],
         test_globs: vec![],
         limits: LanguageLimits::default(),
@@ -131,13 +133,6 @@ fn generic_language_config(extensions: &[&str]) -> LanguageConfig {
 
 fn glob_patterns<const N: usize>(patterns: [&str; N]) -> Vec<GlobPattern> {
     patterns.into_iter().map(glob_pattern).collect()
-}
-
-fn extension_globs(extensions: &[&str]) -> Vec<GlobPattern> {
-    extensions
-        .iter()
-        .map(|extension| glob_pattern(format!("**/*.{extension}")))
-        .collect()
 }
 
 fn glob_pattern(pattern: impl Into<String>) -> GlobPattern {

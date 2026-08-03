@@ -8,8 +8,8 @@ use tokei::LanguageType;
 
 use super::*;
 use crate::config::{
-    SourceFileByteLimit, SymlinkTraversal, TestFanoutLimit, TraversalDepth, TraversalEntryLimit,
-    TraversalErrorPolicy,
+    LanguageConfig, SourceFileByteLimit, SymlinkTraversal, TestFanoutLimit, TraversalDepth,
+    TraversalEntryLimit, TraversalErrorPolicy,
 };
 use crate::{GlobPattern, LeafFiles};
 
@@ -25,6 +25,10 @@ fn assert_patterns(actual: &[GlobPattern], expected: &[&str]) {
         actual.iter().map(GlobPattern::as_str).collect::<Vec<_>>(),
         expected
     );
+}
+
+fn language<'config>(config: &'config Config, id: &str) -> &'config LanguageConfig {
+    config.languages.get(&LanguageId::new(id).unwrap()).unwrap()
 }
 
 mod when_config_is_minimal {
@@ -43,14 +47,11 @@ mod when_config_is_minimal {
         .unwrap();
 
         let loaded = load(tempdir.path()).unwrap();
-        let rust = loaded
-            .config
-            .languages
-            .get(&LanguageId::new("rust").unwrap())
-            .unwrap();
+        let rust = language(&loaded.config, "rust");
 
         assert!(rust.is_enabled());
-        assert_patterns(&rust.common().include, &["**/*.rs"]);
+        assert_eq!(rust.common().include, None);
+        assert!(rust.common().additional_globs.is_empty());
         assert_patterns(&rust.common().test_globs, &["benches/**"]);
         assert_patterns(
             &loaded.config.tests.globs,
@@ -91,7 +92,133 @@ mod when_config_is_minimal {
                 "missing default config for {}",
                 language.name()
             );
+            assert!(
+                loaded
+                    .config
+                    .languages
+                    .get(&LanguageId::from_tokei(*language))
+                    .unwrap()
+                    .is_enabled(),
+                "{} should be enabled by default",
+                language.name()
+            );
         }
+    }
+
+    #[test]
+    fn it_does_not_materialize_bundled_language_globs_when_serialized() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "").unwrap();
+        let loaded = load(tempdir.path()).unwrap();
+
+        let serialized = toml::Value::try_from(&loaded.config).unwrap();
+        let rust = serialized
+            .get("languages")
+            .and_then(|languages| languages.get("Rust"))
+            .and_then(toml::Value::as_table)
+            .unwrap();
+
+        assert!(!rust.contains_key("include"));
+    }
+}
+
+mod when_language_config_is_partial {
+    use super::*;
+
+    #[test]
+    fn it_can_disable_a_language() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [languages.rust]
+                enabled = false
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+
+        assert!(!language(&loaded.config, "rust").is_enabled());
+    }
+
+    #[test]
+    fn it_replaces_bundled_paths_with_an_explicit_include() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [languages.rust]
+                include = ["generated/**/*.rust"]
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+        let include = language(&loaded.config, "rust")
+            .common()
+            .include
+            .as_deref()
+            .unwrap();
+
+        assert_patterns(include, &["generated/**/*.rust"]);
+    }
+
+    #[test]
+    fn it_adds_paths_without_replacing_bundled_paths() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [languages.rust]
+                additional_globs = ["generated/**/*.rust"]
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+        let rust = language(&loaded.config, "rust").common();
+
+        assert_eq!(rust.include, None);
+        assert_patterns(&rust.additional_globs, &["generated/**/*.rust"]);
+    }
+
+    #[test]
+    fn it_keeps_language_local_exclusions() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [languages.rust]
+                exclude = ["vendor/**"]
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+
+        assert_patterns(
+            &language(&loaded.config, "rust").common().exclude,
+            &["vendor/**"],
+        );
+    }
+
+    #[test]
+    fn it_allows_a_disabled_language_without_included_paths() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [languages.rust]
+                enabled = false
+                include = []
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+
+        assert!(!language(&loaded.config, "rust").is_enabled());
     }
 }
 
@@ -501,6 +628,25 @@ mod when_config_values_are_invalid {
 
         assert!(error.to_string().contains("exclude_cfg_test"));
         assert!(error.to_string().contains("TypeScript"));
+    }
+
+    #[test]
+    fn it_rejects_an_enabled_language_without_included_paths() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [languages.rust]
+                include = []
+            "#},
+        )
+        .unwrap();
+
+        let error = load(tempdir.path()).unwrap_err();
+
+        assert!(error.to_string().contains("Rust"));
+        assert!(error.to_string().contains("include"));
+        assert!(error.to_string().contains("additional_globs"));
     }
 
     #[test]
