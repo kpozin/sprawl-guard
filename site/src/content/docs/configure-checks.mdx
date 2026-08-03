@@ -51,6 +51,23 @@ languages include comments automatically, so Markdown prose counts by default; a
 path-classified tests. For production Rust files, Sprawl Guard can also exclude top-level
 `cfg(test)` items from configured LOC.
 
+## Group related languages for directory limits
+
+By default, non-literate languages share the `source` directory count, while literate languages
+use the unlimited `documentation` count. Define a custom group when a set of related languages
+should share its own fan-out budget:
+
+```toml title="sprawl-guard.toml"
+[language_groups.frontend]
+languages = ["javascript", "typescript", "jsx", "tsx"]
+
+[language_groups.frontend.limits.max_leaf_files_per_directory]
+production = 12
+```
+
+Omitted custom-group limits inherit the global values. Path overrides still apply last, so the same
+path-based exception can refine file and directory limits without naming a language group.
+
 ## Add overrides
 
 Overrides apply in declaration order. Each matching override changes only the limit fields it

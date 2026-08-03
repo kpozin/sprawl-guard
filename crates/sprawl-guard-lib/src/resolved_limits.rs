@@ -166,14 +166,10 @@ impl<'config> LimitResolver<'config> {
         group: &LanguageGroupId,
         path: &RelativePath,
     ) -> ResolvedLeafFileLimit {
-        let mut limit = match group {
-            LanguageGroupId::Documentation => LeafFileLimit::Unlimited,
-            LanguageGroupId::Source | LanguageGroupId::Custom(_) => match kind {
-                SourceKind::Production => {
-                    self.config.limits.max_leaf_files_per_directory.production
-                }
-                SourceKind::Test => self.config.limits.max_leaf_files_per_directory.test,
-            },
+        let group_limits = self.config.effective_language_group_directory_limits(group);
+        let mut limit = match kind {
+            SourceKind::Production => group_limits.production,
+            SourceKind::Test => group_limits.test,
         };
         let mut matched_overrides = Vec::new();
 

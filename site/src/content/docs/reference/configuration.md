@@ -104,6 +104,34 @@ corresponding global threshold. `included_line_types` replaces the global or aut
 literate-language selection. Run `sprawl-guard languages` to list all supported IDs and their
 bundled paths. IDs are case-insensitive.
 
+### `[language_groups.<name>]`
+
+Custom language groups give related languages a shared directory fan-out count and policy.
+`languages` is a non-empty array of distinct supported language IDs. A language may belong to at
+most one custom group; disabled languages may remain listed.
+
+```toml title="sprawl-guard.toml"
+[language_groups.frontend]
+languages = ["javascript", "typescript", "jsx", "tsx"]
+
+[language_groups.frontend.limits.max_leaf_files_per_directory]
+production = 12
+test = 20
+```
+
+Omitted custom-group limit fields inherit their global values. Languages outside custom groups are
+assigned automatically: Tokei literate languages use `documentation`, and all others use `source`.
+The `source` group uses the global directory limits and cannot be configured directly.
+
+The `documentation` group is unlimited for production and test fan-out by default. Its table cannot
+declare `languages`, but a custom group may claim a literate language and replace that language's
+automatic assignment. Documentation-group limits can be made finite:
+
+```toml title="sprawl-guard.toml"
+[language_groups.documentation.limits.max_leaf_files_per_directory]
+production = 20
+```
+
 ### `[[overrides]]`
 
 | Field                                     | Type                                       | Meaning                                            |
@@ -151,7 +179,9 @@ Sprawl Guard applies configuration in this order:
 3. Included fragments append overrides in lexicographic file order.
 4. Language-specific file thresholds and included line types replace their global values. Literate
    languages add comments automatically when no language-specific line-type selection is present.
-5. Matching path overrides apply in declaration order. Later entries replace only the fields they
+5. Custom-group directory limits replace their global values. Documentation directory limits start
+   from their unlimited defaults.
+6. Matching path overrides apply in declaration order. Later entries replace only the fields they
    set.
-6. CLI options override the output format, ratchet-current requirement, traversal error policy,
+7. CLI options override the output format, ratchet-current requirement, traversal error policy,
    root, and configuration path for that run.

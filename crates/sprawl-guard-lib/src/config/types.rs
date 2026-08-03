@@ -2,11 +2,12 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::LanguageId;
+use crate::{CustomLanguageGroupId, LanguageGroupId, LanguageId};
 
 use super::{
-    ConfigInclude, FilesConfig, IgnoreConfig, LanguageConfig, LanguageMode, Limits,
-    MaxLinesPerFileLimits, OutputConfig, PathOverride, RatchetConfig, TestsConfig, TraversalConfig,
+    ConfigInclude, FilesConfig, IgnoreConfig, LanguageConfig, LanguageGroupsConfig, LanguageMode,
+    Limits, MaxLinesPerFileLimits, OutputConfig, PathOverride, RatchetConfig, TestsConfig,
+    TraversalConfig,
 };
 
 /// Fully resolved `sprawl-guard` configuration.
@@ -26,6 +27,8 @@ pub struct Config {
     /// Path-classified test settings.
     pub tests: TestsConfig,
     pub(crate) languages: BTreeMap<LanguageId, LanguageConfig>,
+    /// Directory fan-out groups and resolved language assignments.
+    pub(crate) language_groups: LanguageGroupsConfig,
     /// Ordered path overrides.
     pub overrides: Vec<PathOverride>,
     /// Ratchet file settings.
@@ -42,6 +45,11 @@ impl Config {
     /// and defaults construction maintain that invariant.
     pub fn languages(&self) -> &BTreeMap<LanguageId, LanguageConfig> {
         &self.languages
+    }
+
+    /// Returns resolved language-group configuration without exposing mutable assignment state.
+    pub fn language_groups(&self) -> &LanguageGroupsConfig {
+        &self.language_groups
     }
 
     /// Disables the selected supported languages.
@@ -73,6 +81,39 @@ impl Config {
             production: language_limits.production.unwrap_or(global.production),
             test: language_limits.test.unwrap_or(global.test),
         }
+    }
+
+    /// Resolves one language group's directory fan-out policy against global defaults.
+    pub(crate) fn effective_language_group_directory_limits(
+        &self,
+        group: &LanguageGroupId,
+    ) -> &super::MaxLeafFilesPerDirectoryLimits {
+        match group {
+            LanguageGroupId::Source => &self.limits.max_leaf_files_per_directory,
+            LanguageGroupId::Documentation => {
+                &self
+                    .language_groups
+                    .documentation
+                    .limits
+                    .max_leaf_files_per_directory
+            }
+            LanguageGroupId::Custom(group) => {
+                &self
+                    .custom_language_group(group)
+                    .limits
+                    .max_leaf_files_per_directory
+            }
+        }
+    }
+
+    fn custom_language_group(
+        &self,
+        group: &CustomLanguageGroupId,
+    ) -> &super::CustomLanguageGroupConfig {
+        self.language_groups
+            .custom
+            .get(group)
+            .expect("classified custom group must exist in resolved config")
     }
 
     /// Returns an inspection copy with inherited per-language LOC policy made explicit.

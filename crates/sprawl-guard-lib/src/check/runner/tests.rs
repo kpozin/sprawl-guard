@@ -116,6 +116,7 @@ fn count_rust_production_source_with_line_types(
     let source = ClassifiedSource::new(
         RelativePath::new(Path::new(SOURCE_PATH)).unwrap(),
         crate::LanguageId::new("Rust").unwrap(),
+        crate::LanguageGroupId::Source,
         SourceKind::Production,
     );
     count_source(
@@ -654,6 +655,126 @@ mod when_rust_cfg_test_preprocessing_fails {
 
 mod when_checking_directory_fan_out {
     use super::*;
+
+    mod when_languages_share_a_custom_group {
+        use super::*;
+
+        #[test]
+        fn it_counts_the_custom_group_separately_from_source() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [limits.max_leaf_files_per_directory]
+                    production = 1
+
+                    [language_groups.frontend]
+                    languages = ["javascript", "typescript", "jsx", "tsx"]
+
+                    [language_groups.frontend.limits.max_leaf_files_per_directory]
+                    production = 3
+                "#},
+            );
+            write_file(tempdir.path(), "src/app.js", "export const app = 1;\n");
+            write_file(
+                tempdir.path(),
+                "src/component.jsx",
+                "export const C = () => null;\n",
+            );
+            write_file(tempdir.path(), "src/lib.ts", "export const lib = 1;\n");
+            write_file(
+                tempdir.path(),
+                "src/view.tsx",
+                "export const View = () => null;\n",
+            );
+            write_file(tempdir.path(), "src/main.rs", "fn main() {}\n");
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            let violation = single_directory_violation(&report);
+            assert_eq!(
+                violation.group,
+                crate::LanguageGroupId::custom("frontend").unwrap()
+            );
+            assert_eq!(violation.actual.get(), 4);
+            assert_eq!(violation.limit.get(), 3);
+        }
+    }
+
+    mod when_a_custom_group_has_role_specific_limits {
+        use super::*;
+
+        #[test]
+        fn it_resolves_production_and_test_members_independently() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [language_groups.frontend]
+                    languages = ["typescript"]
+
+                    [language_groups.frontend.limits.max_leaf_files_per_directory]
+                    production = 2
+                    test = 1
+                "#},
+            );
+            write_file(tempdir.path(), "src/a.ts", "export const a = 1;\n");
+            write_file(tempdir.path(), "src/b.ts", "export const b = 1;\n");
+            write_file(tempdir.path(), "src/a.test.ts", "export const a = 1;\n");
+            write_file(tempdir.path(), "src/b.test.ts", "export const b = 1;\n");
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            let violation = single_directory_violation(&report);
+            assert_eq!(violation.kind, DirectoryViolationKind::TestDirectoryFanout);
+            assert_eq!(
+                violation.group,
+                crate::LanguageGroupId::custom("frontend").unwrap()
+            );
+            assert_eq!(violation.actual.get(), 2);
+            assert_eq!(violation.limit.get(), 1);
+        }
+    }
+
+    mod when_a_path_override_matches_a_custom_group {
+        use super::*;
+
+        #[test]
+        fn it_replaces_the_group_limit() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [limits.max_leaf_files_per_directory]
+                    production = 8
+
+                    [language_groups.frontend]
+                    languages = ["typescript"]
+
+                    [language_groups.frontend.limits.max_leaf_files_per_directory]
+                    production = 1
+
+                    [[overrides]]
+                    paths = ["src/**"]
+                    max_leaf_files_per_directory = { production = 2 }
+                    reason = "frontend modules are colocated"
+                "#},
+            );
+            write_file(tempdir.path(), "src/a.ts", "export const a = 1;\n");
+            write_file(tempdir.path(), "src/b.ts", "export const b = 1;\n");
+            write_file(tempdir.path(), "src/c.ts", "export const c = 1;\n");
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            let violation = single_directory_violation(&report);
+            assert_eq!(
+                violation.group,
+                crate::LanguageGroupId::custom("frontend").unwrap()
+            );
+            assert_eq!(violation.actual.get(), 3);
+            assert_eq!(violation.limit.get(), 2);
+        }
+    }
 
     mod when_the_documentation_group_uses_its_default_limit {
         use super::*;

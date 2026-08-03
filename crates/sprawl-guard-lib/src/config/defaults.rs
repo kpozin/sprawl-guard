@@ -1,9 +1,9 @@
 use crate::config::{
     CommonLanguageConfig, Config, ConfigInclude, FilesConfig, IgnoreConfig, LanguageConfig,
-    LanguageLimits, LanguageMode, Limits, MaxLeafFilesPerDirectoryLimits, MaxLinesPerFileLimits,
-    OutputConfig, OutputFormat, RatchetConfig, RustCfgTestExclusion, RustLanguageConfig,
-    SourceFileByteLimit, SymlinkTraversal, TestsConfig, TraversalConfig, TraversalDepth,
-    TraversalEntryLimit, TraversalErrorPolicy,
+    LanguageGroupsConfig, LanguageLimits, LanguageMode, Limits, MaxLeafFilesPerDirectoryLimits,
+    MaxLinesPerFileLimits, OutputConfig, OutputFormat, RatchetConfig, RustCfgTestExclusion,
+    RustLanguageConfig, SourceFileByteLimit, SymlinkTraversal, TestsConfig, TraversalConfig,
+    TraversalDepth, TraversalEntryLimit, TraversalErrorPolicy,
 };
 use crate::{
     ColorMode, GlobPattern, IncludedLineTypes, LanguageId, LeafFileLimit, LeafFiles, LocLimit,
@@ -20,6 +20,8 @@ const DEFAULT_MAX_SOURCE_FILE_BYTES: u64 = 10 * 1024 * 1024;
 
 /// Returns the built-in resolved configuration.
 pub fn built_in_config() -> Config {
+    let languages = default_languages();
+    let language_groups = LanguageGroupsConfig::automatic(languages.keys().copied());
     Config {
         config: ConfigInclude { include: vec![] },
         limits: Limits {
@@ -70,7 +72,8 @@ pub fn built_in_config() -> Config {
                 "**/*_spec.*",
             ]),
         },
-        languages: default_languages(),
+        languages,
+        language_groups,
         overrides: vec![],
         ratchet: RatchetConfig {
             file: RatchetFilePath::trusted("sprawl-guard.ratchet.toml"),

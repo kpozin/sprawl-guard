@@ -13,6 +13,7 @@ use super::defaults::built_in_config;
 use super::files::{PartialFilesConfig, merge_global_file_excludes};
 use super::ignore::{PartialIgnoreConfig, merge_ignore};
 use super::include::{IncludeFragment, PartialConfigInclude, merge_config_include};
+use super::language_groups::{PartialLanguageGroupsConfig, resolve_language_groups};
 use super::languages::{PartialLanguageConfig, merge_language};
 use super::limits::{PartialLimits, merge_limits};
 use super::output::{PartialOutputConfig, merge_output};
@@ -241,6 +242,7 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
         files,
         tests,
         languages,
+        language_groups,
         overrides,
         ratchet,
         output,
@@ -284,6 +286,11 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
             }
         }
     }
+    config.language_groups = resolve_language_groups(
+        language_groups,
+        config.languages.keys().copied(),
+        &config.limits.max_leaf_files_per_directory,
+    )?;
     if let Some(value) = overrides {
         config.overrides = value;
     }
@@ -306,6 +313,7 @@ struct PartialConfig {
     files: Option<PartialFilesConfig>,
     tests: Option<PartialTestsConfig>,
     languages: Option<BTreeMap<LanguageId, PartialLanguageConfig>>,
+    language_groups: Option<PartialLanguageGroupsConfig>,
     overrides: Option<Vec<PathOverride>>,
     ratchet: Option<PartialRatchetConfig>,
     output: Option<PartialOutputConfig>,

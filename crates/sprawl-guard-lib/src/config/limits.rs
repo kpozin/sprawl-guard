@@ -47,12 +47,19 @@ pub(super) fn merge_limits(config: &mut Limits, partial: PartialLimits) {
         }
     }
     if let Some(value) = partial.max_leaf_files_per_directory {
-        if let Some(value) = value.production {
-            config.max_leaf_files_per_directory.production = value;
-        }
-        if let Some(value) = value.test {
-            config.max_leaf_files_per_directory.test = value;
-        }
+        merge_max_leaf_files_per_directory_limits(&mut config.max_leaf_files_per_directory, value);
+    }
+}
+
+pub(super) fn merge_max_leaf_files_per_directory_limits(
+    config: &mut MaxLeafFilesPerDirectoryLimits,
+    partial: PartialMaxLeafFilesPerDirectoryLimits,
+) {
+    if let Some(value) = partial.production {
+        config.production = value;
+    }
+    if let Some(value) = partial.test {
+        config.test = value;
     }
 }
 
@@ -73,7 +80,7 @@ struct PartialMaxLinesPerFileLimits {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PartialMaxLeafFilesPerDirectoryLimits {
+pub(super) struct PartialMaxLeafFilesPerDirectoryLimits {
     production: Option<LeafFileLimit>,
     test: Option<LeafFileLimit>,
 }

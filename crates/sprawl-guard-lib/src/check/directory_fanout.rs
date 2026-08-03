@@ -145,11 +145,10 @@ fn source_parent_directory(path: &RelativePath) -> Result<RelativePath> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::built_in_config;
     use crate::{LanguageGroupId, LanguageId};
 
     fn production_source(path: &str, language: &str, group: LanguageGroupId) -> ClassifiedSource {
-        ClassifiedSource::with_group(
+        ClassifiedSource::new(
             RelativePath::new(Path::new(path)).unwrap(),
             LanguageId::new(language).unwrap(),
             group,
@@ -162,9 +161,18 @@ mod tests {
 
         #[test]
         fn it_measures_each_group_independently() {
-            let mut config = built_in_config();
-            config.limits.max_leaf_files_per_directory.production =
-                LeafFileLimit::Finite(LeafFiles::new(1).unwrap());
+            let tempdir = tempfile::tempdir().unwrap();
+            crate::test_support::write_config(
+                tempdir.path(),
+                indoc::indoc! {r#"
+                    [limits.max_leaf_files_per_directory]
+                    production = 1
+
+                    [language_groups.frontend]
+                    languages = ["javascript", "typescript"]
+                "#},
+            );
+            let config = crate::test_support::load_config(tempdir.path());
             let limits = LimitResolver::new(&config).unwrap();
             let frontend_group = LanguageGroupId::custom("frontend").unwrap();
             let sources = vec![

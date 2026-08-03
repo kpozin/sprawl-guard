@@ -34,10 +34,15 @@ language configuration replaces that selection. Sprawl Guard evaluates four meas
 - configured LOC in each production file;
 - configured LOC in each path-classified test file;
 - direct production source files in each directory;
-- direct test source files in each directory, unless that limit is `"unlimited"`.
+- direct test source files in each directory.
 
-Global limits apply first, followed by language-specific file policy and then matching path
-overrides. A measurement above its effective limit is a current violation.
+Directory fan-out is measured even when its effective limit is `"unlimited"`; unlimited disables
+the policy violation, not the measurement or its ratchet comparison. A matching path override can
+still replace an unlimited group limit with a finite one.
+
+Global limits apply first. Language-specific policy can replace file limits, and custom groups can
+replace directory limits. Matching path overrides apply last. A measurement above its effective
+limit is a current violation.
 
 ### Directory fan-out example
 
@@ -66,8 +71,9 @@ The resulting measurements are:
 | `src`         | 2: `app.ts`, `index.ts` | 1: `app.test.ts` |
 | `src/feature` | 2: `api.ts`, `model.py` | 0                |
 
-`src/generated.ts` does not count because it is excluded. Markdown belongs to the documentation
-group, so `src/README.md` does not consume the source-group fan-out budget. The `feature` directory
+`src/generated.ts` does not count because it is excluded. Markdown belongs to the automatic
+documentation group, so `src/README.md` does not consume the source-group fan-out budget. Custom
+groups can likewise separate related languages from the source count. The `feature` directory
 itself does not count toward `src`; its files count only toward `src/feature`.
 
 An included source file counts even when it is empty or uses a facade name such as `index.ts`.

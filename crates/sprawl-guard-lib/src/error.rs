@@ -3,11 +3,15 @@
 use std::path::PathBuf;
 
 use crate::classification::TraversalIncident;
+use crate::config::LanguageGroupsError;
 use crate::{LanguageGroupId, LanguageId, RelativePath};
 
 /// Error type for recoverable `sprawl-guard` library failures.
 #[derive(Debug, thiserror::Error)]
 pub enum SprawlError {
+    /// Language-group configuration was invalid.
+    #[error(transparent)]
+    LanguageGroups(#[from] LanguageGroupsError),
     /// The configured root path could not be resolved.
     #[error("failed to resolve root {path}: {source}")]
     ResolveRoot {

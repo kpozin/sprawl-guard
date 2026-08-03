@@ -38,19 +38,8 @@ pub struct ClassifiedSource {
 }
 
 impl ClassifiedSource {
-    /// Creates a classified source with the built-in group for its language.
-    pub fn new(path: RelativePath, language: LanguageId, kind: SourceKind) -> Self {
-        let group = language.automatic_group();
-        Self {
-            path,
-            language,
-            group,
-            kind,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn with_group(
+    /// Creates a classified source with its resolved language group.
+    pub fn new(
         path: RelativePath,
         language: LanguageId,
         group: LanguageGroupId,

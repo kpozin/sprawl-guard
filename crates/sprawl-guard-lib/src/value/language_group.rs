@@ -64,6 +64,15 @@ fn validate_custom_language_group_id(value: &str) -> Result<(), LanguageGroupIdE
 )]
 pub struct CustomLanguageGroupId(String);
 
+impl Serialize for CustomLanguageGroupId {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_ref())
+    }
+}
+
 /// Identifier for a language group used by configuration, results, and ratchets.
 ///
 /// Custom deserialization maps automatic names to their explicit variants and

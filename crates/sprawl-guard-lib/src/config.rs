@@ -4,6 +4,7 @@ mod defaults;
 mod files;
 mod ignore;
 mod include;
+mod language_groups;
 mod languages;
 mod limits;
 mod load;
@@ -18,6 +19,10 @@ pub use defaults::{built_in_config, supported_language_ids};
 pub use files::FilesConfig;
 pub use ignore::IgnoreConfig;
 pub use include::ConfigInclude;
+pub use language_groups::{
+    CustomLanguageGroupConfig, DocumentationLanguageGroupConfig, LanguageGroupLimits,
+    LanguageGroupMembers, LanguageGroupMembersError, LanguageGroupsConfig, LanguageGroupsError,
+};
 pub use languages::{
     CommonLanguageConfig, GenericLanguageConfig, LanguageConfig, LanguageLimits,
     LanguageMaxLinesPerFileLimits, LanguageMode, LanguageSpecificConfig, RustCfgTestExclusion,

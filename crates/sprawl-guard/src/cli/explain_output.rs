@@ -141,10 +141,12 @@ mod tests {
     }
 
     fn source(path: &str, language: &str, kind: SourceKind) -> SourceExplanation {
+        let language = LanguageId::new(language).unwrap();
         SourceExplanation::Classified {
             source: ClassifiedSource::new(
                 RelativePath::new(path).unwrap(),
-                LanguageId::new(language).unwrap(),
+                language,
+                language.automatic_group(),
                 kind,
             ),
         }

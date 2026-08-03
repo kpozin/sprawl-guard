@@ -125,8 +125,9 @@ impl<'config> Classifier<'config> {
         } else {
             SourceKind::Production
         };
+        let group = self.config.language_groups.group_for(language.id).clone();
         Ok(PathClassification::Source(SourceExplanation::classified(
-            ClassifiedSource::new(path, language.id, kind),
+            ClassifiedSource::new(path, language.id, group, kind),
         )))
     }
 }

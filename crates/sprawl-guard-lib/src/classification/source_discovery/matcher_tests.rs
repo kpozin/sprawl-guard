@@ -1,10 +1,10 @@
 #![cfg(test)]
 
 use super::discover_sources;
-use crate::LanguageId;
 use crate::test_support::{
     load_config, source_paths, write_ambiguous_rust_go_config, write_config, write_source_file,
 };
+use crate::{LanguageGroupId, LanguageId};
 use indoc::indoc;
 use tokei::LanguageType;
 
@@ -138,6 +138,30 @@ mod discover_sources {
             assert!(sources.iter().all(|source| {
                 source.language() == LanguageId::from_tokei(LanguageType::SpecmanE)
             }));
+        }
+
+        #[test]
+        fn a_custom_extension_uses_its_languages_resolved_custom_group() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [languages.markdown]
+                    additional_globs = ["**/*.guide"]
+
+                    [language_groups.content]
+                    languages = ["markdown"]
+                "#},
+            );
+            write_source_file(tempdir.path(), "docs/start.guide");
+
+            let sources = discover_sources(tempdir.path(), &load_config(tempdir.path())).unwrap();
+
+            assert_eq!(sources.len(), 1);
+            assert_eq!(
+                sources[0].group(),
+                &LanguageGroupId::custom("content").unwrap()
+            );
         }
     }
 

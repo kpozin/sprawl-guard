@@ -11,7 +11,10 @@ use crate::config::{
     LanguageConfig, SourceFileByteLimit, SymlinkTraversal, TraversalDepth, TraversalEntryLimit,
     TraversalErrorPolicy,
 };
-use crate::{GlobPattern, IncludedLineTypes, LeafFileLimit, LeafFiles};
+use crate::{
+    CustomLanguageGroupId, GlobPattern, IncludedLineTypes, LanguageGroupId, LeafFileLimit,
+    LeafFiles,
+};
 
 fn load(root: &Path) -> Result<LoadedConfig> {
     load_resolved_config(&LoadOptions {
@@ -458,6 +461,151 @@ mod when_limits_config_is_partial {
     }
 }
 
+mod when_language_groups_are_configured {
+    use super::*;
+
+    #[test]
+    fn it_assigns_custom_members_and_inherits_omitted_global_limits() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [limits.max_leaf_files_per_directory]
+                production = 10
+                test = 20
+
+                [language_groups.frontend]
+                languages = ["javascript", "typescript", "jsx", "tsx"]
+
+                [language_groups.frontend.limits.max_leaf_files_per_directory]
+                production = 12
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+        let frontend = CustomLanguageGroupId::try_new("frontend".to_owned()).unwrap();
+        let group = loaded
+            .config
+            .language_groups()
+            .custom()
+            .get(&frontend)
+            .unwrap();
+
+        assert_eq!(
+            group.limits.max_leaf_files_per_directory,
+            crate::config::MaxLeafFilesPerDirectoryLimits {
+                production: LeafFileLimit::Finite(LeafFiles::new(12).unwrap()),
+                test: LeafFileLimit::Finite(LeafFiles::new(20).unwrap()),
+            }
+        );
+        for language in ["javascript", "typescript", "jsx", "tsx"] {
+            assert_eq!(
+                loaded
+                    .config
+                    .language_groups()
+                    .group_for(LanguageId::new(language).unwrap()),
+                &LanguageGroupId::Custom(frontend.clone())
+            );
+        }
+        assert_eq!(
+            loaded
+                .config
+                .language_groups()
+                .group_for(LanguageId::new("rust").unwrap()),
+            &LanguageGroupId::Source
+        );
+    }
+
+    #[test]
+    fn it_allows_disabled_languages_to_remain_custom_group_members() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [languages.javascript]
+                enabled = false
+
+                [language_groups.frontend]
+                languages = ["javascript", "typescript"]
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+
+        assert_eq!(
+            loaded
+                .config
+                .language_groups()
+                .group_for(LanguageId::new("javascript").unwrap())
+                .to_string(),
+            "frontend"
+        );
+    }
+
+    #[test]
+    fn it_applies_explicit_documentation_limits_over_unlimited_defaults() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [language_groups.documentation.limits.max_leaf_files_per_directory]
+                production = 20
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+
+        assert_eq!(
+            loaded
+                .config
+                .language_groups()
+                .documentation()
+                .limits
+                .max_leaf_files_per_directory,
+            crate::config::MaxLeafFilesPerDirectoryLimits {
+                production: LeafFileLimit::Finite(LeafFiles::new(20).unwrap()),
+                test: LeafFileLimit::Unlimited,
+            }
+        );
+        assert_eq!(
+            loaded
+                .config
+                .language_groups()
+                .group_for(LanguageId::new("markdown").unwrap()),
+            &LanguageGroupId::Documentation
+        );
+    }
+
+    #[test]
+    fn it_serializes_authored_groups_without_the_assignment_index_or_source_group() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [language_groups.frontend]
+                languages = ["javascript", "typescript"]
+            "#},
+        )
+        .unwrap();
+        let loaded = load(tempdir.path()).unwrap();
+
+        let serialized = toml::Value::try_from(&loaded.config).unwrap();
+        let groups = serialized
+            .get("language_groups")
+            .and_then(toml::Value::as_table)
+            .unwrap();
+
+        assert!(groups.contains_key("documentation"));
+        assert!(groups.contains_key("frontend"));
+        assert!(!groups.contains_key("source"));
+        assert!(!groups.contains_key("custom"));
+        assert!(!groups.contains_key("assignments"));
+    }
+}
+
 mod when_config_toml_is_invalid {
     use super::*;
 
@@ -845,6 +993,66 @@ mod when_config_values_are_invalid {
                 "unknown field",
             );
         }
+    }
+
+    #[test]
+    fn it_rejects_invalid_language_group_definitions() {
+        let cases = [
+            (
+                "[language_groups.frontend]\nlanguages = []\n",
+                "language group must contain at least one language",
+            ),
+            (
+                "[language_groups.frontend]\nlanguages = [\"rust\", \"rust\"]\n",
+                "language group contains duplicate language Rust",
+            ),
+            (
+                "[language_groups.frontend]\nlanguages = [\"not-a-language\"]\n",
+                "unsupported language ID",
+            ),
+            (
+                "[language_groups.Frontend]\nlanguages = [\"rust\"]\n",
+                "must start with an ASCII lowercase letter",
+            ),
+            (
+                "[language_groups.source]\nlanguages = [\"rust\"]\n",
+                "source group is configured through global limits",
+            ),
+            (
+                "[language_groups.documentation]\nlanguages = [\"markdown\"]\n",
+                "documentation group membership is automatic",
+            ),
+            (
+                "[language_groups.frontend]\n",
+                "custom language group frontend must declare languages",
+            ),
+            (
+                "[language_groups.frontend]\nlanguages = [\"rust\"]\nunknown = true\n",
+                "unknown field `unknown`",
+            ),
+            (
+                "[language_groups.frontend]\nlanguages = [\"rust\"]\n[language_groups.frontend.limits.max_leaf_files_per_directory]\nproduction = 10\nunknown = 20\n",
+                "unknown field `unknown`",
+            ),
+        ];
+
+        for (config, expected) in cases {
+            assert_config_error_contains(config, expected);
+        }
+    }
+
+    #[test]
+    fn it_rejects_languages_assigned_to_multiple_custom_groups() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [language_groups.frontend]
+                languages = ["javascript", "typescript"]
+
+                [language_groups.browser]
+                languages = ["typescript", "jsx"]
+            "#},
+            "language TypeScript belongs to both browser and frontend",
+        );
     }
 }
 
