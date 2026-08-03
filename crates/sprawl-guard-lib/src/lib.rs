@@ -31,8 +31,8 @@ pub use config::{
 };
 pub use error::{Result, SprawlError};
 pub use ratchet::{
-    DirectoryRatchet, DirectoryRatchetKey, FileRatchet, RatchetCount, RatchetFile, RatchetVersion,
-    TestDirectoryRatchet, TestFileRatchet,
+    DirectoryRatchet, DirectoryRatchetKey, FileRatchet, FileRatchetKey, RatchetCount, RatchetFile,
+    RatchetLookup, RatchetSchemaVersion,
 };
 pub use resolved_limits::{
     MatchedOverride, OverrideOrdinal, ResolvedFileLocLimit, ResolvedLeafFileLimit,

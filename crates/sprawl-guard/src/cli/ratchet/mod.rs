@@ -7,14 +7,13 @@ use serde_json::json;
 use sprawl_guard_lib::check::check_without_ratchet;
 use sprawl_guard_lib::config::{LoadOptions, load_resolved_config};
 use sprawl_guard_lib::{
-    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, DirectoryViolationKind,
-    FileLocViolation, FileRatchet, FileViolationKind, LocLimit, RatchetFile, RatchetVersion,
-    TestDirectoryRatchet, TestFileRatchet,
+    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileLocViolation, FileRatchet,
+    LocLimit, RatchetFile, RatchetSchemaVersion,
 };
 
 use super::{BaselineArgs, RatchetArgs};
 use crate::error::{CliError, Result};
-use edit::{lower_ratchet_scope, ratchet_raise_count, replace_ratchet_scope, sort_ratchet};
+use edit::{lower_ratchet_scope, ratchet_raise_count, replace_ratchet_scope};
 use scope::{BaselineScopeRequest, ratchet_update_scope, replacement_scope};
 
 pub(super) fn execute_baseline(
@@ -47,7 +46,7 @@ pub(super) fn execute_baseline(
             BaselineScopeRequest::Paths
         };
         let scope = replacement_scope(&context.root, &args.paths, scope_request)?;
-        let raises = ratchet_raise_count(&previous, &new_entries);
+        let raises = ratchet_raise_count(&previous, &new_entries)?;
         if raises > 0 && !args.allow_raises {
             return Err(CliError::RatchetRaises { count: raises });
         }
@@ -93,7 +92,7 @@ pub(super) fn execute_ratchet(
     } else {
         (RatchetFile::default(), Vec::new())
     };
-    let next = lower_ratchet_scope(previous, current, &scope);
+    let next = lower_ratchet_scope(previous, current, &scope)?;
 
     finish_ratchet_command(
         RatchetCommandKind::Ratchet,
@@ -200,46 +199,32 @@ fn current_violation_report(
 
 fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
     let mut ratchet = RatchetFile {
-        version: RatchetVersion::current(),
+        schema_version: RatchetSchemaVersion::CURRENT,
         files: Vec::new(),
-        test_files: Vec::new(),
         directories: Vec::new(),
-        test_directories: Vec::new(),
     };
     for violation in report.violations() {
         match violation {
-            CheckViolation::FileLoc(violation) => match violation.kind {
-                FileViolationKind::FileLoc => ratchet.files.push(FileRatchet {
+            CheckViolation::FileLoc(violation) => {
+                ratchet.files.push(FileRatchet {
                     path: violation.path.clone(),
-                    non_test_code_lines: LocLimit::new(violation.measurement.actual().get())
+                    role: violation.kind.role(),
+                    loc: LocLimit::new(violation.measurement.actual().get())
                         .expect("violating file LOC must be positive"),
-                }),
-                FileViolationKind::TestFileLoc => ratchet.test_files.push(TestFileRatchet {
+                });
+            }
+            CheckViolation::DirectoryFanout(violation) => {
+                ratchet.directories.push(DirectoryRatchet {
                     path: violation.path.clone(),
-                    code_lines: LocLimit::new(violation.measurement.actual().get())
-                        .expect("violating test file LOC must be positive"),
-                }),
-            },
-            CheckViolation::DirectoryFanout(violation) => match violation.kind {
-                DirectoryViolationKind::DirectoryFanout => {
-                    ratchet.directories.push(DirectoryRatchet {
-                        path: violation.path.clone(),
-                        group: violation.group.clone(),
-                        leaf_source_files: violation.actual,
-                    });
-                }
-                DirectoryViolationKind::TestDirectoryFanout => {
-                    ratchet.test_directories.push(TestDirectoryRatchet {
-                        path: violation.path.clone(),
-                        group: violation.group.clone(),
-                        leaf_test_files: violation.actual,
-                    });
-                }
-            },
+                    role: violation.kind.role(),
+                    group: violation.group.clone(),
+                    leaf_files: violation.actual,
+                });
+            }
             CheckViolation::Ratchet(_) => {}
         }
     }
-    sort_ratchet(&mut ratchet);
+    ratchet.sort();
     Ok(ratchet)
 }
 

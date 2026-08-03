@@ -1,8 +1,10 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::config::Config;
-use crate::ratchet::{DirectoryRatchetKey, RatchetCount, RatchetFile};
+use crate::ratchet::{
+    DirectoryRatchetKey, FileRatchetKey, RatchetCount, RatchetFile, RatchetLookup,
+};
 use crate::{LanguageGroupId, LeafFiles, LocLimit, RelativePath, Result};
 
 use super::directory_fanout::{DirectoryFanoutCheck, DirectoryFanoutMeasurement};
@@ -10,8 +12,7 @@ use super::report::{CheckViolation, DirectoryViolationKind, FileViolationKind};
 use super::report::{
     DirectoryRatchetIncreasedViolation, DirectoryRatchetStaleMeasuredViolation,
     FileRatchetIncreasedViolation, FileRatchetStaleMeasuredViolation, RatchetIncreasedViolation,
-    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetStaleViolationKind,
-    RatchetViolation,
+    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetViolation,
 };
 use super::runner::{CheckScope, FileMeasurement, SourceCheck};
 
@@ -80,8 +81,8 @@ fn increased_file_ratchet_violation(
             kind: measurement.kind,
             path: measurement.path.clone(),
             measurement: measurement.loc,
-            limit: RatchetCount::from_code_lines(measurement.limit),
-            ratchet: RatchetCount::from_code_lines(ceiling),
+            limit: RatchetCount::from_loc_limit(measurement.limit),
+            ratchet: RatchetCount::from_loc_limit(ceiling),
         },
     ))
 }
@@ -95,8 +96,8 @@ fn stale_file_ratchet_violation(
             kind: measurement.kind,
             path: measurement.path.clone(),
             measurement: measurement.loc,
-            limit: RatchetCount::from_code_lines(measurement.limit),
-            ratchet: RatchetCount::from_code_lines(ceiling),
+            limit: RatchetCount::from_loc_limit(measurement.limit),
+            ratchet: RatchetCount::from_loc_limit(ceiling),
         }),
     ))
 }
@@ -210,29 +211,23 @@ pub(super) fn stale_missing_ratchets(
 
 #[derive(Default)]
 pub(super) struct MeasuredRatchets {
-    file_loc: BTreeSet<RelativePath>,
-    test_file_loc: BTreeSet<RelativePath>,
-    directory_fanout: BTreeSet<DirectoryRatchetKey>,
-    test_directory_fanout: BTreeSet<DirectoryRatchetKey>,
+    files: BTreeSet<FileRatchetKey>,
+    directories: BTreeSet<DirectoryRatchetKey>,
 }
 
 impl MeasuredRatchets {
     pub(super) fn record_file(&mut self, measurement: &FileMeasurement) {
-        let paths = match measurement.kind {
-            FileViolationKind::FileLoc => &mut self.file_loc,
-            FileViolationKind::TestFileLoc => &mut self.test_file_loc,
-        };
-        paths.insert(measurement.path.clone());
+        self.files.insert(FileRatchetKey::new(
+            measurement.path.clone(),
+            measurement.kind.role(),
+        ));
     }
 
     pub(super) fn record_directory(&mut self, measurement: &DirectoryFanoutMeasurement) {
-        let paths = match measurement.kind {
-            DirectoryViolationKind::DirectoryFanout => &mut self.directory_fanout,
-            DirectoryViolationKind::TestDirectoryFanout => &mut self.test_directory_fanout,
-        };
-        paths.insert(DirectoryRatchetKey::new(
-            measurement.group.clone(),
+        self.directories.insert(DirectoryRatchetKey::new(
             measurement.path.clone(),
+            measurement.kind.role(),
+            measurement.group.clone(),
         ));
     }
 }
@@ -250,10 +245,7 @@ impl RatchetCurrentPolicy {
 }
 
 pub(super) struct RatchetState {
-    file_loc: BTreeMap<RelativePath, LocLimit>,
-    test_file_loc: BTreeMap<RelativePath, LocLimit>,
-    directory_fanout: BTreeMap<DirectoryRatchetKey, LeafFiles>,
-    test_directory_fanout: BTreeMap<DirectoryRatchetKey, LeafFiles>,
+    ratchets: RatchetLookup,
 }
 
 impl RatchetState {
@@ -268,40 +260,18 @@ impl RatchetState {
         {
             return Ok(None);
         }
-        Ok(Some(Self::from_file(RatchetFile::read(&path)?)))
+        Ok(Some(Self::from_file(RatchetFile::read(&path)?)?))
     }
 
-    fn from_file(file: RatchetFile) -> Self {
-        Self {
-            file_loc: file
-                .files
-                .into_iter()
-                .map(|entry| (entry.path, entry.non_test_code_lines))
-                .collect(),
-            test_file_loc: file
-                .test_files
-                .into_iter()
-                .map(|entry| (entry.path, entry.code_lines))
-                .collect(),
-            directory_fanout: file
-                .directories
-                .into_iter()
-                .map(|entry| (entry.key(), entry.leaf_source_files))
-                .collect(),
-            test_directory_fanout: file
-                .test_directories
-                .into_iter()
-                .map(|entry| (entry.key(), entry.leaf_test_files))
-                .collect(),
-        }
+    fn from_file(file: RatchetFile) -> Result<Self> {
+        Ok(Self {
+            ratchets: RatchetLookup::try_from(file)?,
+        })
     }
 
     fn file_ceiling(&self, kind: FileViolationKind, path: &RelativePath) -> Option<LocLimit> {
-        match kind {
-            FileViolationKind::FileLoc => self.file_loc.get(path),
-            FileViolationKind::TestFileLoc => self.test_file_loc.get(path),
-        }
-        .copied()
+        self.ratchets
+            .file_ceiling(&FileRatchetKey::new(path.clone(), kind.role()))
     }
 
     fn directory_ceiling(
@@ -310,39 +280,21 @@ impl RatchetState {
         group: &LanguageGroupId,
         path: &RelativePath,
     ) -> Option<LeafFiles> {
-        let key = DirectoryRatchetKey::new(group.clone(), path.clone());
-        match kind {
-            DirectoryViolationKind::DirectoryFanout => self.directory_fanout.get(&key),
-            DirectoryViolationKind::TestDirectoryFanout => self.test_directory_fanout.get(&key),
-        }
-        .copied()
+        let key = DirectoryRatchetKey::new(path.clone(), kind.role(), group.clone());
+        self.ratchets.directory_ceiling(&key)
     }
 
     fn missing_in(&self, scope: &CheckScope, measured: &MeasuredRatchets) -> Vec<RatchetViolation> {
         let mut violations = Vec::new();
         violations.extend(missing::file_ratchets(
-            &self.file_loc,
-            &measured.file_loc,
+            self.ratchets.files(),
+            &measured.files,
             scope,
-            RatchetStaleViolationKind::FileLocStale,
-        ));
-        violations.extend(missing::file_ratchets(
-            &self.test_file_loc,
-            &measured.test_file_loc,
-            scope,
-            RatchetStaleViolationKind::TestFileLocStale,
         ));
         violations.extend(missing::directory_ratchets(
-            &self.directory_fanout,
-            &measured.directory_fanout,
+            self.ratchets.directories(),
+            &measured.directories,
             scope,
-            RatchetStaleViolationKind::DirectoryFanoutStale,
-        ));
-        violations.extend(missing::directory_ratchets(
-            &self.test_directory_fanout,
-            &measured.test_directory_fanout,
-            scope,
-            RatchetStaleViolationKind::TestDirectoryFanoutStale,
         ));
         violations
     }

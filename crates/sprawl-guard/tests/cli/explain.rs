@@ -16,7 +16,7 @@ mod when_explaining_the_configured_ratchet {
                 file = "./nested//ratchet.toml"
             "#},
         );
-        write_file(root, "nested/ratchet.toml", "version = 1\n");
+        write_file(root, "nested/ratchet.toml", "schema_version = 1\n");
     }
 
     #[test]

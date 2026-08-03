@@ -4,6 +4,7 @@ use std::process::{Command, Output, Stdio};
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
 use indoc::{formatdoc, indoc};
+use sprawl_guard_lib::classification::SourceKind;
 use sprawl_guard_lib::ratchet::{FileRatchet, RatchetFile};
 use toml::Value as TomlValue;
 
@@ -146,7 +147,7 @@ pub(crate) fn write_rust_file_limit_config_and_file_ratchet(
     root: &TempDir,
     configured_limit: u32,
     ratchet_path: &str,
-    ratchet_non_test_code_lines: u32,
+    ratchet_loc: u32,
 ) {
     write_config(
         root,
@@ -161,11 +162,12 @@ pub(crate) fn write_rust_file_limit_config_and_file_ratchet(
     write_ratchet(
         root,
         &formatdoc! {r#"
-            version = 1
+            schema_version = 1
 
             [[files]]
             path = "{ratchet_path}"
-            non_test_code_lines = {ratchet_non_test_code_lines}
+            role = "production"
+            loc = {ratchet_loc}
         "#},
     );
 }
@@ -267,25 +269,37 @@ pub(crate) fn read_ratchet_file(root: &TempDir) -> RatchetFile {
     .unwrap()
 }
 
-pub(crate) fn ratchet_file_entry<'file>(
+pub(crate) fn run_ratchet_file_write(root: &TempDir, command: &str) -> (Output, RatchetFile) {
+    let output = sprawl_guard(root)
+        .args([command, "--write"])
+        .output()
+        .unwrap();
+    let ratchet = read_ratchet_file(root);
+    (output, ratchet)
+}
+
+pub(crate) fn production_file_ratchet_entry<'file>(
     ratchet: &'file RatchetFile,
     path: &str,
 ) -> Option<&'file FileRatchet> {
     ratchet
         .files
         .iter()
-        .find(|entry| entry.path.as_str() == path)
+        .find(|entry| entry.path.as_str() == path && entry.role == SourceKind::Production)
 }
 
-pub(crate) fn directory_ratchet_entries(ratchet: &RatchetFile) -> Vec<(&str, &str, u32)> {
+pub(crate) fn production_directory_ratchet_entries(
+    ratchet: &RatchetFile,
+) -> Vec<(&str, &str, u32)> {
     ratchet
         .directories
         .iter()
+        .filter(|entry| entry.role == SourceKind::Production)
         .map(|entry| {
             (
                 entry.group.as_str(),
                 entry.path.as_str(),
-                entry.leaf_source_files.get(),
+                entry.leaf_files.get(),
             )
         })
         .collect()

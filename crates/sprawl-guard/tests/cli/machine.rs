@@ -166,14 +166,13 @@ mod run {
 
     fn expected_single_file_ratchet() -> serde_json::Value {
         json!({
-            "version": 1,
+            "schema_version": 1,
             "files": [{
                 "path": "src/lib.rs",
-                "non_test_code_lines": 2,
+                "role": "production",
+                "loc": 2,
             }],
-            "test_files": [],
             "directories": [],
-            "test_directories": [],
         })
     }
 
@@ -602,6 +601,50 @@ mod run {
         let (output, json) = run_machine_request(&request);
 
         assert_ratchet_write_result(&root, &output, &json, RatchetPayloadKind::Baseline);
+    }
+
+    #[test]
+    fn it_preserves_test_roles_in_the_baseline_payload_and_file() {
+        let root = TempDir::new().unwrap();
+        write_config(
+            &root,
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                test = 1
+
+                [limits.max_leaf_files_per_directory]
+                test = 1
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_rust_source_with_function_count(&root, "tests/a.rs", 2);
+        write_rust_source_with_function_count(&root, "tests/b.rs", 1);
+        let request = machine_request(&root, &["baseline", "--write"]);
+
+        let (output, json) = run_machine_request(&request);
+
+        let expected = json!({
+            "schema_version": 1,
+            "files": [{
+                "path": "tests/a.rs",
+                "role": "test",
+                "loc": 2,
+            }],
+            "directories": [{
+                "path": "tests",
+                "role": "test",
+                "group": "source",
+                "leaf_files": 2,
+            }],
+        });
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(json["result"]["payload"]["ratchet"], expected);
+        assert_eq!(
+            serde_json::to_value(read_ratchet_file(&root)).unwrap(),
+            expected
+        );
     }
 
     #[test]

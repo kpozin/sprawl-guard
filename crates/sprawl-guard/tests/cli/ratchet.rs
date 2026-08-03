@@ -22,15 +22,17 @@ mod when_writing_updates {
         write_ratchet(
             &root,
             indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[files]]
                 path = "src/improved.rs"
-                non_test_code_lines = 4
+                role = "production"
+                loc = 4
 
                 [[files]]
                 path = "src/obsolete.rs"
-                non_test_code_lines = 3
+                role = "production"
+                loc = 3
             "#},
         );
         write_file(
@@ -43,17 +45,13 @@ mod when_writing_updates {
         );
         write_file(&root, "src/obsolete.rs", "fn a() {}\n");
 
-        let output = sprawl_guard(&root)
-            .args(["ratchet", "--write"])
-            .output()
-            .unwrap();
-        let ratchet = read_ratchet_file(&root);
+        let (output, ratchet) = run_ratchet_file_write(&root, "ratchet");
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 1);
-        let improved_file = ratchet_file_entry(&ratchet, "src/improved.rs").unwrap();
-        assert_eq!(improved_file.non_test_code_lines.get(), 2);
-        assert!(ratchet_file_entry(&ratchet, "src/obsolete.rs").is_none());
+        let improved_file = production_file_ratchet_entry(&ratchet, "src/improved.rs").unwrap();
+        assert_eq!(improved_file.loc.get(), 2);
+        assert!(production_file_ratchet_entry(&ratchet, "src/obsolete.rs").is_none());
         assert_eq!(stderr(&output), "");
     }
 
@@ -73,15 +71,17 @@ mod when_writing_updates {
         write_ratchet(
             &root,
             indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[files]]
                 path = "checked/lib.rs"
-                non_test_code_lines = 4
+                role = "production"
+                loc = 4
 
                 [[files]]
                 path = "skipped/lib.rs"
-                non_test_code_lines = 4
+                role = "production"
+                loc = 4
             "#},
         );
         write_file(
@@ -110,10 +110,10 @@ mod when_writing_updates {
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 2);
-        let checked_file = ratchet_file_entry(&ratchet, "checked/lib.rs").unwrap();
-        assert_eq!(checked_file.non_test_code_lines.get(), 2);
-        let skipped_file = ratchet_file_entry(&ratchet, "skipped/lib.rs").unwrap();
-        assert_eq!(skipped_file.non_test_code_lines.get(), 4);
+        let checked_file = production_file_ratchet_entry(&ratchet, "checked/lib.rs").unwrap();
+        assert_eq!(checked_file.loc.get(), 2);
+        let skipped_file = production_file_ratchet_entry(&ratchet, "skipped/lib.rs").unwrap();
+        assert_eq!(skipped_file.loc.get(), 4);
         assert_eq!(stderr(&output), "");
     }
 
@@ -133,11 +133,12 @@ mod when_writing_updates {
         write_ratchet(
             &root,
             indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[files]]
                 path = "deleted/lib.rs"
-                non_test_code_lines = 4
+                role = "production"
+                loc = 4
             "#},
         );
 
@@ -148,7 +149,7 @@ mod when_writing_updates {
         let ratchet = read_ratchet_file(&root);
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        assert!(ratchet_file_entry(&ratchet, "deleted/lib.rs").is_none());
+        assert!(production_file_ratchet_entry(&ratchet, "deleted/lib.rs").is_none());
         assert_eq!(stderr(&output), "");
     }
 
@@ -159,19 +160,64 @@ mod when_writing_updates {
         write_ratchet(
             &root,
             indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "source"
-                leaf_source_files = 3
+                leaf_files = 3
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "documentation"
-                leaf_source_files = 3
+                leaf_files = 3
             "#},
         );
+
+        let (output, ratchet) = run_ratchet_file_write(&root, "ratchet");
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            production_directory_ratchet_entries(&ratchet),
+            vec![("source", "src", 2), ("documentation", "src", 2),]
+        );
+    }
+
+    #[test]
+    fn it_updates_only_the_role_currently_assigned_to_a_path() {
+        let root = TempDir::new().unwrap();
+        write_config(
+            &root,
+            indoc! {r#"
+                [tests]
+                globs = ["src/lib.rs"]
+
+                [limits.max_lines_per_file]
+                test = 1
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_ratchet(
+            &root,
+            indoc! {r#"
+                schema_version = 1
+
+                [[files]]
+                path = "src/lib.rs"
+                role = "production"
+                loc = 4
+
+                [[files]]
+                path = "src/lib.rs"
+                role = "test"
+                loc = 4
+            "#},
+        );
+        write_rust_source_with_function_count(&root, "src/lib.rs", 2);
 
         let output = sprawl_guard(&root)
             .args(["ratchet", "--write"])
@@ -180,9 +226,12 @@ mod when_writing_updates {
         let ratchet = read_ratchet_file(&root);
 
         assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(ratchet.files.len(), 1);
+        assert_eq!(ratchet.files[0].path.as_str(), "src/lib.rs");
         assert_eq!(
-            directory_ratchet_entries(&ratchet),
-            vec![("source", "src", 2), ("documentation", "src", 2),]
+            ratchet.files[0].role,
+            sprawl_guard_lib::classification::SourceKind::Test
         );
+        assert_eq!(ratchet.files[0].loc.get(), 2);
     }
 }

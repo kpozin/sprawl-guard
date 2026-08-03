@@ -1,5 +1,6 @@
 use assert_fs::TempDir;
 use indoc::indoc;
+use sprawl_guard_lib::classification::SourceKind;
 
 use super::common::*;
 
@@ -16,13 +17,21 @@ mod when_writing_the_initial_baseline {
             .args(["baseline", "--write"])
             .output()
             .unwrap();
-        let ratchet = read_ratchet_file(&root);
+        let document = parse_toml(&read_ratchet(&root));
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(ratchet.version.get(), 1);
-        assert_eq!(ratchet.files.len(), 1);
-        let file = ratchet_file_entry(&ratchet, "src/lib.rs").unwrap();
-        assert_eq!(file.non_test_code_lines.get(), 2);
+        assert_eq!(
+            document,
+            parse_toml(indoc! {r#"
+                schema_version = 1
+                directories = []
+
+                [[files]]
+                path = "src/lib.rs"
+                role = "production"
+                loc = 2
+            "#})
+        );
         assert_eq!(stderr(&output), "");
     }
 
@@ -31,11 +40,7 @@ mod when_writing_the_initial_baseline {
         let root = TempDir::new().unwrap();
         write_rust_directory_fanout_fixture(&root);
 
-        let output = sprawl_guard(&root)
-            .args(["baseline", "--write"])
-            .output()
-            .unwrap();
-        let ratchet = read_ratchet_file(&root);
+        let (output, ratchet) = run_ratchet_file_write(&root, "baseline");
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.directories.len(), 1);
@@ -47,15 +52,11 @@ mod when_writing_the_initial_baseline {
         let root = TempDir::new().unwrap();
         write_mixed_group_directory_fanout_fixture(&root);
 
-        let output = sprawl_guard(&root)
-            .args(["baseline", "--write"])
-            .output()
-            .unwrap();
-        let ratchet = read_ratchet_file(&root);
+        let (output, ratchet) = run_ratchet_file_write(&root, "baseline");
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(
-            directory_ratchet_entries(&ratchet),
+            production_directory_ratchet_entries(&ratchet),
             vec![("source", "src", 2), ("documentation", "src", 2),]
         );
     }
@@ -107,7 +108,7 @@ mod when_the_ratchet_file_already_exists {
                 enabled = true
             "#},
         );
-        write_ratchet(&root, "version = 1\n");
+        write_ratchet(&root, "schema_version = 1\n");
 
         let output = sprawl_guard(&root).arg("baseline").output().unwrap();
 
@@ -131,11 +132,12 @@ mod when_the_ratchet_file_already_exists {
         write_ratchet(
             &root,
             indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[files]]
                 path = "old/lib.rs"
-                non_test_code_lines = 9
+                role = "production"
+                loc = 9
             "#},
         );
         write_file(
@@ -155,10 +157,10 @@ mod when_the_ratchet_file_already_exists {
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 2);
-        let old_file = ratchet_file_entry(&ratchet, "old/lib.rs").unwrap();
-        assert_eq!(old_file.non_test_code_lines.get(), 9);
-        let new_file = ratchet_file_entry(&ratchet, "new/lib.rs").unwrap();
-        assert_eq!(new_file.non_test_code_lines.get(), 2);
+        let old_file = production_file_ratchet_entry(&ratchet, "old/lib.rs").unwrap();
+        assert_eq!(old_file.loc.get(), 9);
+        let new_file = production_file_ratchet_entry(&ratchet, "new/lib.rs").unwrap();
+        assert_eq!(new_file.loc.get(), 2);
     }
 
     #[test]
@@ -197,16 +199,18 @@ mod when_the_ratchet_file_already_exists {
         write_ratchet(
             &root,
             indoc! {r#"
-                version = 1
+                schema_version = 1
 
-                [[test_files]]
+                [[files]]
                 path = "tests/integration.rs"
-                code_lines = 2
+                role = "test"
+                loc = 2
 
-                [[test_directories]]
+                [[directories]]
                 path = "tests"
+                role = "test"
                 group = "source"
-                leaf_test_files = 1
+                leaf_files = 1
             "#},
         );
         write_file(
@@ -222,7 +226,17 @@ mod when_the_ratchet_file_already_exists {
         let ratchet = read_ratchet_file(&root);
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        assert!(ratchet.test_files.is_empty());
-        assert!(ratchet.test_directories.is_empty());
+        assert!(
+            ratchet
+                .files
+                .iter()
+                .all(|entry| entry.role != SourceKind::Test)
+        );
+        assert!(
+            ratchet
+                .directories
+                .iter()
+                .all(|entry| entry.role != SourceKind::Test)
+        );
     }
 }

@@ -6,7 +6,7 @@ use nutype::nutype;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
-use crate::classification::TraversalIncident;
+use crate::classification::{SourceKind, TraversalIncident};
 use crate::code_line_counter::LocMeasurement;
 use crate::rust_cfg::RustCfgTestWarning;
 use crate::{DiagnosticDetail, LanguageGroupId, LanguageId, LeafFiles, LocLimit, RelativePath};
@@ -342,6 +342,16 @@ pub enum DirectoryViolationKind {
     TestDirectoryFanout,
 }
 
+impl DirectoryViolationKind {
+    /// Returns the production or test role measured by this violation.
+    pub const fn role(self) -> SourceKind {
+        match self {
+            Self::DirectoryFanout => SourceKind::Production,
+            Self::TestDirectoryFanout => SourceKind::Test,
+        }
+    }
+}
+
 /// A file that exceeded its configured LOC budget.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FileLocViolation {
@@ -371,6 +381,16 @@ pub enum FileViolationKind {
     FileLoc,
     /// Path-classified test file LOC violation.
     TestFileLoc,
+}
+
+impl FileViolationKind {
+    /// Returns the production or test role measured by this violation.
+    pub const fn role(self) -> SourceKind {
+        match self {
+            Self::FileLoc => SourceKind::Production,
+            Self::TestFileLoc => SourceKind::Test,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,8 +1,5 @@
-use std::collections::BTreeMap;
-
 use sprawl_guard_lib::{
-    DirectoryRatchet, DirectoryRatchetKey, FileRatchet, LeafFiles, LocLimit, RatchetFile,
-    RatchetVersion, RelativePath, TestDirectoryRatchet, TestFileRatchet,
+    DirectoryRatchet, FileRatchet, RatchetFile, RatchetLookup, RatchetSchemaVersion,
 };
 
 use super::scope::RatchetScope;
@@ -18,10 +15,8 @@ pub(super) fn replace_ratchet_scope(
 ) -> RatchetFile {
     let mut next = preserve_out_of_scope(previous, scope);
     next.files.extend(current.files);
-    next.test_files.extend(current.test_files);
     next.directories.extend(current.directories);
-    next.test_directories.extend(current.test_directories);
-    sort_ratchet(&mut next);
+    next.sort();
     next
 }
 
@@ -33,10 +28,10 @@ pub(super) fn lower_ratchet_scope(
     previous: RatchetFile,
     current: RatchetFile,
     scope: &RatchetScope,
-) -> RatchetFile {
-    let current = RatchetLookup::from_file(current);
+) -> sprawl_guard_lib::Result<RatchetFile> {
+    let current = RatchetLookup::try_from(current)?;
     let mut next = RatchetFile {
-        version: RatchetVersion::current(),
+        schema_version: RatchetSchemaVersion::CURRENT,
         files: previous
             .files
             .into_iter()
@@ -44,25 +39,11 @@ pub(super) fn lower_ratchet_scope(
                 if !scope.contains(&entry.path) {
                     return Some(entry);
                 }
-                current.file_value(&entry.path).map(|value| FileRatchet {
+                current.file_ceiling(&entry.key()).map(|value| FileRatchet {
                     path: entry.path,
-                    non_test_code_lines: std::cmp::min(entry.non_test_code_lines, value),
+                    role: entry.role,
+                    loc: std::cmp::min(entry.loc, value),
                 })
-            })
-            .collect(),
-        test_files: previous
-            .test_files
-            .into_iter()
-            .filter_map(|entry| {
-                if !scope.contains(&entry.path) {
-                    return Some(entry);
-                }
-                current
-                    .test_file_value(&entry.path)
-                    .map(|value| TestFileRatchet {
-                        path: entry.path,
-                        code_lines: std::cmp::min(entry.code_lines, value),
-                    })
             })
             .collect(),
         directories: previous
@@ -73,89 +54,57 @@ pub(super) fn lower_ratchet_scope(
                     return Some(entry);
                 }
                 current
-                    .directory_value(&entry.key())
+                    .directory_ceiling(&entry.key())
                     .map(|value| DirectoryRatchet {
                         path: entry.path,
+                        role: entry.role,
                         group: entry.group,
-                        leaf_source_files: std::cmp::min(entry.leaf_source_files, value),
-                    })
-            })
-            .collect(),
-        test_directories: previous
-            .test_directories
-            .into_iter()
-            .filter_map(|entry| {
-                if !scope.contains(&entry.path) {
-                    return Some(entry);
-                }
-                current
-                    .test_directory_value(&entry.key())
-                    .map(|value| TestDirectoryRatchet {
-                        path: entry.path,
-                        group: entry.group,
-                        leaf_test_files: std::cmp::min(entry.leaf_test_files, value),
+                        leaf_files: std::cmp::min(entry.leaf_files, value),
                     })
             })
             .collect(),
     };
-    sort_ratchet(&mut next);
-    next
+    next.sort();
+    Ok(next)
 }
 
 /// Counts existing ratchet ceilings that `baseline` would raise.
 ///
 /// New entries are not raises. Missing entries are handled by scoped/full
 /// replacement, not by this guard.
-pub(super) fn ratchet_raise_count(previous: &RatchetFile, current: &RatchetFile) -> usize {
-    let previous = RatchetLookup::from_file(previous.clone());
-    current
-        .files
+pub(super) fn ratchet_raise_count(
+    previous: &RatchetFile,
+    current: &RatchetFile,
+) -> sprawl_guard_lib::Result<usize> {
+    let previous = RatchetLookup::try_from(previous.clone())?;
+    let current = RatchetLookup::try_from(current.clone())?;
+    Ok(current
+        .files()
         .iter()
         .filter(|entry| {
+            let (key, current) = *entry;
             previous
-                .file_value(&entry.path)
-                .is_some_and(|value| entry.non_test_code_lines > value)
+                .file_ceiling(key)
+                .is_some_and(|previous| *current > previous)
         })
         .count()
         + current
-            .test_files
+            .directories()
             .iter()
             .filter(|entry| {
+                let (key, current) = *entry;
                 previous
-                    .test_file_value(&entry.path)
-                    .is_some_and(|value| entry.code_lines > value)
+                    .directory_ceiling(key)
+                    .is_some_and(|previous| *current > previous)
             })
-            .count()
-        + current
-            .directories
-            .iter()
-            .filter(|entry| {
-                previous
-                    .directory_value(&entry.key())
-                    .is_some_and(|value| entry.leaf_source_files > value)
-            })
-            .count()
-        + current
-            .test_directories
-            .iter()
-            .filter(|entry| {
-                previous
-                    .test_directory_value(&entry.key())
-                    .is_some_and(|value| entry.leaf_test_files > value)
-            })
-            .count()
+            .count())
 }
 
 fn preserve_out_of_scope(previous: RatchetFile, scope: &RatchetScope) -> RatchetFile {
     RatchetFile {
-        version: RatchetVersion::current(),
+        schema_version: RatchetSchemaVersion::CURRENT,
         files: previous
             .files
-            .into_iter()
-            .filter(|entry| !scope.contains(&entry.path))
-            .collect(),
-        test_files: previous
-            .test_files
             .into_iter()
             .filter(|entry| !scope.contains(&entry.path))
             .collect(),
@@ -164,75 +113,7 @@ fn preserve_out_of_scope(previous: RatchetFile, scope: &RatchetScope) -> Ratchet
             .into_iter()
             .filter(|entry| !scope.contains(&entry.path))
             .collect(),
-        test_directories: previous
-            .test_directories
-            .into_iter()
-            .filter(|entry| !scope.contains(&entry.path))
-            .collect(),
     }
-}
-
-struct RatchetLookup {
-    files: BTreeMap<RelativePath, LocLimit>,
-    test_files: BTreeMap<RelativePath, LocLimit>,
-    directories: BTreeMap<DirectoryRatchetKey, LeafFiles>,
-    test_directories: BTreeMap<DirectoryRatchetKey, LeafFiles>,
-}
-
-impl RatchetLookup {
-    fn from_file(file: RatchetFile) -> Self {
-        Self {
-            files: file
-                .files
-                .into_iter()
-                .map(|entry| (entry.path, entry.non_test_code_lines))
-                .collect(),
-            test_files: file
-                .test_files
-                .into_iter()
-                .map(|entry| (entry.path, entry.code_lines))
-                .collect(),
-            directories: file
-                .directories
-                .into_iter()
-                .map(|entry| (entry.key(), entry.leaf_source_files))
-                .collect(),
-            test_directories: file
-                .test_directories
-                .into_iter()
-                .map(|entry| (entry.key(), entry.leaf_test_files))
-                .collect(),
-        }
-    }
-
-    fn file_value(&self, path: &RelativePath) -> Option<LocLimit> {
-        self.files.get(path).copied()
-    }
-
-    fn test_file_value(&self, path: &RelativePath) -> Option<LocLimit> {
-        self.test_files.get(path).copied()
-    }
-
-    fn directory_value(&self, key: &DirectoryRatchetKey) -> Option<LeafFiles> {
-        self.directories.get(key).copied()
-    }
-
-    fn test_directory_value(&self, key: &DirectoryRatchetKey) -> Option<LeafFiles> {
-        self.test_directories.get(key).copied()
-    }
-}
-
-pub(super) fn sort_ratchet(ratchet: &mut RatchetFile) {
-    ratchet
-        .files
-        .sort_by(|left, right| left.path.cmp(&right.path));
-    ratchet
-        .test_files
-        .sort_by(|left, right| left.path.cmp(&right.path));
-    ratchet.directories.sort_by_key(DirectoryRatchet::key);
-    ratchet
-        .test_directories
-        .sort_by_key(TestDirectoryRatchet::key);
 }
 
 #[cfg(test)]
@@ -241,6 +122,7 @@ mod tests {
 
     use indoc::indoc;
     use sprawl_guard_lib::LanguageGroupId;
+    use sprawl_guard_lib::classification::SourceKind;
 
     use super::*;
 
@@ -254,96 +136,198 @@ mod tests {
         #[test]
         fn lowering_matches_the_complete_group_and_path_key() {
             let previous = parse_ratchet(indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "source"
-                leaf_source_files = 5
+                leaf_files = 5
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "documentation"
-                leaf_source_files = 7
+                leaf_files = 7
             "#});
             let current = parse_ratchet(indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "source"
-                leaf_source_files = 3
+                leaf_files = 3
             "#});
 
-            let next = lower_ratchet_scope(previous, current, &RatchetScope::All);
+            let next = lower_ratchet_scope(previous, current, &RatchetScope::All).unwrap();
 
             assert_eq!(next.directories.len(), 1);
             assert_eq!(next.directories[0].group, LanguageGroupId::Source);
-            assert_eq!(next.directories[0].leaf_source_files.get(), 3);
+            assert_eq!(next.directories[0].leaf_files.get(), 3);
         }
 
         #[test]
         fn raise_detection_compares_each_group_independently() {
             let previous = parse_ratchet(indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "source"
-                leaf_source_files = 5
+                leaf_files = 5
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "documentation"
-                leaf_source_files = 2
+                leaf_files = 2
             "#});
             let current = parse_ratchet(indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "source"
-                leaf_source_files = 4
+                leaf_files = 4
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "documentation"
-                leaf_source_files = 3
+                leaf_files = 3
             "#});
 
-            assert_eq!(ratchet_raise_count(&previous, &current), 1);
+            assert_eq!(ratchet_raise_count(&previous, &current).unwrap(), 1);
         }
 
         #[test]
-        fn sorting_orders_groups_before_paths() {
+        fn sorting_orders_paths_before_roles_and_groups() {
             let mut ratchet = parse_ratchet(indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[directories]]
                 path = "z"
+                role = "test"
                 group = "source"
-                leaf_source_files = 1
+                leaf_files = 1
 
                 [[directories]]
                 path = "z"
+                role = "production"
                 group = "documentation"
-                leaf_source_files = 1
+                leaf_files = 1
 
                 [[directories]]
                 path = "a"
+                role = "test"
                 group = "source"
-                leaf_source_files = 1
+                leaf_files = 1
+
+                [[directories]]
+                path = "z"
+                role = "production"
+                group = "source"
+                leaf_files = 1
             "#});
 
-            sort_ratchet(&mut ratchet);
+            ratchet.sort();
 
             assert_eq!(
                 ratchet
                     .directories
                     .iter()
-                    .map(|entry| (entry.group.as_str(), entry.path.as_str()))
+                    .map(|entry| (entry.path.as_str(), entry.role, entry.group.as_str()))
                     .collect::<Vec<_>>(),
-                vec![("source", "a"), ("source", "z"), ("documentation", "z"),]
+                vec![
+                    ("a", SourceKind::Test, "source"),
+                    ("z", SourceKind::Production, "source"),
+                    ("z", SourceKind::Production, "documentation"),
+                    ("z", SourceKind::Test, "source"),
+                ]
+            );
+        }
+    }
+
+    mod when_directory_roles_share_a_path_and_group {
+        use super::*;
+
+        #[test]
+        fn raise_detection_compares_each_role_independently() {
+            let previous = parse_ratchet(indoc! {r#"
+                schema_version = 1
+
+                [[directories]]
+                path = "src"
+                role = "production"
+                group = "source"
+                leaf_files = 5
+
+                [[directories]]
+                path = "src"
+                role = "test"
+                group = "source"
+                leaf_files = 2
+            "#});
+            let current = parse_ratchet(indoc! {r#"
+                schema_version = 1
+
+                [[directories]]
+                path = "src"
+                role = "production"
+                group = "source"
+                leaf_files = 4
+
+                [[directories]]
+                path = "src"
+                role = "test"
+                group = "source"
+                leaf_files = 3
+            "#});
+
+            assert_eq!(ratchet_raise_count(&previous, &current).unwrap(), 1);
+        }
+    }
+
+    mod when_file_entries_are_sorted {
+        use super::*;
+
+        #[test]
+        fn paths_precede_roles() {
+            let mut ratchet = parse_ratchet(indoc! {r#"
+                schema_version = 1
+
+                [[files]]
+                path = "z.rs"
+                role = "test"
+                loc = 1
+
+                [[files]]
+                path = "z.rs"
+                role = "production"
+                loc = 1
+
+                [[files]]
+                path = "a.rs"
+                role = "test"
+                loc = 1
+            "#});
+
+            ratchet.sort();
+
+            assert_eq!(
+                ratchet
+                    .files
+                    .iter()
+                    .map(|entry| (entry.path.as_str(), entry.role))
+                    .collect::<Vec<_>>(),
+                vec![
+                    ("a.rs", SourceKind::Test),
+                    ("z.rs", SourceKind::Production),
+                    ("z.rs", SourceKind::Test),
+                ]
             );
         }
     }

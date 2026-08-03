@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::classification::TraversalIncident;
+use crate::classification::{SourceKind, TraversalIncident};
 use crate::config::LanguageGroupsError;
 use crate::{LanguageGroupId, LanguageId, RelativePath};
 
@@ -141,25 +141,31 @@ pub enum SprawlError {
         /// TOML parser error.
         source: toml::de::Error,
     },
-    /// A ratchet file used an unsupported schema version.
-    #[error("unsupported ratchet file version {version}; expected version 1")]
-    UnsupportedRatchetVersion {
+    /// A ratchet file omitted its required schema version.
+    #[error("ratchet file is missing required schema_version = 1")]
+    MissingRatchetSchemaVersion,
+    /// A ratchet file used an unsupported numeric schema version.
+    #[error("unsupported ratchet schema version {version}; expected version 1")]
+    UnsupportedRatchetSchemaVersion {
         /// Version read from the ratchet file.
-        version: u32,
+        version: i64,
     },
-    /// A ratchet file contained duplicate entries for one metric section.
-    #[error("duplicate ratchet entry in [[{section}]] for path {path}")]
-    DuplicateRatchetEntry {
-        /// Ratchet section containing the duplicate.
-        section: &'static str,
+    /// A file ratchet entry used the repository root instead of a file path.
+    #[error("file ratchet entry path must not be empty")]
+    EmptyFileRatchetPath,
+    /// A ratchet file contained a duplicate file identity.
+    #[error("duplicate file ratchet entry for role {role} and path {path}")]
+    DuplicateFileRatchetEntry {
+        /// Duplicate source role.
+        role: SourceKind,
         /// Duplicate ratchet path.
         path: RelativePath,
     },
-    /// A ratchet file contained a duplicate grouped directory entry.
-    #[error("duplicate directory ratchet entry in [[{section}]] for group {group} and path {path}")]
+    /// A ratchet file contained a duplicate directory identity.
+    #[error("duplicate directory ratchet entry for role {role}, group {group}, and path {path}")]
     DuplicateDirectoryRatchetEntry {
-        /// Ratchet section containing the duplicate.
-        section: &'static str,
+        /// Duplicate source role.
+        role: SourceKind,
         /// Duplicate language group.
         group: LanguageGroupId,
         /// Duplicate directory path.

@@ -1,4 +1,6 @@
-use serde::Serialize;
+use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 use crate::code_line_counter::LocMeasurement;
 use crate::{
@@ -11,13 +13,22 @@ use crate::{
 /// `SourceKind` is not the source/non-source decision. It is assigned only
 /// after a path has already been accepted as a source file for an enabled
 /// language.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
     /// Production source file.
     Production,
     /// Source file classified as test code.
     Test,
+}
+
+impl fmt::Display for SourceKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Production => formatter.write_str("production"),
+            Self::Test => formatter.write_str("test"),
+        }
+    }
 }
 
 /// A source file included by the current resolved configuration.

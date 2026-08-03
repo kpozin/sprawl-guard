@@ -8,37 +8,38 @@ use crate::check::report::{
     RatchetViolation,
 };
 use crate::check::runner::CheckScope;
-use crate::ratchet::{DirectoryRatchetKey, RatchetCount};
+use crate::classification::SourceKind;
+use crate::ratchet::{DirectoryRatchetKey, FileRatchetKey, RatchetCount};
 use crate::{LeafFiles, LocLimit, RelativePath};
 
 pub(super) fn file_ratchets(
-    ratchets: &BTreeMap<RelativePath, LocLimit>,
-    measured: &BTreeSet<RelativePath>,
+    ratchets: &BTreeMap<FileRatchetKey, LocLimit>,
+    measured: &BTreeSet<FileRatchetKey>,
     scope: &CheckScope,
-    kind: RatchetStaleViolationKind,
 ) -> Vec<RatchetViolation> {
-    matching_paths(
-        ratchets,
-        measured,
-        scope,
-        kind,
-        RatchetCount::from_code_lines,
-    )
+    missing_entries(ratchets, measured, scope, FileRatchetKey::path)
+        .map(|(key, ceiling)| {
+            RatchetViolation::Stale(RatchetStaleViolation::Missing(
+                RatchetStaleMissingViolation::File(FileRatchetStaleMissingViolation {
+                    kind: file_stale_kind(key.role()),
+                    path: key.path().clone(),
+                    ratchet: RatchetCount::from_loc_limit(*ceiling),
+                }),
+            ))
+        })
+        .collect()
 }
 
 pub(super) fn directory_ratchets(
     ratchets: &BTreeMap<DirectoryRatchetKey, LeafFiles>,
     measured: &BTreeSet<DirectoryRatchetKey>,
     scope: &CheckScope,
-    kind: RatchetStaleViolationKind,
 ) -> Vec<RatchetViolation> {
-    ratchets
-        .iter()
-        .filter(|(key, _)| scope.contains(key.path()) && !measured.contains(*key))
+    missing_entries(ratchets, measured, scope, DirectoryRatchetKey::path)
         .map(|(key, ceiling)| {
             RatchetViolation::Stale(RatchetStaleViolation::Missing(
                 RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
-                    kind,
+                    kind: directory_stale_kind(key.role()),
                     path: key.path().clone(),
                     group: key.group().clone(),
                     ratchet: RatchetCount::from_leaf_files(*ceiling),
@@ -48,27 +49,27 @@ pub(super) fn directory_ratchets(
         .collect()
 }
 
-fn matching_paths<Ceiling>(
-    ratchets: &BTreeMap<RelativePath, Ceiling>,
-    measured: &BTreeSet<RelativePath>,
-    scope: &CheckScope,
-    kind: RatchetStaleViolationKind,
-    ratchet_count: impl Fn(Ceiling) -> RatchetCount,
-) -> Vec<RatchetViolation>
-where
-    Ceiling: Copy,
-{
+fn missing_entries<'a, Key: Ord, Ceiling>(
+    ratchets: &'a BTreeMap<Key, Ceiling>,
+    measured: &'a BTreeSet<Key>,
+    scope: &'a CheckScope,
+    path: impl Fn(&Key) -> &RelativePath + 'a,
+) -> impl Iterator<Item = (&'a Key, &'a Ceiling)> + 'a {
     ratchets
         .iter()
-        .filter(|(path, _)| scope.contains(path) && !measured.contains(*path))
-        .map(|(path, ceiling)| {
-            RatchetViolation::Stale(RatchetStaleViolation::Missing(
-                RatchetStaleMissingViolation::File(FileRatchetStaleMissingViolation {
-                    kind,
-                    path: path.clone(),
-                    ratchet: ratchet_count(*ceiling),
-                }),
-            ))
-        })
-        .collect()
+        .filter(move |(key, _)| scope.contains(path(key)) && !measured.contains(*key))
+}
+
+const fn file_stale_kind(role: SourceKind) -> RatchetStaleViolationKind {
+    match role {
+        SourceKind::Production => RatchetStaleViolationKind::FileLocStale,
+        SourceKind::Test => RatchetStaleViolationKind::TestFileLocStale,
+    }
+}
+
+const fn directory_stale_kind(role: SourceKind) -> RatchetStaleViolationKind {
+    match role {
+        SourceKind::Production => RatchetStaleViolationKind::DirectoryFanoutStale,
+        SourceKind::Test => RatchetStaleViolationKind::TestDirectoryFanoutStale,
+    }
 }

@@ -1405,20 +1405,21 @@ mod when_check_is_path_scoped {
 mod when_checking_with_a_ratchet_file {
     use super::*;
 
-    fn write_file_ratchet(root: &Path, path: &str, non_test_code_lines: u32) {
+    fn write_file_ratchet(root: &Path, path: &str, loc: u32) {
         write_ratchet(
             root,
             &formatdoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[files]]
                 path = "{path}"
-                non_test_code_lines = {non_test_code_lines}
+                role = "production"
+                loc = {loc}
             "#},
         );
     }
 
-    fn write_rust_directory_ratchet_fixture(root: &Path, leaf_source_files: u32) {
+    fn write_rust_directory_ratchet_fixture(root: &Path, leaf_files: u32) {
         write_config(
             root,
             indoc! {r#"
@@ -1432,12 +1433,13 @@ mod when_checking_with_a_ratchet_file {
         write_ratchet(
             root,
             &formatdoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[directories]]
                 path = "src"
+                role = "production"
                 group = "source"
-                leaf_source_files = {leaf_source_files}
+                leaf_files = {leaf_files}
             "#},
         );
         write_file(root, "src/a.rs", "fn a() {}\n");
@@ -1563,15 +1565,17 @@ mod when_checking_with_a_ratchet_file {
         write_ratchet(
             tempdir.path(),
             indoc! {r#"
-                version = 1
+                schema_version = 1
 
                 [[files]]
                 path = "checked/lib.rs"
-                non_test_code_lines = 2
+                role = "production"
+                loc = 2
 
                 [[files]]
                 path = "skipped/deleted.rs"
-                non_test_code_lines = 2
+                role = "production"
+                loc = 2
             "#},
         );
         write_rust_source_with_function_count(tempdir.path(), "checked/lib.rs", 2);
@@ -1603,12 +1607,13 @@ mod when_checking_with_a_ratchet_file {
             write_ratchet(
                 tempdir.path(),
                 indoc! {r#"
-                    version = 1
+                    schema_version = 1
 
                     [[directories]]
                     path = "src"
+                    role = "production"
                     group = "documentation"
-                    leaf_source_files = 2
+                    leaf_files = 2
                 "#},
             );
 
@@ -1669,12 +1674,13 @@ mod when_checking_with_a_ratchet_file {
             write_ratchet(
                 tempdir.path(),
                 indoc! {r#"
-                    version = 1
+                    schema_version = 1
 
                     [[directories]]
                     path = "docs"
+                    role = "production"
                     group = "documentation"
-                    leaf_source_files = 3
+                    leaf_files = 3
                 "#},
             );
             write_file(tempdir.path(), "docs/a.md", "# A\n");
@@ -1723,16 +1729,18 @@ mod when_path_classified_tests_are_disabled {
         write_ratchet(
             tempdir.path(),
             indoc! {r#"
-                version = 1
+                schema_version = 1
 
-                [[test_files]]
+                [[files]]
                 path = "tests/integration.rs"
-                code_lines = 2
+                role = "test"
+                loc = 2
 
-                [[test_directories]]
+                [[directories]]
                 path = "tests"
+                role = "test"
                 group = "source"
-                leaf_test_files = 1
+                leaf_files = 1
             "#},
         );
         write_file(
