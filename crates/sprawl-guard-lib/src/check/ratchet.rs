@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::config::Config;
 use crate::ratchet::{DirectoryRatchetKey, RatchetCount, RatchetFile};
-use crate::{CodeLines, LanguageGroupId, LeafFiles, RelativePath, Result};
+use crate::{LanguageGroupId, LeafFiles, LocLimit, RelativePath, Result};
 
 use super::directory_fanout::{DirectoryFanoutCheck, DirectoryFanoutMeasurement};
 use super::report::{CheckViolation, DirectoryViolationKind, FileViolationKind};
@@ -36,7 +36,7 @@ pub(super) fn file_violations_with_ratchet(
 
 fn apply_file_ratchet(
     mut source_check: SourceCheck,
-    ceiling: Option<CodeLines>,
+    ceiling: Option<LocLimit>,
     current_policy: RatchetCurrentPolicy,
 ) -> Vec<CheckViolation> {
     let Some(ceiling) = ceiling else {
@@ -47,7 +47,7 @@ fn apply_file_ratchet(
             .collect();
     };
     let measurement = source_check.measurement();
-    let actual = measurement.current_code_lines();
+    let actual = measurement.current_loc();
     if source_check.has_violation() && actual.get() > ceiling.get() {
         if let Some(violation) = source_check.violation_mut() {
             violation.ratchet = Some(ceiling);
@@ -73,13 +73,13 @@ fn apply_file_ratchet(
 
 fn increased_file_ratchet_violation(
     measurement: &FileMeasurement,
-    ceiling: CodeLines,
+    ceiling: LocLimit,
 ) -> RatchetViolation {
     RatchetViolation::Increased(RatchetIncreasedViolation::File(
         FileRatchetIncreasedViolation {
             kind: measurement.kind,
             path: measurement.path.clone(),
-            actual: RatchetCount::from_line_count(measurement.current_code_lines()),
+            measurement: measurement.loc,
             limit: RatchetCount::from_code_lines(measurement.limit),
             ratchet: RatchetCount::from_code_lines(ceiling),
         },
@@ -88,13 +88,13 @@ fn increased_file_ratchet_violation(
 
 fn stale_file_ratchet_violation(
     measurement: &FileMeasurement,
-    ceiling: CodeLines,
+    ceiling: LocLimit,
 ) -> RatchetViolation {
     RatchetViolation::Stale(RatchetStaleViolation::Measured(
         RatchetStaleMeasuredViolation::File(FileRatchetStaleMeasuredViolation {
             kind: measurement.kind,
             path: measurement.path.clone(),
-            actual: RatchetCount::from_line_count(measurement.current_code_lines()),
+            measurement: measurement.loc,
             limit: RatchetCount::from_code_lines(measurement.limit),
             ratchet: RatchetCount::from_code_lines(ceiling),
         }),
@@ -250,8 +250,8 @@ impl RatchetCurrentPolicy {
 }
 
 pub(super) struct RatchetState {
-    file_loc: BTreeMap<RelativePath, CodeLines>,
-    test_file_loc: BTreeMap<RelativePath, CodeLines>,
+    file_loc: BTreeMap<RelativePath, LocLimit>,
+    test_file_loc: BTreeMap<RelativePath, LocLimit>,
     directory_fanout: BTreeMap<DirectoryRatchetKey, LeafFiles>,
     test_directory_fanout: BTreeMap<DirectoryRatchetKey, LeafFiles>,
 }
@@ -296,7 +296,7 @@ impl RatchetState {
         }
     }
 
-    fn file_ceiling(&self, kind: FileViolationKind, path: &RelativePath) -> Option<CodeLines> {
+    fn file_ceiling(&self, kind: FileViolationKind, path: &RelativePath) -> Option<LocLimit> {
         match kind {
             FileViolationKind::FileLoc => self.file_loc.get(path),
             FileViolationKind::TestFileLoc => self.test_file_loc.get(path),

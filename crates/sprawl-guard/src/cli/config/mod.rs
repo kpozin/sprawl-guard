@@ -57,5 +57,7 @@ fn execute_config_command(
         root,
         config: config_path,
     })?;
-    Ok(ConfigCommandExecution::new(loaded.config))
+    Ok(ConfigCommandExecution::new(
+        loaded.config.materialized_for_inspection(),
+    ))
 }

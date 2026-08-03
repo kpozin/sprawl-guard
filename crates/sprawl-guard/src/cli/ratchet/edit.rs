@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use sprawl_guard_lib::{
-    CodeLines, DirectoryRatchet, DirectoryRatchetKey, FileRatchet, LeafFiles, RatchetFile,
+    DirectoryRatchet, DirectoryRatchetKey, FileRatchet, LeafFiles, LocLimit, RatchetFile,
     RatchetVersion, RelativePath, TestDirectoryRatchet, TestFileRatchet,
 };
 
@@ -173,8 +173,8 @@ fn preserve_out_of_scope(previous: RatchetFile, scope: &RatchetScope) -> Ratchet
 }
 
 struct RatchetLookup {
-    files: BTreeMap<RelativePath, CodeLines>,
-    test_files: BTreeMap<RelativePath, CodeLines>,
+    files: BTreeMap<RelativePath, LocLimit>,
+    test_files: BTreeMap<RelativePath, LocLimit>,
     directories: BTreeMap<DirectoryRatchetKey, LeafFiles>,
     test_directories: BTreeMap<DirectoryRatchetKey, LeafFiles>,
 }
@@ -205,11 +205,11 @@ impl RatchetLookup {
         }
     }
 
-    fn file_value(&self, path: &RelativePath) -> Option<CodeLines> {
+    fn file_value(&self, path: &RelativePath) -> Option<LocLimit> {
         self.files.get(path).copied()
     }
 
-    fn test_file_value(&self, path: &RelativePath) -> Option<CodeLines> {
+    fn test_file_value(&self, path: &RelativePath) -> Option<LocLimit> {
         self.test_files.get(path).copied()
     }
 

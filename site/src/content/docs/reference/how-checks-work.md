@@ -11,8 +11,9 @@ see which of those globs match visible files in the repository.
 
 Discovery starts at the repository root or the supplied path scopes. Sprawl Guard applies standard
 ignore files, the hidden-path policy, and traversal safety limits. It then applies global file
-excludes and each enabled language's include and exclude globs. Globs match normalized
-repository-relative paths. A source file must belong to exactly one enabled language.
+excludes and each language's bundled or configured paths and excludes. Globs match normalized
+repository-relative paths. Every bundled language is enabled by default, and a source file must
+belong to exactly one enabled language.
 
 ## Test classification
 
@@ -20,21 +21,23 @@ A source file is test code when it matches `[tests].globs` or its language's `te
 files use the test line and fan-out limits; when `check_path_tests = false`, they are omitted.
 
 For a production Rust file, `exclude_cfg_test = true` removes top-level items guarded by
-`cfg(test)` from the non-test code-line measurement. It does not turn the file into a test file.
-A parse failure leaves the code counted and adds a warning. A path-classified Rust test uses its
-full code-line count.
+`cfg(test)` from every included line type. It does not turn the file into a test file. A parse
+failure counts the original source with the effective line types and adds a warning. A
+path-classified Rust test is not preprocessed.
 
 ## Measurements and violations
 
-Sprawl Guard counts code lines, not physical lines, with Tokei. It evaluates four measurements:
+Sprawl Guard uses Tokei to count configured logical line types. `code` always counts; `comments`
+and `blank_lines` are optional. Literate languages include comments automatically unless their
+language configuration replaces that selection. Sprawl Guard evaluates four measurements:
 
-- non-test code lines in each production file;
-- code lines in each path-classified test file;
+- configured LOC in each production file;
+- configured LOC in each path-classified test file;
 - direct production source files in each directory;
 - direct test source files in each directory, unless that limit is `"unlimited"`.
 
-Global limits apply first, followed by a language-specific production file limit and then matching
-path overrides. A measurement above its effective limit is a current violation.
+Global limits apply first, followed by language-specific file policy and then matching path
+overrides. A measurement above its effective limit is a current violation.
 
 ### Directory fan-out example
 
@@ -63,15 +66,15 @@ The resulting measurements are:
 | `src`         | 2: `app.ts`, `index.ts` | 1: `app.test.ts` |
 | `src/feature` | 2: `api.ts`, `model.py` | 0                |
 
-`src/generated.ts` does not count because it is excluded, and `src/README.md` does not count because
-Markdown is not enabled. The `feature` directory itself does not count toward `src`; its files count
-only toward `src/feature`.
+`src/generated.ts` does not count because it is excluded. Markdown belongs to the documentation
+group, so `src/README.md` does not consume the source-group fan-out budget. The `feature` directory
+itself does not count toward `src`; its files count only toward `src/feature`.
 
 An included source file counts even when it is empty or uses a facade name such as `index.ts`.
 Files from different enabled languages share the same total, as `api.ts` and `model.py` do above.
 
-Ignored files, global or language-level exclusions, files in disabled languages, and files that do
-not match an enabled language do not count. A path-classified test counts only toward test fan-out;
+Ignored files, global or language-level exclusions, files in disabled languages, and unmatched
+files do not count. A path-classified test counts only toward test fan-out;
 when `[tests].check_path_tests = false`, it is omitted entirely.
 
 ## Baselines and ratchets

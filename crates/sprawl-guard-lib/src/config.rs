@@ -23,7 +23,7 @@ pub use languages::{
     LanguageMaxLinesPerFileLimits, LanguageMode, LanguageSpecificConfig, RustCfgTestExclusion,
     RustLanguageConfig,
 };
-pub use limits::{Limits, MaxLeafFilesPerDirectoryLimits, MaxLinesPerFileLimits, TestFanoutLimit};
+pub use limits::{Limits, MaxLeafFilesPerDirectoryLimits, MaxLinesPerFileLimits};
 pub use load::{LoadOptions, LoadedConfig, load_resolved_config};
 pub use output::{ColorMode, OutputConfig, OutputFormat};
 pub use overrides::{

@@ -8,10 +8,10 @@ use tokei::LanguageType;
 
 use super::*;
 use crate::config::{
-    LanguageConfig, SourceFileByteLimit, SymlinkTraversal, TestFanoutLimit, TraversalDepth,
-    TraversalEntryLimit, TraversalErrorPolicy,
+    LanguageConfig, SourceFileByteLimit, SymlinkTraversal, TraversalDepth, TraversalEntryLimit,
+    TraversalErrorPolicy,
 };
-use crate::{GlobPattern, LeafFiles};
+use crate::{GlobPattern, IncludedLineTypes, LeafFileLimit, LeafFiles};
 
 fn load(root: &Path) -> Result<LoadedConfig> {
     load_resolved_config(&LoadOptions {
@@ -184,6 +184,34 @@ mod when_language_config_is_partial {
     }
 
     #[test]
+    fn it_merges_all_language_file_limit_fields() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [languages.rust.limits.max_lines_per_file]
+                included_line_types = ["code", "comments"]
+                production = 500
+                test = 1000
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+        let limits = &language(&loaded.config, "rust")
+            .common()
+            .limits
+            .max_lines_per_file;
+
+        assert_eq!(
+            limits.included_line_types,
+            Some(IncludedLineTypes::CodeAndComments)
+        );
+        assert_eq!(limits.production.unwrap().get(), 500);
+        assert_eq!(limits.test.unwrap().get(), 1000);
+    }
+
+    #[test]
     fn it_keeps_language_local_exclusions() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
@@ -330,8 +358,10 @@ mod when_limits_config_is_partial {
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
-                [limits]
-                max_lines_per_file = { code_non_test = 500, code = 900 }
+                [limits.max_lines_per_file]
+                included_line_types = ["blank_lines", "code", "comments"]
+                production = 500
+                test = 900
             "#},
         )
         .unwrap();
@@ -339,10 +369,14 @@ mod when_limits_config_is_partial {
         let loaded = load(tempdir.path()).unwrap();
 
         assert_eq!(
-            loaded.config.limits.max_lines_per_file.code_non_test.get(),
+            loaded.config.limits.max_lines_per_file.production.get(),
             500
         );
-        assert_eq!(loaded.config.limits.max_lines_per_file.code.get(), 900);
+        assert_eq!(loaded.config.limits.max_lines_per_file.test.get(), 900);
+        assert_eq!(
+            loaded.config.limits.max_lines_per_file.included_line_types,
+            IncludedLineTypes::All
+        );
     }
 
     #[test]
@@ -360,41 +394,66 @@ mod when_limits_config_is_partial {
         let loaded = load(tempdir.path()).unwrap();
 
         assert_eq!(
-            loaded
-                .config
-                .limits
-                .max_leaf_files_per_directory
-                .production
-                .get(),
-            10
+            loaded.config.limits.max_leaf_files_per_directory.production,
+            LeafFileLimit::Finite(LeafFiles::new(10).unwrap())
         );
         assert_eq!(
             loaded.config.limits.max_leaf_files_per_directory.test,
-            TestFanoutLimit::Finite(LeafFiles::new(20).unwrap())
+            LeafFileLimit::Finite(LeafFiles::new(20).unwrap())
         );
     }
 
     #[test]
-    fn it_accepts_unlimited_test_fanout() {
+    fn it_accepts_unlimited_fanout_for_both_roles() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { test = "unlimited" }
+                max_leaf_files_per_directory = { production = "unlimited", test = "unlimited" }
             "#},
         )
         .unwrap();
 
         let loaded = load(tempdir.path()).unwrap();
 
-        assert!(
-            loaded
-                .config
-                .limits
-                .max_leaf_files_per_directory
-                .test
-                .is_unlimited()
+        assert_eq!(
+            loaded.config.limits.max_leaf_files_per_directory.production,
+            LeafFileLimit::Unlimited
+        );
+        assert_eq!(
+            loaded.config.limits.max_leaf_files_per_directory.test,
+            LeafFileLimit::Unlimited
+        );
+    }
+
+    #[test]
+    fn it_loads_the_final_inline_path_override_shape() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                [[overrides]]
+                paths = ["packages/web/**"]
+                max_lines_per_file = { production = 600, test = 1200 }
+                max_leaf_files_per_directory = { production = 20, test = "unlimited" }
+                reason = "The web package colocates route modules"
+            "#},
+        )
+        .unwrap();
+
+        let loaded = load(tempdir.path()).unwrap();
+        let limits = &loaded.config.overrides[0].limits;
+
+        assert_eq!(limits.production_loc_per_file().unwrap().get(), 600);
+        assert_eq!(limits.test_loc_per_file().unwrap().get(), 1200);
+        assert_eq!(
+            limits.production_leaf_files_per_directory(),
+            Some(LeafFileLimit::Finite(LeafFiles::new(20).unwrap()))
+        );
+        assert_eq!(
+            limits.test_leaf_files_per_directory(),
+            Some(LeafFileLimit::Unlimited)
         );
     }
 }
@@ -449,7 +508,7 @@ mod when_config_values_are_invalid {
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 0
+                production = 0
             "#},
         )
         .unwrap();
@@ -507,6 +566,28 @@ mod when_config_values_are_invalid {
         let error = load(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("expected a positive integer"));
+    }
+
+    #[test]
+    fn it_rejects_missing_code_in_included_line_types() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                included_line_types = ["comments"]
+            "#},
+            "included_line_types must include code",
+        );
+    }
+
+    #[test]
+    fn it_rejects_duplicate_included_line_types() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                included_line_types = ["code", "comments", "code"]
+            "#},
+            "included_line_types contains duplicate code",
+        );
     }
 
     #[test]
@@ -702,6 +783,7 @@ mod when_config_values_are_invalid {
                 [[overrides]]
                 paths = ["generated/**"]
                 max_leaf_files_per_directory = {}
+                reason = "generated sources"
             "#},
         )
         .unwrap();
@@ -713,6 +795,56 @@ mod when_config_values_are_invalid {
                 .to_string()
                 .contains("override must set at least one limit")
         );
+    }
+
+    #[test]
+    fn it_rejects_override_entries_without_reasons() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [[overrides]]
+                paths = ["generated/**"]
+                max_lines_per_file = { production = 900 }
+            "#},
+            "missing field `reason`",
+        );
+    }
+
+    #[test]
+    fn it_rejects_blank_override_reasons() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [[overrides]]
+                paths = ["generated/**"]
+                max_lines_per_file = { production = 900 }
+                reason = "   "
+            "#},
+            "override reason must not be empty",
+        );
+    }
+
+    #[test]
+    fn it_rejects_included_line_types_in_path_overrides() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [[overrides]]
+                paths = ["generated/**"]
+                max_lines_per_file = { included_line_types = ["code"] }
+                reason = "generated sources"
+            "#},
+            "unknown field `included_line_types`",
+        );
+    }
+
+    #[test]
+    fn it_rejects_language_and_group_selectors_in_path_overrides() {
+        for selector in ["language = \"rust\"", "language_group = \"source\""] {
+            assert_config_error_contains(
+                &format!(
+                    "[[overrides]]\npaths = [\"generated/**\"]\n{selector}\nmax_lines_per_file = {{ production = 900 }}\nreason = \"generated sources\"\n"
+                ),
+                "unknown field",
+            );
+        }
     }
 }
 
@@ -750,7 +882,7 @@ mod when_include_fragment_contains_non_override_tables {
             tempdir.path().join("sprawl-guard.d/bad.toml"),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 900
+                production = 900
             "#},
         )
         .unwrap();
@@ -786,7 +918,7 @@ mod when_include_fragments_match {
             indoc! {r#"
                 [[overrides]]
                 paths = ["b/**"]
-                max_lines_per_file = { code_non_test = 900, code = 1200 }
+                max_lines_per_file = { production = 900, test = 1200 }
                 reason = "b"
             "#},
         )
@@ -796,7 +928,7 @@ mod when_include_fragments_match {
             indoc! {r#"
                 [[overrides]]
                 paths = ["a/**"]
-                max_lines_per_file = { code_non_test = 800 }
+                max_lines_per_file = { production = 800 }
                 reason = "a"
             "#},
         )
@@ -807,7 +939,7 @@ mod when_include_fragments_match {
             .config
             .overrides
             .iter()
-            .map(|override_config| override_config.reason.as_ref().unwrap().as_str())
+            .map(|override_config| override_config.reason.as_str())
             .collect::<Vec<_>>();
 
         assert_eq!(reasons, vec!["root", "a", "b"]);

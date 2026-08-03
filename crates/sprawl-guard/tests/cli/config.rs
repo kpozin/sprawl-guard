@@ -8,7 +8,7 @@ fn write_sample_config(root: &TempDir) {
         root,
         indoc! {r#"
             [limits]
-            max_lines_per_file = { code_non_test = 123 }
+            max_lines_per_file = { production = 123 }
 
             [languages.rust]
             enabled = true
@@ -28,8 +28,9 @@ fn assert_config_command_outputs_full_config(root: &TempDir, command: &str) {
         &config,
         toml::toml! {
             [limits.max_lines_per_file]
-            code_non_test = 123
-            code = 800
+            included_line_types = ["code"]
+            production = 123
+            test = 800
 
             [languages.Rust]
             enabled = true
@@ -47,6 +48,35 @@ mod resolved {
         write_sample_config(&root);
 
         assert_config_command_outputs_full_config(&root, "resolved");
+    }
+
+    #[test]
+    fn it_materializes_inherited_and_automatic_language_loc_policy() {
+        let root = TempDir::new().unwrap();
+        write_sample_config(&root);
+
+        let output = sprawl_guard(&root)
+            .args(["config", "resolved"])
+            .output()
+            .unwrap();
+        let config = parse_toml(&stdout(&output));
+
+        assert_eq!(
+            config["languages"]["Rust"]["limits"]["max_lines_per_file"],
+            toml::Value::Table(toml::toml! {
+                included_line_types = ["code"]
+                production = 123
+                test = 800
+            })
+        );
+        assert_eq!(
+            config["languages"]["Markdown"]["limits"]["max_lines_per_file"],
+            toml::Value::Table(toml::toml! {
+                included_line_types = ["code", "comments"]
+                production = 123
+                test = 800
+            })
+        );
     }
 
     #[test]

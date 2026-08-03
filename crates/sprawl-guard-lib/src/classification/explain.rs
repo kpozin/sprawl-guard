@@ -1,6 +1,7 @@
 use std::io::ErrorKind;
 use std::path::Path;
 
+use crate::check::measure_source;
 use crate::config::Config;
 use crate::resolved_limits::LimitResolver;
 use crate::rust_cfg::{
@@ -12,7 +13,7 @@ use crate::{RelativePath, Result, SprawlError};
 
 use super::classifier::Classifier;
 use super::traversal::{is_source_file_candidate, is_walked_file};
-use super::types::{ClassifiedSource, PathClassification};
+use super::types::{ClassifiedSource, PathClassification, SourceExplanation};
 
 /// Explains how source discovery classifies one path.
 ///
@@ -75,14 +76,25 @@ fn explain_existing_source(
     config: &Config,
     classification: PathClassification,
 ) -> Result<PathClassification> {
-    let PathClassification::Source(mut explanation) = classification else {
+    let PathClassification::Source(explanation) = classification else {
         return Ok(classification);
     };
+    let source = explanation.into_source();
     let limits = LimitResolver::new(config)?;
-    explanation.resolved_limits = Some(limits.source_limits(&explanation.source)?);
-    explanation.rust_cfg_test =
-        rust_cfg_test_explanation(absolute_path, config, &explanation.source)?;
-    Ok(PathClassification::Source(explanation))
+    let resolved_limits = limits.source_limits(&source)?;
+    let measurement = measure_source(
+        config,
+        &source,
+        absolute_path,
+        resolved_limits.file.included_line_types,
+    )?;
+    let rust_cfg_test = rust_cfg_test_explanation(absolute_path, config, &source)?;
+    Ok(PathClassification::Source(SourceExplanation::measured(
+        source,
+        resolved_limits,
+        measurement,
+        rust_cfg_test,
+    )))
 }
 
 fn rust_cfg_test_explanation(
@@ -185,7 +197,7 @@ mod tests {
                 .unwrap();
 
                 let explanation = source_explanation(explain_src_lib(tempdir.path()));
-                let rust_cfg_test = explanation.rust_cfg_test.unwrap();
+                let rust_cfg_test = explanation.rust_cfg_test().unwrap();
                 assert_eq!(rust_cfg_test.status, RustCfgTestStatus::Parsed);
                 assert_eq!(rust_cfg_test.excluded_items.get(), 1);
             }
@@ -197,7 +209,7 @@ mod tests {
                 write_source_file(tempdir.path(), "src/lib.rs");
 
                 let explanation = source_explanation(explain_src_lib(tempdir.path()));
-                let rust_cfg_test = explanation.rust_cfg_test.unwrap();
+                let rust_cfg_test = explanation.rust_cfg_test().unwrap();
                 assert_eq!(rust_cfg_test.status, RustCfgTestStatus::PrefilterSkipped);
                 assert_eq!(rust_cfg_test.excluded_items.get(), 0);
             }
@@ -237,24 +249,24 @@ mod tests {
                     tempdir.path(),
                     indoc! {r#"
                         [limits]
-                        max_lines_per_file = { code_non_test = 1 }
+                        max_lines_per_file = { production = 1 }
                         max_leaf_files_per_directory = { production = 1 }
 
                         [languages.rust]
                         enabled = true
 
                         [languages.rust.limits]
-                        max_lines_per_file = { code_non_test = 2 }
+                        max_lines_per_file = { production = 2 }
 
                         [[overrides]]
                         paths = ["src/**"]
-                        max_lines_per_file = { code_non_test = 3 }
+                        max_lines_per_file = { production = 3 }
                         max_leaf_files_per_directory = { production = 4 }
                         reason = "package exception"
 
                         [[overrides]]
                         paths = ["src/legacy/**"]
-                        max_lines_per_file = { code_non_test = 5 }
+                        max_lines_per_file = { production = 5 }
                         reason = "legacy exception"
                     "#},
                 );
@@ -270,7 +282,7 @@ mod tests {
                 let PathClassification::Source(explanation) = classification else {
                     panic!("expected source explanation");
                 };
-                let resolved_limits = explanation.resolved_limits.unwrap();
+                let resolved_limits = explanation.resolved_limits().unwrap();
                 assert_eq!(resolved_limits.file.value.get(), 5);
                 assert_eq!(resolved_limits.directory.value.finite().unwrap().get(), 4);
                 assert_eq!(resolved_limits.file.matched_overrides.len(), 2);
@@ -546,7 +558,7 @@ mod tests {
                 let PathClassification::Source(explanation) = classification else {
                     panic!("expected source explanation");
                 };
-                assert_eq!(explanation.source.path.as_str(), "linked/lib.rs");
+                assert_eq!(explanation.source().path.as_str(), "linked/lib.rs");
             }
         }
 
@@ -669,7 +681,7 @@ mod tests {
                 let PathClassification::Source(explanation) = classification else {
                     panic!("expected source explanation");
                 };
-                assert_eq!(explanation.source.path.as_str(), "src/link.rs");
+                assert_eq!(explanation.source().path.as_str(), "src/link.rs");
             }
 
             #[test]

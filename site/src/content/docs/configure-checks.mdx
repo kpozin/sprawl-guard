@@ -9,29 +9,31 @@ Add the sections below to `sprawl-guard.toml` at the repository root.
 
 ## Select source files
 
-Enable each language under `[languages.<id>]`. Language IDs are case-insensitive; use
-`sprawl-guard languages` to see accepted keys and built-in globs.
+Every bundled language is enabled by default. Add a `[languages.<id>]` section only to customize or
+disable it. Language IDs are case-insensitive; use `sprawl-guard languages` to see accepted keys and
+bundled paths.
 
 ```toml title="sprawl-guard.toml"
 [languages.rust]
-enabled = true
+enabled = false
 
 [languages.typescript]
-enabled = true
 include = ["src/**/*.ts"]
+additional_globs = ["generated/**/*.ts"]
 exclude = ["src/generated/**"]
 ```
 
-`[files].exclude` removes paths before language classification. Each language's `include` and
-`exclude` globs then determine which files it owns. Avoid overlapping includes: a file matched by
-more than one enabled language is ambiguous.
+`[files].exclude` removes paths before language classification. `include` replaces a language's
+bundled paths, `additional_globs` extends them, and `exclude` removes matching candidates. Avoid
+overlapping matches: a file owned by more than one enabled language is ambiguous.
 
 ## Set limits and classify tests
 
 ```toml title="sprawl-guard.toml"
 [limits.max_lines_per_file]
-code_non_test = 400
-code = 800
+included_line_types = ["code"]
+production = 400
+test = 800
 
 [limits.max_leaf_files_per_directory]
 production = 8
@@ -42,10 +44,12 @@ check_path_tests = true
 globs = ["tests/**", "**/*.test.*"]
 ```
 
-Global and language-specific test globs classify whole files as test code. Test files use the
-`code` and `test` limits; production files use `code_non_test` and `production`. Setting
-`check_path_tests` to `false` omits path-classified tests. For production Rust files, Sprawl Guard
-can also exclude top-level `cfg(test)` items from the non-test line count.
+Global and language-specific test globs classify whole files as test code. Test files use the `test`
+limits; production files use `production`. File limits count the selected line types. Literate
+languages include comments automatically, so Markdown prose counts by default; a language-specific
+`included_line_types` value can replace that behavior. Setting `check_path_tests` to `false` omits
+path-classified tests. For production Rust files, Sprawl Guard can also exclude top-level
+`cfg(test)` items from configured LOC.
 
 ## Add overrides
 
@@ -55,12 +59,12 @@ sets, so a later match wins for those fields.
 ```toml title="sprawl-guard.toml"
 [[overrides]]
 paths = ["src/legacy/**"]
-max_lines_per_file = { code_non_test = 1000 }
+max_lines_per_file = { production = 1000 }
 reason = "Legacy subsystem"
 
 [[overrides]]
 paths = ["src/legacy/small/**"]
-max_lines_per_file = { code_non_test = 500 }
+max_lines_per_file = { production = 500 }
 reason = "Smaller legacy modules"
 ```
 

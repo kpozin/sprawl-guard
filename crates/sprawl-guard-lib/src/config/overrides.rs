@@ -2,8 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-use super::limits::TestFanoutLimit;
-use crate::{CodeLines, GlobPattern, LeafFiles};
+use crate::{GlobPattern, LeafFileLimit, LocLimit};
 
 /// Error returned when an override reason is invalid.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -123,17 +122,17 @@ pub struct OverrideLimits {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct OverrideMaxLinesPerFileLimits {
-    /// Optional production file non-test code-line limit.
+    /// Optional production configured-LOC limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    code_non_test: Option<CodeLines>,
-    /// Optional test-code file code-line limit.
+    production: Option<LocLimit>,
+    /// Optional test configured-LOC limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    code: Option<CodeLines>,
+    test: Option<LocLimit>,
 }
 
 impl OverrideMaxLinesPerFileLimits {
     fn is_empty(&self) -> bool {
-        self.code_non_test.is_none() && self.code.is_none()
+        self.production.is_none() && self.test.is_none()
     }
 }
 
@@ -143,10 +142,10 @@ impl OverrideMaxLinesPerFileLimits {
 struct OverrideMaxLeafFilesPerDirectoryLimits {
     /// Optional production leaf-file fan-out limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    production: Option<LeafFiles>,
+    production: Option<LeafFileLimit>,
     /// Optional test-code leaf-file fan-out limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    test: Option<TestFanoutLimit>,
+    test: Option<LeafFileLimit>,
 }
 
 impl OverrideMaxLeafFilesPerDirectoryLimits {
@@ -169,23 +168,23 @@ impl OverrideLimits {
         })
     }
 
-    /// Returns the production file non-test code-line override, when present.
-    pub fn code_non_test_lines_per_file(&self) -> Option<CodeLines> {
-        self.max_lines_per_file.code_non_test
+    /// Returns the production configured-LOC override, when present.
+    pub fn production_loc_per_file(&self) -> Option<LocLimit> {
+        self.max_lines_per_file.production
     }
 
     /// Returns the production directory fan-out override, when present.
-    pub fn production_leaf_files_per_directory(&self) -> Option<LeafFiles> {
+    pub fn production_leaf_files_per_directory(&self) -> Option<LeafFileLimit> {
         self.max_leaf_files_per_directory.production
     }
 
-    /// Returns the test-code file code-line override, when present.
-    pub fn code_lines_per_test_file(&self) -> Option<CodeLines> {
-        self.max_lines_per_file.code
+    /// Returns the test configured-LOC override, when present.
+    pub fn test_loc_per_file(&self) -> Option<LocLimit> {
+        self.max_lines_per_file.test
     }
 
     /// Returns the test-code directory fan-out override, when present.
-    pub fn test_leaf_files_per_directory(&self) -> Option<TestFanoutLimit> {
+    pub fn test_leaf_files_per_directory(&self) -> Option<LeafFileLimit> {
         self.max_leaf_files_per_directory.test
     }
 }
@@ -216,15 +215,15 @@ struct PartialOverrideLimits {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartialOverrideMaxLinesPerFileLimits {
-    code_non_test: Option<CodeLines>,
-    code: Option<CodeLines>,
+    production: Option<LocLimit>,
+    test: Option<LocLimit>,
 }
 
 impl From<PartialOverrideMaxLinesPerFileLimits> for OverrideMaxLinesPerFileLimits {
     fn from(value: PartialOverrideMaxLinesPerFileLimits) -> Self {
         Self {
-            code_non_test: value.code_non_test,
-            code: value.code,
+            production: value.production,
+            test: value.test,
         }
     }
 }
@@ -232,8 +231,8 @@ impl From<PartialOverrideMaxLinesPerFileLimits> for OverrideMaxLinesPerFileLimit
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartialOverrideMaxLeafFilesPerDirectoryLimits {
-    production: Option<LeafFiles>,
-    test: Option<TestFanoutLimit>,
+    production: Option<LeafFileLimit>,
+    test: Option<LeafFileLimit>,
 }
 
 impl From<PartialOverrideMaxLeafFilesPerDirectoryLimits>
@@ -256,7 +255,6 @@ pub struct PathOverride {
     /// Non-empty limit set applied when `paths` match.
     #[serde(flatten)]
     pub limits: OverrideLimits,
-    /// Optional human-readable rationale.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<OverrideReason>,
+    /// Human-readable rationale.
+    pub reason: OverrideReason,
 }

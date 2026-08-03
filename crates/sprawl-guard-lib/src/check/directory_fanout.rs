@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::LeafFileLimit;
 use crate::classification::{ClassifiedSource, SourceKind};
-use crate::resolved_limits::{LeafFileLimit, LimitResolver};
+use crate::resolved_limits::LimitResolver;
 use crate::{LanguageGroupId, LeafFiles, RelativePath, Result};
 
 use super::{DirectoryFanoutViolation, DirectoryViolationKind};
@@ -162,7 +163,8 @@ mod tests {
         #[test]
         fn it_measures_each_group_independently() {
             let mut config = built_in_config();
-            config.limits.max_leaf_files_per_directory.production = LeafFiles::new(1).unwrap();
+            config.limits.max_leaf_files_per_directory.production =
+                LeafFileLimit::Finite(LeafFiles::new(1).unwrap());
             let limits = LimitResolver::new(&config).unwrap();
             let frontend_group = LanguageGroupId::custom("frontend").unwrap();
             let sources = vec![

@@ -9,10 +9,10 @@ use crate::check::report::{
 };
 use crate::check::runner::CheckScope;
 use crate::ratchet::{DirectoryRatchetKey, RatchetCount};
-use crate::{CodeLines, LeafFiles, RelativePath};
+use crate::{LeafFiles, LocLimit, RelativePath};
 
 pub(super) fn file_ratchets(
-    ratchets: &BTreeMap<RelativePath, CodeLines>,
+    ratchets: &BTreeMap<RelativePath, LocLimit>,
     measured: &BTreeSet<RelativePath>,
     scope: &CheckScope,
     kind: RatchetStaleViolationKind,

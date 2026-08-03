@@ -3,6 +3,7 @@
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
+use crate::code_line_counter::LocMeasurement;
 use crate::ratchet::RatchetCount;
 use crate::{LanguageGroupId, RelativePath};
 
@@ -73,12 +74,20 @@ impl RatchetViolation {
             .or_else(|| self.missing().and_then(RatchetStaleMissingViolation::group))
     }
 
+    /// Returns the configured-LOC measurement for a measured file diagnostic.
+    pub fn loc_measurement(&self) -> Option<&LocMeasurement> {
+        match self.measured() {
+            Some(MeasuredRatchetViolationRef::File { measurement, .. }) => Some(measurement),
+            Some(MeasuredRatchetViolationRef::Directory { .. }) | None => None,
+        }
+    }
+
     fn measured(&self) -> Option<MeasuredRatchetViolationRef<'_>> {
         match self {
             Self::Increased(RatchetIncreasedViolation::File(violation)) => {
                 Some(MeasuredRatchetViolationRef::File {
                     path: &violation.path,
-                    actual: violation.actual,
+                    measurement: &violation.measurement,
                     limit: RatchetLimit::Finite(violation.limit),
                     ratchet: violation.ratchet,
                 })
@@ -96,7 +105,7 @@ impl RatchetViolation {
                 violation,
             ))) => Some(MeasuredRatchetViolationRef::File {
                 path: &violation.path,
-                actual: violation.actual,
+                measurement: &violation.measurement,
                 limit: RatchetLimit::Finite(violation.limit),
                 ratchet: violation.ratchet,
             }),
@@ -126,14 +135,17 @@ impl Serialize for RatchetViolation {
     where
         S: Serializer,
     {
-        let mut violation = serializer
-            .serialize_struct("RatchetViolation", 5 + usize::from(self.group().is_some()))?;
+        let mut violation = serializer.serialize_struct("RatchetViolation", 9)?;
         violation.serialize_field("kind", &self.kind())?;
         violation.serialize_field("path", self.path())?;
         if let Some(group) = self.group() {
             violation.serialize_field("group", group)?;
         }
         violation.serialize_field("actual", &self.actual())?;
+        if let Some(measurement) = self.loc_measurement() {
+            violation.serialize_field("included_line_types", &measurement.included_line_types())?;
+            violation.serialize_field("line_counts", &measurement.line_counts())?;
+        }
         violation.serialize_field("limit", &self.limit())?;
         violation.serialize_field("ratchet", &self.ratchet())?;
         violation.end()
@@ -165,8 +177,8 @@ pub struct FileRatchetIncreasedViolation {
     pub kind: FileViolationKind,
     /// Repository-relative file path.
     pub path: RelativePath,
-    /// Current measured value.
-    pub actual: RatchetCount,
+    /// Current configured-LOC measurement.
+    pub measurement: LocMeasurement,
     /// Current configured limit.
     pub limit: RatchetCount,
     /// Stored ratchet ceiling.
@@ -233,8 +245,8 @@ pub struct FileRatchetStaleMeasuredViolation {
     pub kind: FileViolationKind,
     /// Repository-relative file path.
     pub path: RelativePath,
-    /// Current measured value.
-    pub actual: RatchetCount,
+    /// Current configured-LOC measurement.
+    pub measurement: LocMeasurement,
     /// Current configured limit.
     pub limit: RatchetCount,
     /// Stored ratchet ceiling.
@@ -261,7 +273,7 @@ pub struct DirectoryRatchetStaleMeasuredViolation {
 enum MeasuredRatchetViolationRef<'violation> {
     File {
         path: &'violation RelativePath,
-        actual: RatchetCount,
+        measurement: &'violation LocMeasurement,
         limit: RatchetLimit,
         ratchet: RatchetCount,
     },
@@ -290,7 +302,8 @@ impl<'violation> MeasuredRatchetViolationRef<'violation> {
 
     fn actual(&self) -> RatchetCount {
         match self {
-            Self::File { actual, .. } | Self::Directory { actual, .. } => *actual,
+            Self::File { measurement, .. } => RatchetCount::from_counted_loc(measurement.actual()),
+            Self::Directory { actual, .. } => *actual,
         }
     }
 

@@ -1,12 +1,12 @@
 ---
 title: Sprawl Guard
-description: Keep source trees navigable with code-line and directory fan-out limits.
+description: Keep source trees navigable with configurable LOC and directory fan-out limits.
 template: splash
 hero:
   image:
     file: ../../assets/sprawl-guard-shield-clamp.svg
     alt: ""
-  tagline: Enforce code-line and directory fan-out limits. Record existing violations so they can shrink but not grow.
+  tagline: Enforce configurable LOC and directory fan-out limits. Record existing violations so they can shrink but not grow.
   actions:
     - text: Get started
       link: ./quick-start/
@@ -25,7 +25,8 @@ Keep coding agents from adding oversized files and crowded directories.
 Sprawl Guard supports every language bundled with
 [Tokei](https://github.com/xampprocky/tokei), including Rust, TypeScript, JavaScript, Python, Go,
 Java, Kotlin, Swift, C, and C++. Run `sprawl-guard languages` for the complete list and default file
-globs. It counts code lines; comments and blank lines do not count.
+paths. Code always counts; comments and blank lines are configurable, and literate-language prose
+counts by default.
 
 ## Sprawl Guard or ESLint?
 

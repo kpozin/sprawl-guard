@@ -11,7 +11,7 @@ use crate::resolved_limits::LimitResolver;
 use crate::rust_cfg::{RustCfgTestStatus, preprocess_rust_cfg_test, rust_cfg_test_policy_info};
 use crate::source_file::{ensure_source_file_size, read_source_to_string};
 use crate::value::path::{normalize_under_root, resolve_root};
-use crate::{CodeLines, IncludedLineTypes, LineCount, RelativePath, Result};
+use crate::{CountedLoc, IncludedLineTypes, LocLimit, RelativePath, Result, SprawlError};
 
 use super::directory_fanout::directory_fanout_checks;
 use super::ratchet::{
@@ -220,13 +220,13 @@ pub(super) struct FileMeasurement {
     pub(super) kind: FileViolationKind,
     pub(super) path: RelativePath,
     pub(super) loc: LocMeasurement,
-    pub(super) limit: CodeLines,
+    pub(super) limit: LocLimit,
 }
 
 impl FileMeasurement {
-    /// Returns the code-only aggregate used by the current resolved policy.
-    pub(super) fn current_code_lines(&self) -> LineCount {
-        current_code_lines(&self.loc)
+    /// Returns the aggregate selected by the resolved included line types.
+    pub(super) const fn current_loc(&self) -> CountedLoc {
+        self.loc.actual()
     }
 }
 
@@ -300,16 +300,22 @@ fn check_source(
     source: ClassifiedSource,
 ) -> Result<SourceCheck> {
     let absolute_path = root.join(source.path.to_path_buf());
+    let limit = limits.file_loc_limit(&source);
     let CountedSource {
         measurement: loc,
         warnings,
-    } = count_source(config, counter, &source, &absolute_path)?;
-    let actual = current_code_lines(&loc);
+    } = count_source(
+        config,
+        counter,
+        &source,
+        &absolute_path,
+        limit.included_line_types,
+    )?;
+    let actual = loc.actual();
     let kind = match source.kind {
         SourceKind::Production => FileViolationKind::FileLoc,
         SourceKind::Test => FileViolationKind::TestFileLoc,
     };
-    let limit = limits.file_code_lines(&source);
     let measurement = FileMeasurement {
         kind,
         path: source.path.clone(),
@@ -330,16 +336,12 @@ fn check_source(
             kind,
             language: source.language(),
             path: source.path,
-            actual,
+            measurement: loc,
             limit: limit.value,
             ratchet: None,
         },
         warnings,
     })
-}
-
-fn current_code_lines(measurement: &LocMeasurement) -> LineCount {
-    measurement.line_counts().code
 }
 
 struct CountedSource {
@@ -352,14 +354,15 @@ fn count_source(
     counter: &(impl CodeLineCounter + Sync),
     source: &ClassifiedSource,
     absolute_path: &Path,
+    included_line_types: IncludedLineTypes,
 ) -> Result<CountedSource> {
     ensure_source_file_size(absolute_path, config.traversal.max_file_bytes)?;
     let Some(preprocess_info) = rust_cfg_test_policy_info(config, source) else {
         return Ok(CountedSource {
-            measurement: counter.count_path(
+            measurement: normalize_measurement(
                 absolute_path,
-                source.language(),
-                IncludedLineTypes::Code,
+                counter.count_path(absolute_path, source.language(), included_line_types)?,
+                included_line_types,
             )?,
             warnings: vec![],
         });
@@ -368,10 +371,10 @@ fn count_source(
         && preprocess_info.status != RustCfgTestStatus::PrefilterSkipped
     {
         return Ok(CountedSource {
-            measurement: counter.count_path(
+            measurement: normalize_measurement(
                 absolute_path,
-                source.language(),
-                IncludedLineTypes::Code,
+                counter.count_path(absolute_path, source.language(), included_line_types)?,
+                included_line_types,
             )?,
             warnings: vec![],
         });
@@ -379,8 +382,11 @@ fn count_source(
 
     let source_text = read_source_to_string(absolute_path, config.traversal.max_file_bytes)?;
     let result = preprocess_rust_cfg_test(&source_text);
-    let measurement =
-        counter.count_source(&result.source, source.language(), IncludedLineTypes::Code)?;
+    let measurement = normalize_measurement(
+        absolute_path,
+        counter.count_source(&result.source, source.language(), included_line_types)?,
+        included_line_types,
+    )?;
     let warnings = result
         .warning
         .into_iter()
@@ -389,6 +395,36 @@ fn count_source(
     Ok(CountedSource {
         measurement,
         warnings,
+    })
+}
+
+/// Measures one classified source with the production counter and check semantics.
+pub(crate) fn measure_source(
+    config: &Config,
+    source: &ClassifiedSource,
+    absolute_path: &Path,
+    included_line_types: IncludedLineTypes,
+) -> Result<LocMeasurement> {
+    Ok(count_source(
+        config,
+        &TokeiCodeLineCounter,
+        source,
+        absolute_path,
+        included_line_types,
+    )?
+    .measurement)
+}
+
+fn normalize_measurement(
+    path: &Path,
+    measurement: LocMeasurement,
+    included_line_types: IncludedLineTypes,
+) -> Result<LocMeasurement> {
+    LocMeasurement::new(included_line_types, measurement.line_counts()).map_err(|error| {
+        SprawlError::CodeLineCountOverflow {
+            path: path.to_path_buf(),
+            count: error.count(),
+        }
     })
 }
 /// Normalized set of path prefixes that limit which files a check considers.

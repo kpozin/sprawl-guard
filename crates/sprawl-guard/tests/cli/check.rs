@@ -4,6 +4,121 @@ use serde_json::json;
 
 use super::common::*;
 
+mod when_file_loc_is_reported_as_json {
+    use super::*;
+
+    #[test]
+    fn it_includes_the_effective_line_types_and_complete_breakdown_for_each_file_role() {
+        let root = TempDir::new().unwrap();
+        write_config(
+            &root,
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                included_line_types = ["code", "comments"]
+                production = 1
+                test = 1
+            "#},
+        );
+        write_file(
+            &root,
+            "src/lib.rs",
+            "// production\nfn one() {}\nfn two() {}\n",
+        );
+        write_file(&root, "tests/lib.rs", "// test\nfn one() {}\nfn two() {}\n");
+
+        let (output, json) = run_check_json(&root);
+
+        assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+        let file_violations = json["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|violation| {
+                matches!(
+                    violation["kind"].as_str(),
+                    Some("file_loc" | "test_file_loc")
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(file_violations.len(), 2);
+        for violation in file_violations {
+            assert_eq!(
+                violation["included_line_types"],
+                json!(["code", "comments"])
+            );
+            assert_eq!(
+                violation["line_counts"],
+                json!({"code": 2, "comments": 1, "blank_lines": 0})
+            );
+            assert_eq!(violation["actual"], 3);
+        }
+    }
+}
+
+mod when_a_measured_file_ratchet_is_reported_as_json {
+    use super::*;
+
+    fn ratchet_violation(root: &TempDir, ceiling: u32) -> serde_json::Value {
+        write_rust_file_limit_config_and_file_ratchet(root, 1, "src/lib.rs", ceiling);
+        write_file(root, "src/lib.rs", "// comment\nfn one() {}\nfn two() {}\n");
+        let (_, json) = run_check_json(root);
+        json["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|violation| {
+                let kind = violation["kind"].as_str().unwrap();
+                kind.ends_with("_increased") || kind.ends_with("_stale")
+            })
+            .unwrap()
+            .clone()
+    }
+
+    #[test]
+    fn it_includes_the_measurement_when_the_ceiling_increased() {
+        let root = TempDir::new().unwrap();
+
+        let violation = ratchet_violation(&root, 1);
+
+        assert_eq!(
+            json!({
+                "kind": violation["kind"],
+                "included_line_types": violation["included_line_types"],
+                "line_counts": violation["line_counts"],
+                "actual": violation["actual"],
+            }),
+            json!({
+                "kind": "file_loc_increased",
+                "included_line_types": ["code"],
+                "line_counts": {"code": 2, "comments": 1, "blank_lines": 0},
+                "actual": 2,
+            })
+        );
+    }
+
+    #[test]
+    fn it_includes_the_measurement_when_the_ceiling_is_stale() {
+        let root = TempDir::new().unwrap();
+
+        let violation = ratchet_violation(&root, 3);
+
+        assert_eq!(
+            json!({
+                "kind": violation["kind"],
+                "included_line_types": violation["included_line_types"],
+                "line_counts": violation["line_counts"],
+                "actual": violation["actual"],
+            }),
+            json!({
+                "kind": "file_loc_stale",
+                "included_line_types": ["code"],
+                "line_counts": {"code": 2, "comments": 1, "blank_lines": 0},
+                "actual": 2,
+            })
+        );
+    }
+}
+
 mod when_rust_production_source_has_file_wide_cfg_test {
     use super::*;
 
@@ -14,7 +129,7 @@ mod when_rust_production_source_has_file_wide_cfg_test {
             &root,
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true
@@ -49,7 +164,7 @@ mod when_rust_cfg_test_preprocessing_fails {
             &root,
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true
@@ -236,12 +351,18 @@ mod when_sarif_output_is_requested {
                         },
                     }],
                     "message": {
-                        "text": "src/lib.rs has 2 code lines, exceeding limit 1.",
+                        "text": "src/lib.rs has 2 configured LOC (included line types: code), exceeding limit 1.",
                     },
                     "properties": {
                         "actual": 2,
+                        "included_line_types": ["code"],
                         "kind": "file_loc",
                         "language": "Rust",
+                        "line_counts": {
+                            "code": 2,
+                            "comments": 0,
+                            "blank_lines": 0,
+                        },
                         "limit": 1,
                         "path": "src/lib.rs",
                         "ratchet": null,

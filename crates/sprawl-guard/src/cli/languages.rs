@@ -8,7 +8,7 @@ use sprawl_guard_lib::classification::{
     ClassifiedSource, bundled_extensions, bundled_filenames, discover_sources,
 };
 use sprawl_guard_lib::config::{Config, LanguageConfig, RustCfgTestExclusion, built_in_config};
-use sprawl_guard_lib::{GlobPattern, LanguageId};
+use sprawl_guard_lib::{GlobPattern, IncludedLineTypes, LanguageGroupId, LanguageId};
 
 use crate::error::{CliError, Result};
 
@@ -64,11 +64,14 @@ fn language_entries(
     config
         .languages()
         .iter()
-        .filter_map(|(id, config)| {
+        .filter_map(|(id, language_config)| {
             if selection.includes(*id, &detected_languages) {
                 Some(LanguageEntry::new(
                     *id,
-                    config,
+                    language_config,
+                    config
+                        .effective_language_file_limits(*id)
+                        .included_line_types,
                     detected_counts.get(id).copied(),
                 ))
             } else {
@@ -90,6 +93,9 @@ pub(super) fn human_report(report: &LanguagesReport) -> String {
                 canonical: {canonical}
                 accepted aliases: {aliases}
                 enabled: {enabled}
+                literate: {literate}
+                automatic group: {group}
+                automatic included line types: {included_line_types}
             {count}    include: {include}
                 bundled extensions: {bundled_extensions}
                 bundled filenames: {bundled_filenames}
@@ -101,6 +107,9 @@ pub(super) fn human_report(report: &LanguagesReport) -> String {
         canonical = language.id,
         aliases = language.human_aliases(),
         enabled = language.enabled,
+        literate = language.literate,
+        group = language.group,
+        included_line_types = language.included_line_types,
         include = language
             .include
             .as_ref()
@@ -199,6 +208,9 @@ struct LanguageEntry {
     accepted_aliases: Vec<String>,
     case_insensitive: bool,
     enabled: bool,
+    literate: bool,
+    group: LanguageGroupId,
+    included_line_types: IncludedLineTypes,
     source_files: Option<NonZeroUsize>,
     include: Option<Vec<String>>,
     bundled_extensions: Vec<String>,
@@ -210,15 +222,25 @@ struct LanguageEntry {
 }
 
 impl LanguageEntry {
-    fn new(id: LanguageId, config: &LanguageConfig, source_files: Option<NonZeroUsize>) -> Self {
+    fn new(
+        id: LanguageId,
+        config: &LanguageConfig,
+        included_line_types: IncludedLineTypes,
+        source_files: Option<NonZeroUsize>,
+    ) -> Self {
         let common = config.common();
         let config_key = config_key(id);
+        let literate = id.is_literate();
+        let group = id.automatic_group();
         Self {
             id,
             config_key: config_key.clone(),
             accepted_aliases: vec![config_key],
             case_insensitive: true,
             enabled: config.is_enabled(),
+            literate,
+            group,
+            included_line_types,
             source_files,
             include: common.include.as_deref().map(glob_strings),
             bundled_extensions: bundled_extensions(id)
@@ -245,6 +267,9 @@ impl LanguageEntry {
             "accepted_aliases": &self.accepted_aliases,
             "case_insensitive": self.case_insensitive,
             "enabled": self.enabled,
+            "literate": self.literate,
+            "automatic_group": self.group,
+            "automatic_included_line_types": self.included_line_types,
             "include": &self.include,
             "bundled_extensions": &self.bundled_extensions,
             "bundled_filenames": &self.bundled_filenames,

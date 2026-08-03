@@ -45,33 +45,48 @@ pub(super) fn explain_message(classification: &PathClassification) -> String {
 }
 
 fn source_message(explanation: &SourceExplanation) -> String {
-    let kind = match explanation.source.kind {
+    let source = explanation.source();
+    let kind = match source.kind {
         SourceKind::Production => "production source",
         SourceKind::Test => "test code",
     };
     let mut message = format!(
         "{}: {kind} ({}; group: {})",
-        explanation.source.path,
-        explanation.source.language(),
-        explanation.source.group()
+        source.path,
+        source.language(),
+        source.group()
     );
-    if let Some(limits) = &explanation.resolved_limits {
-        message.push_str(&resolved_limits_message(limits));
-    }
-    if let Some(rust_cfg_test) = &explanation.rust_cfg_test {
+    if let SourceExplanation::Measured {
+        resolved_limits,
+        measurement,
+        rust_cfg_test,
+        ..
+    } = explanation
+    {
+        message.push_str(&resolved_limits_message(resolved_limits));
+        let counts = measurement.line_counts();
         message.push_str(&format!(
-            "; rust cfg(test): {}; excluded top-level items: {}",
-            rust_cfg_test_status_message(rust_cfg_test.status),
-            rust_cfg_test.excluded_items.get()
+            "; configured LOC: {} (code: {}, comments: {}, blank lines: {})",
+            measurement.actual().get(),
+            counts.code,
+            counts.comments,
+            counts.blank_lines
         ));
+        if let Some(rust_cfg_test) = rust_cfg_test {
+            message.push_str(&format!(
+                "; rust cfg(test): {}; excluded top-level items: {}",
+                rust_cfg_test_status_message(rust_cfg_test.status),
+                rust_cfg_test.excluded_items.get()
+            ));
+        }
     }
     message
 }
 
 fn resolved_limits_message(limits: &SourceResolvedLimits) -> String {
     let mut message = format!(
-        "; file LOC limit: {}; directory leaf-file limit: {}",
-        limits.file.value, limits.directory.value
+        "; file LOC limit: {}; included line types: {}; directory leaf-file limit: {}",
+        limits.file.value, limits.file.included_line_types, limits.directory.value
     );
     let file_overrides = matching_overrides_message(&limits.file.matched_overrides);
     if !file_overrides.is_empty() {
@@ -114,8 +129,9 @@ fn rust_cfg_test_status_message(status: RustCfgTestStatus) -> &'static str {
 mod tests {
     use sprawl_guard_lib::classification::ClassifiedSource;
     use sprawl_guard_lib::{
-        CodeLines, ExcludedItemCount, LanguageId, LeafFileLimit, MatchedOverride, RelativePath,
-        ResolvedCodeLineLimit, ResolvedLeafFileLimit, RustCfgTestInfo, SourceResolvedLimits,
+        ExcludedItemCount, IncludedLineTypes, LanguageId, LeafFileLimit, LocLimit, MatchedOverride,
+        RelativePath, ResolvedFileLocLimit, ResolvedLeafFileLimit, RustCfgTestInfo,
+        SourceResolvedLimits,
     };
 
     use super::*;
@@ -125,14 +141,12 @@ mod tests {
     }
 
     fn source(path: &str, language: &str, kind: SourceKind) -> SourceExplanation {
-        SourceExplanation {
+        SourceExplanation::Classified {
             source: ClassifiedSource::new(
                 RelativePath::new(path).unwrap(),
                 LanguageId::new(language).unwrap(),
                 kind,
             ),
-            resolved_limits: None,
-            rust_cfg_test: None,
         }
     }
 
@@ -210,17 +224,42 @@ mod tests {
 
             #[test]
             fn it_reports_the_status_and_excluded_item_count() {
-                let mut explanation = source("src/lib.rs", "rust", SourceKind::Production);
-                explanation.rust_cfg_test = Some(RustCfgTestInfo {
-                    status: RustCfgTestStatus::Parsed,
-                    excluded_items: ExcludedItemCount::new(2),
-                });
+                let source = source("src/lib.rs", "rust", SourceKind::Production)
+                    .source()
+                    .clone();
+                let explanation = SourceExplanation::Measured {
+                    source,
+                    resolved_limits: SourceResolvedLimits {
+                        file: ResolvedFileLocLimit {
+                            included_line_types: IncludedLineTypes::Code,
+                            value: LocLimit::new(400).unwrap(),
+                            matched_overrides: vec![],
+                        },
+                        directory: ResolvedLeafFileLimit {
+                            value: LeafFileLimit::Unlimited,
+                            matched_overrides: vec![],
+                        },
+                    },
+                    measurement: sprawl_guard_lib::code_line_counter::LocMeasurement::new(
+                        IncludedLineTypes::Code,
+                        sprawl_guard_lib::LineCounts::new(
+                            sprawl_guard_lib::LineCount::new(1),
+                            sprawl_guard_lib::LineCount::new(0),
+                            sprawl_guard_lib::LineCount::new(0),
+                        ),
+                    )
+                    .unwrap(),
+                    rust_cfg_test: Some(RustCfgTestInfo {
+                        status: RustCfgTestStatus::Parsed,
+                        excluded_items: ExcludedItemCount::new(2),
+                    }),
+                };
 
                 let message = explain_message(&PathClassification::Source(explanation));
 
                 assert_eq!(
                     message,
-                    "src/lib.rs: production source (Rust; group: source); rust cfg(test): parsed; excluded top-level items: 2"
+                    "src/lib.rs: production source (Rust; group: source); file LOC limit: 400; included line types: code; directory leaf-file limit: unlimited; configured LOC: 1 (code: 1, comments: 0, blank lines: 0); rust cfg(test): parsed; excluded top-level items: 2"
                 );
             }
         }
@@ -251,8 +290,9 @@ mod tests {
             #[test]
             fn it_reports_the_explicit_limit() {
                 let limits = SourceResolvedLimits {
-                    file: ResolvedCodeLineLimit {
-                        value: CodeLines::new(400).unwrap(),
+                    file: ResolvedFileLocLimit {
+                        included_line_types: IncludedLineTypes::CodeAndComments,
+                        value: LocLimit::new(400).unwrap(),
                         matched_overrides: Vec::<MatchedOverride>::new(),
                     },
                     directory: ResolvedLeafFileLimit {
@@ -265,7 +305,7 @@ mod tests {
 
                 assert_eq!(
                     message,
-                    "; file LOC limit: 400; directory leaf-file limit: unlimited"
+                    "; file LOC limit: 400; included line types: code, comments; directory leaf-file limit: unlimited"
                 );
             }
         }

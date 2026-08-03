@@ -2,10 +2,13 @@ use crate::config::{
     CommonLanguageConfig, Config, ConfigInclude, FilesConfig, IgnoreConfig, LanguageConfig,
     LanguageLimits, LanguageMode, Limits, MaxLeafFilesPerDirectoryLimits, MaxLinesPerFileLimits,
     OutputConfig, OutputFormat, RatchetConfig, RustCfgTestExclusion, RustLanguageConfig,
-    SourceFileByteLimit, SymlinkTraversal, TestFanoutLimit, TestsConfig, TraversalConfig,
-    TraversalDepth, TraversalEntryLimit, TraversalErrorPolicy,
+    SourceFileByteLimit, SymlinkTraversal, TestsConfig, TraversalConfig, TraversalDepth,
+    TraversalEntryLimit, TraversalErrorPolicy,
 };
-use crate::{CodeLines, ColorMode, GlobPattern, LanguageId, LeafFiles, RatchetFilePath};
+use crate::{
+    ColorMode, GlobPattern, IncludedLineTypes, LanguageId, LeafFileLimit, LeafFiles, LocLimit,
+    RatchetFilePath,
+};
 use tokei::LanguageType;
 
 const DEFAULT_MAX_NON_TEST_CODE_LINES_PER_FILE: u32 = 400;
@@ -21,12 +24,15 @@ pub fn built_in_config() -> Config {
         config: ConfigInclude { include: vec![] },
         limits: Limits {
             max_lines_per_file: MaxLinesPerFileLimits {
-                code_non_test: CodeLines::trusted(DEFAULT_MAX_NON_TEST_CODE_LINES_PER_FILE),
-                code: CodeLines::trusted(DEFAULT_MAX_CODE_LINES_PER_TEST_FILE),
+                included_line_types: IncludedLineTypes::Code,
+                production: LocLimit::trusted(DEFAULT_MAX_NON_TEST_CODE_LINES_PER_FILE),
+                test: LocLimit::trusted(DEFAULT_MAX_CODE_LINES_PER_TEST_FILE),
             },
             max_leaf_files_per_directory: MaxLeafFilesPerDirectoryLimits {
-                production: LeafFiles::trusted(DEFAULT_MAX_LEAF_SOURCE_FILES_PER_DIRECTORY),
-                test: TestFanoutLimit::Unlimited,
+                production: LeafFileLimit::Finite(LeafFiles::trusted(
+                    DEFAULT_MAX_LEAF_SOURCE_FILES_PER_DIRECTORY,
+                )),
+                test: LeafFileLimit::Unlimited,
             },
         },
         ignore: IgnoreConfig {

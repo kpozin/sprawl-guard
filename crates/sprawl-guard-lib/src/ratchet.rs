@@ -7,7 +7,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{CodeLines, LanguageGroupId, LeafFiles, LineCount, RelativePath, Result, SprawlError};
+use crate::{CountedLoc, LanguageGroupId, LeafFiles, LocLimit, RelativePath, Result, SprawlError};
 
 const SUPPORTED_RATCHET_VERSION: u32 = 1;
 
@@ -98,7 +98,7 @@ impl Default for RatchetVersion {
 
 /// Numeric value used when reporting ratchet comparisons.
 ///
-/// Ratchet failures can compare either code lines or leaf-file counts. The
+/// Ratchet failures can compare either configured LOC or leaf-file counts. The
 /// violation kind identifies the metric, while this wrapper keeps comparison
 /// values branded instead of passing raw integers through the check report.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -111,13 +111,13 @@ impl RatchetCount {
         Self(value)
     }
 
-    /// Converts a configured code-line limit to a ratchet comparison count.
-    pub const fn from_code_lines(value: CodeLines) -> Self {
+    /// Converts a configured LOC limit to a ratchet comparison count.
+    pub const fn from_code_lines(value: LocLimit) -> Self {
         Self(value.get())
     }
 
-    /// Converts a measured code-line count to a ratchet comparison count.
-    pub const fn from_line_count(value: LineCount) -> Self {
+    /// Converts a measured LOC count to a ratchet comparison count.
+    pub const fn from_counted_loc(value: CountedLoc) -> Self {
         Self(value.get())
     }
 
@@ -144,8 +144,8 @@ impl fmt::Display for RatchetCount {
 pub struct FileRatchet {
     /// Repository-relative source file path.
     pub path: RelativePath,
-    /// Grandfathered production code-line ceiling.
-    pub non_test_code_lines: CodeLines,
+    /// Grandfathered production LOC ceiling.
+    pub non_test_code_lines: LocLimit,
 }
 
 /// Path-classified test file ratchet ceiling.
@@ -154,8 +154,8 @@ pub struct FileRatchet {
 pub struct TestFileRatchet {
     /// Repository-relative test file path.
     pub path: RelativePath,
-    /// Grandfathered test code-line ceiling.
-    pub code_lines: CodeLines,
+    /// Grandfathered test LOC ceiling.
+    pub code_lines: LocLimit,
 }
 
 /// Identity of one persisted directory fan-out measurement.

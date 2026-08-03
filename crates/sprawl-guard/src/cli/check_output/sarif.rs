@@ -41,12 +41,12 @@ fn rules() -> Vec<Value> {
         rule(
             FILE_LOC_RULE_ID,
             "File LOC budget exceeded",
-            "A production source file exceeded its resolved code-line limit.",
+            "A production source file exceeded its resolved configured-LOC limit.",
         ),
         rule(
             TEST_FILE_LOC_RULE_ID,
             "Test file LOC budget exceeded",
-            "A path-classified test file exceeded its resolved code-line limit.",
+            "A path-classified test file exceeded its resolved configured-LOC limit.",
         ),
         rule(
             DIRECTORY_FANOUT_RULE_ID,
@@ -105,8 +105,11 @@ fn file_loc_result(violation: &FileLocViolation) -> Value {
         "level": "error",
         "message": {
             "text": format!(
-                "{} has {} code lines, exceeding limit {}.",
-                violation.path, violation.actual, violation.limit
+                "{} has {} configured LOC (included line types: {}), exceeding limit {}.",
+                violation.path,
+                violation.measurement.actual().get(),
+                violation.measurement.included_line_types(),
+                violation.limit
             )
         },
         "locations": [location(&violation.path)],
@@ -114,7 +117,9 @@ fn file_loc_result(violation: &FileLocViolation) -> Value {
             "kind": violation.kind,
             "path": violation.path,
             "language": violation.language,
-            "actual": violation.actual,
+            "actual": violation.measurement.actual(),
+            "included_line_types": violation.measurement.included_line_types(),
+            "line_counts": violation.measurement.line_counts(),
             "limit": violation.limit,
             "ratchet": violation.ratchet
         }
@@ -199,6 +204,10 @@ fn ratchet_result(violation: &RatchetViolation) -> Value {
     if let Some(group) = violation.group() {
         result["properties"]["group"] = json!(group);
     }
+    if let Some(measurement) = violation.loc_measurement() {
+        result["properties"]["included_line_types"] = json!(measurement.included_line_types());
+        result["properties"]["line_counts"] = json!(measurement.line_counts());
+    }
     result
 }
 
@@ -207,6 +216,14 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
         Some(group) => format!("{} in group {group}", display_path(violation.path())),
         None => display_path(violation.path()).to_owned(),
     };
+    let measurement_context = violation
+        .loc_measurement()
+        .map_or_else(String::new, |measurement| {
+            format!(
+                " configured LOC (included line types: {})",
+                measurement.included_line_types()
+            )
+        });
     match violation.kind() {
         RatchetViolationKind::FileLocIncreased
         | RatchetViolationKind::TestFileLocIncreased
@@ -217,7 +234,7 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
                 .map(|value| value.get().to_string())
                 .unwrap_or_else(|| "not measured".to_owned());
             format!(
-                "{subject} increased to {actual} above ratchet ceiling {}.",
+                "{subject} increased to {actual}{measurement_context} above ratchet ceiling {}.",
                 violation.ratchet().get()
             )
         }
@@ -226,7 +243,7 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
         | RatchetViolationKind::DirectoryFanoutStale
         | RatchetViolationKind::TestDirectoryFanoutStale => match violation.actual() {
             Some(actual) => format!(
-                "{subject} has stale ratchet ceiling {}; current value is {}.",
+                "{subject} has stale ratchet ceiling {}; current value is {}{measurement_context}.",
                 violation.ratchet().get(),
                 actual.get()
             ),
@@ -277,9 +294,9 @@ mod tests {
         RatchetStaleViolationKind, RatchetViolation,
     };
     use sprawl_guard_lib::{
-        CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail,
-        DirectoryRatchetStaleMeasuredViolation, FileRatchetIncreasedViolation, LanguageGroupId,
-        LanguageId, LeafFiles, LineCount, RatchetCount, RatchetLimit, RelativePath,
+        CheckWarning, CheckWarningKind, DiagnosticDetail, DirectoryRatchetStaleMeasuredViolation,
+        FileRatchetIncreasedViolation, FileRatchetStaleMeasuredViolation, LanguageGroupId,
+        LanguageId, LeafFiles, LineCount, LocLimit, RatchetCount, RatchetLimit, RelativePath,
     };
 
     use super::*;
@@ -301,10 +318,22 @@ mod tests {
             kind,
             path: RelativePath::new(path).unwrap(),
             language: LanguageId::new("Rust").unwrap(),
-            actual: LineCount::new(3),
-            limit: CodeLines::new(2).unwrap(),
+            measurement: loc_measurement(3),
+            limit: LocLimit::new(2).unwrap(),
             ratchet: None,
         }
+    }
+
+    fn loc_measurement(actual: u32) -> sprawl_guard_lib::code_line_counter::LocMeasurement {
+        sprawl_guard_lib::code_line_counter::LocMeasurement::new(
+            sprawl_guard_lib::IncludedLineTypes::Code,
+            sprawl_guard_lib::LineCounts::new(
+                LineCount::new(actual),
+                LineCount::new(0),
+                LineCount::new(0),
+            ),
+        )
+        .unwrap()
     }
 
     fn directory_fanout_violation(
@@ -359,7 +388,7 @@ mod tests {
                                     "text": "File LOC budget exceeded"
                                 },
                                 "fullDescription": {
-                                    "text": "A production source file exceeded its resolved code-line limit."
+                                    "text": "A production source file exceeded its resolved configured-LOC limit."
                                 }
                             },
                             {
@@ -368,7 +397,7 @@ mod tests {
                                     "text": "Test file LOC budget exceeded"
                                 },
                                 "fullDescription": {
-                                    "text": "A path-classified test file exceeded its resolved code-line limit."
+                                    "text": "A path-classified test file exceeded its resolved configured-LOC limit."
                                 }
                             },
                             {
@@ -460,6 +489,7 @@ mod tests {
             assert_eq!(
                 json!({
                     "ruleId": result["ruleId"],
+                    "message": result["message"]["text"],
                     "location": result["locations"][0]["physicalLocation"],
                     "properties": {
                         "language": result["properties"]["language"],
@@ -468,6 +498,7 @@ mod tests {
                 }),
                 json!({
                     "ruleId": FILE_LOC_RULE_ID,
+                    "message": "src/lib.rs has 3 configured LOC (included line types: code), exceeding limit 2.",
                     "location": {
                         "artifactLocation": {
                             "uri": "src/lib.rs",
@@ -623,7 +654,7 @@ mod tests {
                 RatchetIncreasedViolation::File(FileRatchetIncreasedViolation {
                     kind: FileViolationKind::FileLoc,
                     path: RelativePath::new("src/lib.rs").unwrap(),
-                    actual: RatchetCount::new(5),
+                    measurement: loc_measurement(5),
                     limit: RatchetCount::new(2),
                     ratchet: RatchetCount::new(4),
                 }),
@@ -635,16 +666,22 @@ mod tests {
             assert_eq!(
                 json!({
                     "ruleId": result["ruleId"],
+                    "message": result["message"]["text"],
                     "properties": {
                         "actual": result["properties"]["actual"],
+                        "included_line_types": result["properties"]["included_line_types"],
+                        "line_counts": result["properties"]["line_counts"],
                         "limit": result["properties"]["limit"],
                         "ratchet": result["properties"]["ratchet"],
                     },
                 }),
                 json!({
                     "ruleId": RATCHET_INCREASE_RULE_ID,
+                    "message": "src/lib.rs increased to 5 configured LOC (included line types: code) above ratchet ceiling 4.",
                     "properties": {
                         "actual": 5,
+                        "included_line_types": ["code"],
+                        "line_counts": {"code": 5, "comments": 0, "blank_lines": 0},
                         "limit": 2,
                         "ratchet": 4,
                     },
@@ -674,6 +711,29 @@ mod tests {
             assert_eq!(result["ruleId"], RATCHET_STALE_RULE_ID);
             assert_eq!(result["properties"]["kind"], "directory_fanout_stale");
             assert_eq!(result["properties"]["group"], "source");
+        }
+
+        #[test]
+        fn it_identifies_included_line_types_for_measured_file_staleness() {
+            let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
+                RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
+                    FileRatchetStaleMeasuredViolation {
+                        kind: FileViolationKind::FileLoc,
+                        path: RelativePath::new("src/lib.rs").unwrap(),
+                        measurement: loc_measurement(2),
+                        limit: RatchetCount::new(3),
+                        ratchet: RatchetCount::new(4),
+                    },
+                )),
+            ))]);
+
+            let output = sarif_check_report(&report);
+            let result = &output["runs"][0]["results"][0];
+
+            assert_eq!(
+                result["message"]["text"],
+                "src/lib.rs has stale ratchet ceiling 4; current value is 2 configured LOC (included line types: code)."
+            );
         }
 
         #[test]

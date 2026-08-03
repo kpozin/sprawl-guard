@@ -17,7 +17,7 @@ pub struct TraversalConfig {
     pub max_depth: TraversalDepth,
     /// Maximum number of filesystem entries yielded during source discovery.
     pub max_entries: TraversalEntryLimit,
-    /// Maximum byte size for a source file before code-line counting.
+    /// Maximum byte size for a source file before configured-LOC counting.
     pub max_file_bytes: SourceFileByteLimit,
     /// How recoverable descendant traversal errors affect `check`.
     pub error_policy: TraversalErrorPolicy,
@@ -184,7 +184,7 @@ pub enum SourceFileByteLimitError {
     Zero,
 }
 
-/// Maximum source file size in bytes before code-line counting.
+/// Maximum source file size in bytes before configured-LOC counting.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SourceFileByteLimit(NonZeroU64);

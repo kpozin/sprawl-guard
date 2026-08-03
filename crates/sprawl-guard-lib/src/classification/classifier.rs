@@ -45,7 +45,7 @@ impl<'config> Classifier<'config> {
     /// language-specific policy.
     pub(super) fn included_source(&self, path: RelativePath) -> Result<Option<ClassifiedSource>> {
         match self.classify(path)? {
-            PathClassification::Source(explanation) => Ok(Some(explanation.source)),
+            PathClassification::Source(explanation) => Ok(Some(explanation.into_source())),
             PathClassification::AmbiguousLanguage { path, languages } => {
                 Err(ambiguous_language(path, languages))
             }

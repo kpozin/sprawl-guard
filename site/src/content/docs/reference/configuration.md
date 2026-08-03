@@ -24,16 +24,20 @@ follow symlinks while loading these files.
 
 ### `[limits.max_lines_per_file]`
 
-| Field           | Type and default        | Meaning                                    |
-| --------------- | ----------------------- | ------------------------------------------ |
-| `code_non_test` | positive integer, `400` | Non-test code lines in a production file.  |
-| `code`          | positive integer, `800` | Code lines in a path-classified test file. |
+| Field                 | Type and default        | Meaning                                                   |
+| --------------------- | ----------------------- | --------------------------------------------------------- |
+| `included_line_types` | array, `["code"]`       | Count `code`, with optional `comments` and `blank_lines`. |
+| `production`          | positive integer, `400` | Configured LOC in a production file.                      |
+| `test`                | positive integer, `800` | Configured LOC in a path-classified test file.            |
+
+`included_line_types` must contain `code` and may not contain duplicates. Literate languages
+automatically add `comments` unless their language-specific setting replaces the global selection.
 
 ### `[limits.max_leaf_files_per_directory]`
 
 | Field        | Type and default                                 | Meaning                                          |
 | ------------ | ------------------------------------------------ | ------------------------------------------------ |
-| `production` | positive integer, `8`                            | Direct production source files in one directory. |
+| `production` | positive integer or `"unlimited"`, `8`           | Direct production source files in one directory. |
 | `test`       | positive integer or `"unlimited"`, `"unlimited"` | Direct test source files in one directory.       |
 
 ### `[ignore]`
@@ -85,27 +89,30 @@ globs = [
 
 ### `[languages.<id>]`
 
-| Field              | Type and default                  | Meaning                                                                                    |
-| ------------------ | --------------------------------- | ------------------------------------------------------------------------------------------ |
-| `enabled`          | boolean, `false`                  | Enable this language.                                                                      |
-| `include`          | array of globs, language-specific | Candidate source paths.                                                                    |
-| `exclude`          | array of globs, `[]`              | Remove matching candidates for this language.                                              |
-| `test_globs`       | array of globs, `[]`              | Additional test-file classifiers. Rust defaults to `["benches/**"]`.                       |
-| `exclude_cfg_test` | boolean, `true` for Rust          | Exclude top-level Rust `cfg(test)` items from production LOC. Invalid for other languages. |
+| Field              | Type and default         | Meaning                                                                                    |
+| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------ |
+| `enabled`          | boolean, `true`          | Enable or disable this language.                                                           |
+| `include`          | optional array of globs  | Replace the language's bundled candidate paths.                                            |
+| `additional_globs` | array of globs, `[]`     | Add candidate paths without replacing bundled paths.                                       |
+| `exclude`          | array of globs, `[]`     | Remove matching candidates for this language.                                              |
+| `test_globs`       | array of globs, `[]`     | Additional test-file classifiers. Rust defaults to `["benches/**"]`.                       |
+| `exclude_cfg_test` | boolean, `true` for Rust | Exclude top-level Rust `cfg(test)` items from production LOC. Invalid for other languages. |
 
-`[languages.<id>.limits.max_lines_per_file].code_non_test` is an optional positive integer that
-replaces the global production line limit for that language. Run `sprawl-guard languages` to list
-all supported IDs and their built-in extension globs. IDs are case-insensitive.
+Every Tokei language is enabled by default. Under `[languages.<id>.limits.max_lines_per_file]`,
+`production`, `test`, and `included_line_types` are optional. Numeric fields replace the
+corresponding global threshold. `included_line_types` replaces the global or automatic
+literate-language selection. Run `sprawl-guard languages` to list all supported IDs and their
+bundled paths. IDs are case-insensitive.
 
 ### `[[overrides]]`
 
 | Field                                     | Type                                       | Meaning                                            |
 | ----------------------------------------- | ------------------------------------------ | -------------------------------------------------- |
 | `paths`                                   | non-empty array of globs                   | Repository-relative paths matched by the override. |
-| `reason`                                  | optional non-empty string                  | Human-readable justification.                      |
-| `max_lines_per_file.code_non_test`        | optional positive integer                  | Production file limit.                             |
-| `max_lines_per_file.code`                 | optional positive integer                  | Test file limit.                                   |
-| `max_leaf_files_per_directory.production` | optional positive integer                  | Production fan-out limit.                          |
+| `reason`                                  | non-empty string                           | Human-readable justification.                      |
+| `max_lines_per_file.production`           | optional positive integer                  | Production file limit.                             |
+| `max_lines_per_file.test`                 | optional positive integer                  | Test file limit.                                   |
+| `max_leaf_files_per_directory.production` | optional positive integer or `"unlimited"` | Production fan-out limit.                          |
 | `max_leaf_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test fan-out limit.                                |
 
 Each override must set at least one limit. Matching entries apply in order; later entries replace
@@ -114,7 +121,7 @@ only the fields they set.
 ```toml title="sprawl-guard.toml"
 [[overrides]]
 paths = ["vendor/**"]
-max_lines_per_file = { code_non_test = 1200, code = 1600 }
+max_lines_per_file = { production = 1200, test = 1600 }
 max_leaf_files_per_directory = { production = 20, test = "unlimited" }
 reason = "Upstream layout"
 ```
@@ -142,7 +149,8 @@ Sprawl Guard applies configuration in this order:
 2. Arrays in the root configuration replace their default arrays. Root `[[overrides]]` replace the
    empty default override list.
 3. Included fragments append overrides in lexicographic file order.
-4. A language-specific production line limit replaces the global limit for that language.
+4. Language-specific file thresholds and included line types replace their global values. Literate
+   languages add comments automatically when no language-specific line-type selection is present.
 5. Matching path overrides apply in declaration order. Later entries replace only the fields they
    set.
 6. CLI options override the output format, ratchet-current requirement, traversal error policy,

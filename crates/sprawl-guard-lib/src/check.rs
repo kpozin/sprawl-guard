@@ -16,4 +16,5 @@ pub use report::{
     RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation, RatchetViolationKind,
     ReportRoot, ReportRootError,
 };
+pub(crate) use runner::measure_source;
 pub use runner::{CheckOptions, check, check_with_counter, check_without_ratchet};

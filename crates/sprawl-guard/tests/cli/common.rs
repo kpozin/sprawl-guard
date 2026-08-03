@@ -125,12 +125,12 @@ pub(crate) fn write_file(root: &TempDir, path: &str, contents: &str) {
     file.write_str(contents).unwrap();
 }
 
-pub(crate) fn write_rust_file_limit_config(root: &TempDir, code_non_test: u32) {
+pub(crate) fn write_rust_file_limit_config(root: &TempDir, production: u32) {
     write_config(
         root,
         &formatdoc! {r#"
             [limits.max_lines_per_file]
-            code_non_test = {code_non_test}
+            production = {production}
 
             [languages.rust]
             enabled = true
@@ -148,7 +148,7 @@ pub(crate) fn write_rust_file_limit_config_and_file_ratchet(
         root,
         &formatdoc! {r#"
             [limits.max_lines_per_file]
-            code_non_test = {configured_limit}
+            production = {configured_limit}
 
             [languages.rust]
             enabled = true

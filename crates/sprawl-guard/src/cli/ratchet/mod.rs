@@ -7,9 +7,9 @@ use serde_json::json;
 use sprawl_guard_lib::check::check_without_ratchet;
 use sprawl_guard_lib::config::{LoadOptions, load_resolved_config};
 use sprawl_guard_lib::{
-    CheckOptions, CheckReport, CheckViolation, CodeLines, DirectoryRatchet, DirectoryViolationKind,
-    FileRatchet, FileViolationKind, RatchetFile, RatchetVersion, TestDirectoryRatchet,
-    TestFileRatchet,
+    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, DirectoryViolationKind,
+    FileLocViolation, FileRatchet, FileViolationKind, LocLimit, RatchetFile, RatchetVersion,
+    TestDirectoryRatchet, TestFileRatchet,
 };
 
 use super::{BaselineArgs, RatchetArgs};
@@ -37,6 +37,7 @@ pub(super) fn execute_baseline(
     }
 
     let report = current_violation_report(&context, args.paths.clone())?;
+    let file_measurements = file_measurements_from_report(&report);
     let new_entries = ratchet_from_report(&report)?;
     let next = if ratchet_exists {
         let previous = RatchetFile::read(&context.ratchet_path)?;
@@ -59,6 +60,7 @@ pub(super) fn execute_baseline(
         RatchetCommandKind::Baseline,
         &context.ratchet_path,
         &next,
+        file_measurements,
         args.write,
     )
 }
@@ -82,10 +84,14 @@ pub(super) fn execute_ratchet(
 
     let previous = RatchetFile::read(&context.ratchet_path)?;
     let (scope, measured_paths) = ratchet_update_scope(&context.root, &args.paths, &previous)?;
-    let current = if args.paths.is_empty() || !measured_paths.is_empty() {
-        ratchet_from_report(&current_violation_report(&context, measured_paths)?)?
+    let (current, file_measurements) = if args.paths.is_empty() || !measured_paths.is_empty() {
+        let report = current_violation_report(&context, measured_paths)?;
+        (
+            ratchet_from_report(&report)?,
+            file_measurements_from_report(&report),
+        )
     } else {
-        RatchetFile::default()
+        (RatchetFile::default(), Vec::new())
     };
     let next = lower_ratchet_scope(previous, current, &scope);
 
@@ -93,6 +99,7 @@ pub(super) fn execute_ratchet(
         RatchetCommandKind::Ratchet,
         &context.ratchet_path,
         &next,
+        file_measurements,
         args.write,
     )
 }
@@ -107,6 +114,7 @@ pub(super) struct RatchetCommandExecution {
     kind: RatchetCommandKind,
     path: PathBuf,
     ratchet: RatchetFile,
+    file_measurements: Vec<FileLocViolation>,
     wrote: bool,
 }
 
@@ -120,7 +128,24 @@ pub(super) fn render_ratchet_stdout(
     if execution.wrote {
         return Ok(format!("wrote {}\n", execution.path.display()));
     }
-    toml::to_string_pretty(&execution.ratchet).map_err(|source| CliError::RenderConfig { source })
+    let mut output = String::new();
+    for measurement in &execution.file_measurements {
+        let counts = measurement.measurement.line_counts();
+        output.push_str(&format!(
+            "# {}: configured LOC {}; included line types: {}; code: {}; comments: {}; blank lines: {}\n",
+            measurement.path,
+            measurement.measurement.actual().get(),
+            measurement.measurement.included_line_types(),
+            counts.code,
+            counts.comments,
+            counts.blank_lines
+        ));
+    }
+    output.push_str(
+        &toml::to_string_pretty(&execution.ratchet)
+            .map_err(|source| CliError::RenderConfig { source })?,
+    );
+    Ok(output)
 }
 
 pub(super) fn ratchet_payload(execution: &RatchetCommandExecution) -> serde_json::Value {
@@ -131,6 +156,7 @@ pub(super) fn ratchet_payload(execution: &RatchetCommandExecution) -> serde_json
         },
         "path": execution.path,
         "ratchet": execution.ratchet,
+        "file_measurements": execution.file_measurements,
         "wrote": execution.wrote,
     })
 }
@@ -185,12 +211,12 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
             CheckViolation::FileLoc(violation) => match violation.kind {
                 FileViolationKind::FileLoc => ratchet.files.push(FileRatchet {
                     path: violation.path.clone(),
-                    non_test_code_lines: CodeLines::new(violation.actual.get())
+                    non_test_code_lines: LocLimit::new(violation.measurement.actual().get())
                         .expect("violating file LOC must be positive"),
                 }),
                 FileViolationKind::TestFileLoc => ratchet.test_files.push(TestFileRatchet {
                     path: violation.path.clone(),
-                    code_lines: CodeLines::new(violation.actual.get())
+                    code_lines: LocLimit::new(violation.measurement.actual().get())
                         .expect("violating test file LOC must be positive"),
                 }),
             },
@@ -217,10 +243,22 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
     Ok(ratchet)
 }
 
+fn file_measurements_from_report(report: &CheckReport) -> Vec<FileLocViolation> {
+    report
+        .violations()
+        .iter()
+        .filter_map(|violation| match violation {
+            CheckViolation::FileLoc(violation) => Some(violation.clone()),
+            CheckViolation::DirectoryFanout(_) | CheckViolation::Ratchet(_) => None,
+        })
+        .collect()
+}
+
 fn finish_ratchet_command(
     kind: RatchetCommandKind,
     path: &Path,
     ratchet: &RatchetFile,
+    file_measurements: Vec<FileLocViolation>,
     write: bool,
 ) -> Result<RatchetCommandExecution> {
     if write {
@@ -229,6 +267,7 @@ fn finish_ratchet_command(
             kind,
             path: path.to_path_buf(),
             ratchet: ratchet.clone(),
+            file_measurements,
             wrote: true,
         });
     }
@@ -236,6 +275,7 @@ fn finish_ratchet_command(
         kind,
         path: path.to_path_buf(),
         ratchet: ratchet.clone(),
+        file_measurements,
         wrote: false,
     })
 }

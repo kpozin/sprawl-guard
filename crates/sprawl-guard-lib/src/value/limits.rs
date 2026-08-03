@@ -1,7 +1,81 @@
 use std::fmt;
 use std::num::NonZeroU32;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+/// Finite or unlimited policy value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FiniteOrUnlimited<Value> {
+    /// Enforce the contained value.
+    Finite(Value),
+    /// Measure without enforcing a ceiling.
+    Unlimited,
+}
+
+impl<Value> FiniteOrUnlimited<Value>
+where
+    Value: Copy,
+{
+    /// Returns the finite limit, or `None` when the metric is unlimited.
+    pub const fn finite(self) -> Option<Value> {
+        match self {
+            Self::Finite(value) => Some(value),
+            Self::Unlimited => None,
+        }
+    }
+}
+
+impl<Value> fmt::Display for FiniteOrUnlimited<Value>
+where
+    Value: fmt::Display,
+{
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Finite(value) => value.fmt(formatter),
+            Self::Unlimited => formatter.write_str("unlimited"),
+        }
+    }
+}
+
+impl<Value> Serialize for FiniteOrUnlimited<Value>
+where
+    Value: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::Finite(value) => value.serialize(serializer),
+            Self::Unlimited => serializer.serialize_str("unlimited"),
+        }
+    }
+}
+
+impl<'de, Value> Deserialize<'de> for FiniteOrUnlimited<Value>
+where
+    Value: Deserialize<'de>,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        match RawFiniteOrUnlimited::deserialize(deserializer)? {
+            RawFiniteOrUnlimited::Finite(value) => Ok(Self::Finite(value)),
+            RawFiniteOrUnlimited::Keyword(value) if value == "unlimited" => Ok(Self::Unlimited),
+            RawFiniteOrUnlimited::Keyword(value) => Err(serde::de::Error::custom(format!(
+                "unsupported limit {value:?}; expected a positive integer or \"unlimited\"",
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawFiniteOrUnlimited<Value> {
+    Finite(Value),
+    Keyword(String),
+}
 
 /// Error returned when a configured limit value is invalid.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -17,8 +91,8 @@ pub enum LimitValueError {
 /// Kind of configured limit value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LimitValueKind {
-    /// Maximum count of code lines.
-    CodeLines,
+    /// Maximum configured lines of code.
+    Loc,
     /// Maximum count of direct leaf files.
     LeafFiles,
 }
@@ -26,32 +100,32 @@ pub enum LimitValueKind {
 impl fmt::Display for LimitValueKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::CodeLines => formatter.write_str("code-line count"),
+            Self::Loc => formatter.write_str("LOC limit"),
             Self::LeafFiles => formatter.write_str("leaf-file count"),
         }
     }
 }
 
-/// Count of code lines.
+/// Positive configured LOC limit.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct CodeLines(NonZeroU32);
+pub struct LocLimit(NonZeroU32);
 
-impl CodeLines {
-    /// Creates a code-line count.
+impl LocLimit {
+    /// Creates a configured LOC limit.
     pub fn new(value: u32) -> Result<Self, LimitValueError> {
         let Some(value) = NonZeroU32::new(value) else {
             return Err(LimitValueError::Zero {
-                kind: LimitValueKind::CodeLines,
+                kind: LimitValueKind::Loc,
             });
         };
         Ok(Self(value))
     }
 
-    /// Creates a code-line count from a trusted built-in value.
+    /// Creates a configured LOC limit from a trusted built-in value.
     pub(crate) const fn trusted(value: u32) -> Self {
         let Some(value) = NonZeroU32::new(value) else {
-            panic!("trusted code-line count must be greater than zero");
+            panic!("trusted LOC limit must be greater than zero");
         };
         Self(value)
     }
@@ -62,7 +136,7 @@ impl CodeLines {
     }
 }
 
-impl fmt::Display for CodeLines {
+impl fmt::Display for LocLimit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.get().fmt(formatter)
     }
@@ -104,7 +178,10 @@ impl fmt::Display for LeafFiles {
     }
 }
 
-impl<'de> Deserialize<'de> for CodeLines {
+/// Finite or unlimited direct leaf-file budget.
+pub type LeafFileLimit = FiniteOrUnlimited<LeafFiles>;
+
+impl<'de> Deserialize<'de> for LocLimit {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,

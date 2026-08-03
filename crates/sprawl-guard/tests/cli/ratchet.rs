@@ -13,7 +13,7 @@ mod when_writing_updates {
             &root,
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true
@@ -64,7 +64,7 @@ mod when_writing_updates {
             &root,
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true
@@ -124,7 +124,7 @@ mod when_writing_updates {
             &root,
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true

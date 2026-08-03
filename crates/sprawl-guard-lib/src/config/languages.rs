@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tokei::LanguageType;
 
-use crate::{CodeLines, GlobPattern, LanguageId, Result, SprawlError};
+use crate::{GlobPattern, IncludedLineTypes, LanguageId, LocLimit, Result, SprawlError};
 
 /// Per-language configuration.
 ///
@@ -250,14 +250,20 @@ pub struct LanguageLimits {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LanguageMaxLinesPerFileLimits {
-    /// Optional override for production file non-test code lines.
+    /// Optional replacement for inherited included line types.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub code_non_test: Option<CodeLines>,
+    pub included_line_types: Option<IncludedLineTypes>,
+    /// Optional production configured-LOC limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub production: Option<LocLimit>,
+    /// Optional test configured-LOC limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test: Option<LocLimit>,
 }
 
 impl LanguageMaxLinesPerFileLimits {
     fn is_empty(&self) -> bool {
-        self.code_non_test.is_none()
+        self.included_line_types.is_none() && self.production.is_none() && self.test.is_none()
     }
 }
 
@@ -286,13 +292,21 @@ pub(super) fn merge_language(
     if let Some(value) = common.test_globs.clone() {
         config.common_mut().test_globs = value;
     }
-    if let Some(value) = common
+    if let Some(limits) = common
         .limits
         .clone()
         .and_then(|limits| limits.max_lines_per_file)
-        .and_then(|limits| limits.code_non_test)
     {
-        config.common_mut().limits.max_lines_per_file.code_non_test = Some(value);
+        let resolved = &mut config.common_mut().limits.max_lines_per_file;
+        if let Some(value) = limits.included_line_types {
+            resolved.included_line_types = Some(value);
+        }
+        if let Some(value) = limits.production {
+            resolved.production = Some(value);
+        }
+        if let Some(value) = limits.test {
+            resolved.test = Some(value);
+        }
     }
     if let Some(rust) = partial.rust() {
         if id.as_tokei() != LanguageType::Rust {
@@ -328,5 +342,7 @@ struct PartialLanguageLimits {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartialLanguageMaxLinesPerFileLimits {
-    code_non_test: Option<CodeLines>,
+    included_line_types: Option<IncludedLineTypes>,
+    production: Option<LocLimit>,
+    test: Option<LocLimit>,
 }

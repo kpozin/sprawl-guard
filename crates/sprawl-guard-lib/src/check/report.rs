@@ -7,10 +7,9 @@ use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
 use crate::classification::TraversalIncident;
+use crate::code_line_counter::LocMeasurement;
 use crate::rust_cfg::RustCfgTestWarning;
-use crate::{
-    CodeLines, DiagnosticDetail, LanguageGroupId, LanguageId, LeafFiles, LineCount, RelativePath,
-};
+use crate::{DiagnosticDetail, LanguageGroupId, LanguageId, LeafFiles, LocLimit, RelativePath};
 
 mod ratchet;
 
@@ -352,15 +351,16 @@ pub struct FileLocViolation {
     pub path: RelativePath,
     /// Language used for LOC counting.
     pub language: LanguageId,
-    /// Measured code lines.
-    pub actual: LineCount,
-    /// Configured code-line limit.
-    pub limit: CodeLines,
+    /// Measured configured LOC and its logical-line breakdown.
+    #[serde(flatten)]
+    pub measurement: LocMeasurement,
+    /// Configured LOC limit.
+    pub limit: LocLimit,
     /// Ratchet limit that covers this violation, when available.
     ///
     /// `None` means no ratchet baseline was evaluated or no ratchet entry
     /// covered this file.
-    pub ratchet: Option<CodeLines>,
+    pub ratchet: Option<LocLimit>,
 }
 
 /// File LOC violation kind.

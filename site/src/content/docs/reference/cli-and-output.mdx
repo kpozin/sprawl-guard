@@ -27,7 +27,8 @@ existing configuration when writing. Pass comma-separated language IDs to `--lan
 ### `languages`
 
 Lists every supported language, or only the languages detected under the root. The report includes
-configuration keys and default include, exclude, and test globs. `--format` defaults to `human`.
+configuration keys, default globs, literate-language status, automatic language groups, and the
+automatic included line types. `--format` defaults to `human`.
 
 <CliCommandReference path="sprawl-guard languages" />
 
@@ -42,7 +43,9 @@ partial report; explicit scope failures and failures reading measured source fil
 
 ### `baseline [PATHS]...`
 
-Prints proposed ratchet contents by default.
+Prints proposed ratchet contents by default. File-entry previews also show the effective included
+line types and complete logical-line breakdown; the persisted ratchet remains a compact ceiling
+file.
 
 <CliCommandReference path="sprawl-guard baseline" />
 
@@ -61,8 +64,8 @@ With no paths it evaluates the complete ratchet; path arguments restrict the upd
 ### `config resolved` and `config export`
 
 `resolved` prints the built-in defaults merged with the selected root configuration and included
-override fragments. `export` prints the same policy as a complete configuration suitable for
-committing.
+override fragments. Inherited per-language LOC limits and automatic literate-language line types are
+made explicit. `export` prints the same policy as a complete configuration suitable for committing.
 
 <CliCommandReference path="sprawl-guard config resolved" />
 
@@ -71,7 +74,7 @@ committing.
 ### `explain PATH`
 
 Explains ignore handling, language ownership, test classification, effective limits, matching
-overrides, and Rust `cfg(test)` handling for one path.
+overrides, the current logical-line measurement, and Rust `cfg(test)` handling for one path.
 
 <CliCommandReference path="sprawl-guard explain" />
 
@@ -123,6 +126,12 @@ A JSON report with one file violation looks like:
       "kind": "file_loc",
       "path": "src/large.py",
       "language": "Python",
+      "included_line_types": ["code"],
+      "line_counts": {
+        "code": 430,
+        "comments": 18,
+        "blank_lines": 62
+      },
       "actual": 430,
       "limit": 400,
       "ratchet": null
@@ -132,7 +141,7 @@ A JSON report with one file violation looks like:
 ```
 
 `status` is `passed` or `failed` for a completed policy check. `coverage` reports whether the
-repository scan was complete, `counter` identifies the code-line counter, and `warnings` and
+repository scan was complete, `counter` identifies the configured-LOC counter, and `warnings` and
 `violations` contain structured diagnostics.
 
 Collected traversal failures also produce structured output and use `status: "error"`. Other
@@ -143,8 +152,8 @@ operational failures can write only human-readable stderr, even when `--format j
 
 | Rule ID                              | Finding                                                |
 | ------------------------------------ | ------------------------------------------------------ |
-| `sprawl-guard/file-loc`              | Production file non-test code lines exceed the limit.  |
-| `sprawl-guard/test-file-loc`         | Test file code lines exceed the limit.                 |
+| `sprawl-guard/file-loc`              | Production file configured LOC exceeds the limit.      |
+| `sprawl-guard/test-file-loc`         | Test file configured LOC exceeds the limit.            |
 | `sprawl-guard/directory-fanout`      | Production leaf-file fan-out exceeds the limit.        |
 | `sprawl-guard/test-directory-fanout` | Test leaf-file fan-out exceeds the limit.              |
 | `sprawl-guard/ratchet-increase`      | A baselined measurement increased.                     |

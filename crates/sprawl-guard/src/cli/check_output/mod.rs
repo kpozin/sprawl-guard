@@ -224,10 +224,14 @@ fn write_violation_group(
 }
 
 fn violation_message(violation: &FileLocViolation) -> String {
-    let metric = "code lines";
+    let metric = "configured LOC";
+    let included_line_types = violation.measurement.included_line_types();
     format!(
-        "  {}\n    language: {}\n    {metric}: {} / {}\n\n",
-        violation.path, violation.language, violation.actual, violation.limit
+        "  {}\n    language: {}\n    included line types: {included_line_types}\n    {metric}: {} / {}\n\n",
+        violation.path,
+        violation.language,
+        violation.measurement.actual().get(),
+        violation.limit
     )
 }
 
@@ -305,8 +309,17 @@ fn ratchet_violation_message(violation: &RatchetViolation) -> String {
         .group()
         .map(|group| format!("    group: {group}\n"))
         .unwrap_or_default();
+    let included_line_types = violation
+        .loc_measurement()
+        .map(|measurement| {
+            format!(
+                "    included line types: {}\n",
+                measurement.included_line_types()
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "  {}\n    kind: {}\n{group}    actual: {}\n    limit: {}\n    ratchet: {}\n\n",
+        "  {}\n    kind: {}\n{group}{included_line_types}    actual: {}\n    limit: {}\n    ratchet: {}\n\n",
         violation.path(),
         ratchet_kind_message(violation.kind()),
         actual,
@@ -355,11 +368,12 @@ mod tests {
     use indoc::indoc;
     use serde_json::json;
     use sprawl_guard_lib::{
-        CheckViolation, CheckWarning, CheckWarningKind, CodeLines, DiagnosticDetail,
-        DirectoryFanoutViolation, DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind,
-        FileLocViolation, LanguageGroupId, LeafFiles, LineCount, NonEmptyTraversalIncidents,
-        RatchetCount, RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation,
-        RatchetViolation, RelativePath, TraversalIncidentSeverity,
+        CheckViolation, CheckWarning, CheckWarningKind, DiagnosticDetail, DirectoryFanoutViolation,
+        DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind, FileLocViolation,
+        FileRatchetIncreasedViolation, LanguageGroupId, LeafFiles, LineCount, LocLimit,
+        NonEmptyTraversalIncidents, RatchetCount, RatchetIncreasedViolation, RatchetLimit,
+        RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetViolation, RelativePath,
+        TraversalIncidentSeverity,
     };
 
     use super::*;
@@ -392,8 +406,16 @@ mod tests {
             kind,
             path: RelativePath::new(path).unwrap(),
             language: sprawl_guard_lib::LanguageId::new("Rust").unwrap(),
-            actual: LineCount::new(3),
-            limit: CodeLines::new(2).unwrap(),
+            measurement: sprawl_guard_lib::code_line_counter::LocMeasurement::new(
+                sprawl_guard_lib::IncludedLineTypes::Code,
+                sprawl_guard_lib::LineCounts::new(
+                    LineCount::new(3),
+                    LineCount::new(0),
+                    LineCount::new(0),
+                ),
+            )
+            .unwrap(),
+            limit: LocLimit::new(2).unwrap(),
             ratchet: None,
         }
     }
@@ -445,10 +467,11 @@ mod tests {
 
             assert!(output.contains("File size budget exceeded:"));
             assert!(output.contains("src/lib.rs"));
-            assert!(output.contains("code lines: 3 / 2"));
+            assert!(output.contains("included line types: code"));
+            assert!(output.contains("configured LOC: 3 / 2"));
             assert!(output.contains("Test file size budget exceeded:"));
             assert!(output.contains("tests/integration.rs"));
-            assert!(output.contains("code lines: 3 / 2"));
+            assert!(output.contains("configured LOC: 3 / 2"));
         }
 
         #[test]
@@ -545,6 +568,37 @@ mod tests {
         }
 
         #[test]
+        fn it_reports_included_line_types_for_a_measured_file_ratchet() {
+            let report = CheckReport::complete(
+                report_root(),
+                counter_info(),
+                vec![],
+                vec![CheckViolation::Ratchet(RatchetViolation::Increased(
+                    RatchetIncreasedViolation::File(FileRatchetIncreasedViolation {
+                        kind: FileViolationKind::FileLoc,
+                        path: RelativePath::new("src/lib.rs").unwrap(),
+                        measurement: sprawl_guard_lib::code_line_counter::LocMeasurement::new(
+                            sprawl_guard_lib::IncludedLineTypes::CodeAndComments,
+                            sprawl_guard_lib::LineCounts::new(
+                                LineCount::new(3),
+                                LineCount::new(2),
+                                LineCount::new(1),
+                            ),
+                        )
+                        .unwrap(),
+                        limit: RatchetCount::new(2),
+                        ratchet: RatchetCount::new(4),
+                    }),
+                ))],
+            );
+
+            let output = human_check_report(&report, false);
+
+            assert!(output.contains("included line types: code, comments"));
+            assert!(output.contains("actual: 5"));
+        }
+
+        #[test]
         fn it_reports_success_when_there_are_no_violations() {
             let output = human_check_report(&report_with(vec![]), false);
 
@@ -636,6 +690,12 @@ mod tests {
                             "kind": "file_loc",
                             "path": "src/lib.rs",
                             "language": "Rust",
+                            "included_line_types": ["code"],
+                            "line_counts": {
+                                "code": 3,
+                                "comments": 0,
+                                "blank_lines": 0
+                            },
                             "actual": 3,
                             "limit": 2,
                             "ratchet": null

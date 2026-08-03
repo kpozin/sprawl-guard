@@ -52,6 +52,43 @@ mod when_supported_languages_are_listed {
     }
 
     #[test]
+    fn it_reports_automatic_group_and_line_type_policy() {
+        let root = TempDir::new().unwrap();
+
+        let (output, json) = run_json(&root, &["languages", "--format", "json"]);
+        let rust = json_language(&json, "Rust");
+        let markdown = json_language(&json, "Markdown");
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            json!({
+                "rust": {
+                    "literate": rust["literate"],
+                    "automatic_group": rust["automatic_group"],
+                    "automatic_included_line_types": rust["automatic_included_line_types"],
+                },
+                "markdown": {
+                    "literate": markdown["literate"],
+                    "automatic_group": markdown["automatic_group"],
+                    "automatic_included_line_types": markdown["automatic_included_line_types"],
+                },
+            }),
+            json!({
+                "rust": {
+                    "literate": false,
+                    "automatic_group": "source",
+                    "automatic_included_line_types": ["code"],
+                },
+                "markdown": {
+                    "literate": true,
+                    "automatic_group": "documentation",
+                    "automatic_included_line_types": ["code", "comments"],
+                },
+            })
+        );
+    }
+
+    #[test]
     fn it_prints_bundled_path_metadata_for_humans() {
         let root = TempDir::new().unwrap();
 

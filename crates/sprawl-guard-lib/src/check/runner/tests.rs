@@ -24,12 +24,12 @@ fn write_file(root: &Path, path: &str, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
-fn write_rust_file_limit_config(root: &Path, code_non_test: u32) {
+fn write_rust_file_limit_config(root: &Path, production: u32) {
     write_config(
         root,
         &formatdoc! {r#"
             [limits.max_lines_per_file]
-            code_non_test = {code_non_test}
+            production = {production}
 
             [languages.rust]
             enabled = true
@@ -100,6 +100,14 @@ fn check_with_config(
 }
 
 fn count_rust_production_source(root: &Path, source_text: &str) -> CountedSource {
+    count_rust_production_source_with_line_types(root, source_text, IncludedLineTypes::Code)
+}
+
+fn count_rust_production_source_with_line_types(
+    root: &Path,
+    source_text: &str,
+    included_line_types: IncludedLineTypes,
+) -> CountedSource {
     const SOURCE_PATH: &str = "src/lib.rs";
 
     write_rust_enabled_config(root);
@@ -115,52 +123,9 @@ fn count_rust_production_source(root: &Path, source_text: &str) -> CountedSource
         &TokeiCodeLineCounter,
         &source,
         &root.join(SOURCE_PATH),
+        included_line_types,
     )
     .unwrap()
-}
-
-struct CommentsInclusiveCounter;
-
-impl CommentsInclusiveCounter {
-    fn measurement() -> LocMeasurement {
-        LocMeasurement::new(
-            IncludedLineTypes::CodeAndComments,
-            crate::LineCounts::new(
-                crate::LineCount::new(1),
-                crate::LineCount::new(100),
-                crate::LineCount::new(0),
-            ),
-        )
-        .unwrap()
-    }
-}
-
-impl CodeLineCounter for CommentsInclusiveCounter {
-    fn count_path(
-        &self,
-        _path: &Path,
-        _language: crate::LanguageId,
-        _included_line_types: IncludedLineTypes,
-    ) -> Result<LocMeasurement> {
-        Ok(Self::measurement())
-    }
-
-    fn count_source(
-        &self,
-        _source: &str,
-        _language: crate::LanguageId,
-        _included_line_types: IncludedLineTypes,
-    ) -> Result<LocMeasurement> {
-        Ok(Self::measurement())
-    }
-
-    fn backend_id(&self) -> &'static str {
-        "comments-inclusive-test-counter"
-    }
-
-    fn backend_version(&self) -> &'static str {
-        "1"
-    }
 }
 
 fn file_violations(report: &CheckReport) -> Vec<&FileLocViolation> {
@@ -213,14 +178,64 @@ fn single_directory_violation(report: &CheckReport) -> &DirectoryFanoutViolation
     violations[0]
 }
 
-mod when_an_injected_counter_uses_different_included_line_types {
+#[derive(Clone, Copy)]
+struct MismatchedLineTypeCounter;
+
+impl CodeLineCounter for MismatchedLineTypeCounter {
+    fn count_path(
+        &self,
+        _path: &Path,
+        _language: crate::LanguageId,
+        _included_line_types: IncludedLineTypes,
+    ) -> Result<LocMeasurement> {
+        mismatched_measurement()
+    }
+
+    fn count_source(
+        &self,
+        _source: &str,
+        _language: crate::LanguageId,
+        _included_line_types: IncludedLineTypes,
+    ) -> Result<LocMeasurement> {
+        mismatched_measurement()
+    }
+
+    fn backend_id(&self) -> &'static str {
+        "test"
+    }
+
+    fn backend_version(&self) -> &'static str {
+        "1"
+    }
+}
+
+fn mismatched_measurement() -> Result<LocMeasurement> {
+    Ok(LocMeasurement::new(
+        IncludedLineTypes::Code,
+        crate::LineCounts::new(
+            crate::LineCount::new(1),
+            crate::LineCount::new(2),
+            crate::LineCount::new(0),
+        ),
+    )
+    .unwrap())
+}
+
+mod when_an_injected_counter_reports_a_different_aggregate_policy {
     use super::*;
 
     #[test]
-    fn it_applies_the_current_code_only_policy_to_the_line_breakdown() {
+    fn it_recomputes_the_aggregate_from_the_resolved_line_types_and_breakdown() {
         let tempdir = tempfile::tempdir().unwrap();
-        write_rust_file_limit_config(tempdir.path(), 1);
-        write_file(tempdir.path(), "src/lib.rs", "fn production() {}\n");
+        write_config(
+            tempdir.path(),
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                included_line_types = ["code", "comments"]
+                production = 1
+            "#},
+        );
+        write_file(tempdir.path(), "src/lib.rs", "fn source() {}\n");
         let config = load_config(tempdir.path());
 
         let report = check_with_counter(
@@ -231,12 +246,16 @@ mod when_an_injected_counter_uses_different_included_line_types {
                 require_ratchet_current: None,
                 traversal_error_policy: None,
             },
-            &CommentsInclusiveCounter,
+            &MismatchedLineTypeCounter,
         )
         .unwrap();
 
-        assert_eq!(report.status(), CheckStatus::Passed);
-        assert!(report.violations().is_empty());
+        let violation = single_failed_file_violation(&report, FileViolationKind::FileLoc);
+        assert_eq!(
+            violation.measurement.included_line_types(),
+            IncludedLineTypes::CodeAndComments
+        );
+        assert_eq!(violation.measurement.actual().get(), 3);
     }
 }
 
@@ -250,7 +269,7 @@ mod when_source_exceeds_the_production_file_limit {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 2
+                production = 2
 
                 [languages.rust]
                 enabled = true
@@ -267,7 +286,7 @@ mod when_source_exceeds_the_production_file_limit {
         assert_eq!(report.status(), CheckStatus::Failed);
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].kind, FileViolationKind::FileLoc);
-        assert_eq!(violations[0].actual.get(), 3);
+        assert_eq!(violations[0].measurement.actual().get(), 3);
     }
 }
 
@@ -387,7 +406,7 @@ mod when_test_code_exceeds_the_test_file_limit {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code = 2
+                test = 2
 
                 [languages.rust]
                 enabled = true
@@ -406,7 +425,7 @@ mod when_test_code_exceeds_the_test_file_limit {
         let report = check_root(tempdir.path()).unwrap();
 
         let violation = single_failed_file_violation(&report, FileViolationKind::TestFileLoc);
-        assert_eq!(violation.actual.get(), 3);
+        assert_eq!(violation.measurement.actual().get(), 3);
     }
 }
 
@@ -420,7 +439,7 @@ mod when_rust_production_source_contains_cfg_test_items {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true
@@ -444,7 +463,7 @@ mod when_rust_production_source_contains_cfg_test_items {
         let report = check_root(tempdir.path()).unwrap();
 
         let violation = single_failed_file_violation(&report, FileViolationKind::FileLoc);
-        assert_eq!(violation.actual.get(), 2);
+        assert_eq!(violation.measurement.actual().get(), 2);
     }
 
     #[test]
@@ -454,7 +473,7 @@ mod when_rust_production_source_contains_cfg_test_items {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true
@@ -473,7 +492,7 @@ mod when_rust_production_source_contains_cfg_test_items {
         let report = check_root(tempdir.path()).unwrap();
 
         let violation = single_failed_file_violation(&report, FileViolationKind::FileLoc);
-        assert!(violation.actual.get() > 1);
+        assert!(violation.measurement.actual().get() > 1);
     }
 
     #[test]
@@ -505,7 +524,7 @@ mod when_rust_production_source_contains_cfg_test_items {
     #[test]
     fn it_excludes_cfg_test_items_from_every_logical_line_category() {
         let tempdir = tempfile::tempdir().unwrap();
-        let counted = count_rust_production_source(
+        let counted = count_rust_production_source_with_line_types(
             tempdir.path(),
             indoc! {r#"
                 fn production() {}
@@ -517,6 +536,7 @@ mod when_rust_production_source_contains_cfg_test_items {
                     fn fixture() {}
                 }
             "#},
+            IncludedLineTypes::All,
         );
 
         assert_eq!(
@@ -527,6 +547,7 @@ mod when_rust_production_source_contains_cfg_test_items {
                 crate::LineCount::new(1),
             ),
         );
+        assert_eq!(counted.measurement.actual().get(), 2);
     }
 }
 
@@ -540,7 +561,7 @@ mod when_rust_test_source_contains_cfg_test_items {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code = 1
+                test = 1
 
                 [languages.rust]
                 enabled = true
@@ -558,7 +579,7 @@ mod when_rust_test_source_contains_cfg_test_items {
         let report = check_root(tempdir.path()).unwrap();
 
         let violation = single_failed_file_violation(&report, FileViolationKind::TestFileLoc);
-        assert!(violation.actual.get() > 1);
+        assert!(violation.measurement.actual().get() > 1);
     }
 }
 
@@ -572,7 +593,8 @@ mod when_rust_cfg_test_preprocessing_fails {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                included_line_types = ["code", "comments"]
+                production = 1
 
                 [languages.rust]
                 enabled = true
@@ -597,6 +619,8 @@ mod when_rust_cfg_test_preprocessing_fails {
         assert_eq!(report.warnings()[0].path.as_str(), "src/lib.rs");
         assert!(!report.warnings()[0].detail.is_empty());
         assert_eq!(report.status(), CheckStatus::Failed);
+        let violation = single_failed_file_violation(&report, FileViolationKind::FileLoc);
+        assert_eq!(violation.measurement.actual().get(), 2);
     }
 
     #[test]
@@ -932,23 +956,114 @@ mod when_resolving_limits {
     use super::*;
 
     #[test]
+    fn it_counts_globally_included_comments() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_config(
+            tempdir.path(),
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                included_line_types = ["code", "comments"]
+                production = 1
+            "#},
+        );
+        write_file(tempdir.path(), "src/lib.rs", "// comment\nfn main() {}\n");
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        let violations = file_violations(&report);
+        assert_eq!(violations.len(), 1);
+        let violation = violations[0];
+        assert_eq!(violation.measurement.actual().get(), 2);
+    }
+
+    #[test]
+    fn it_counts_literate_prose_by_default() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_config(
+            tempdir.path(),
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                production = 3
+            "#},
+        );
+        write_file(
+            tempdir.path(),
+            "README.md",
+            "Prose\n\n```rust\nfn main() {}\n```\n",
+        );
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        let violations = file_violations(&report);
+        assert_eq!(violations.len(), 1);
+        let violation = violations[0];
+        assert_eq!(violation.measurement.actual().get(), 4);
+    }
+
+    #[test]
+    fn it_allows_a_language_to_replace_the_literate_default() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_config(
+            tempdir.path(),
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                production = 1
+
+                [languages.markdown.limits.max_lines_per_file]
+                included_line_types = ["code"]
+            "#},
+        );
+        write_file(
+            tempdir.path(),
+            "README.md",
+            "Prose\n\n```rust\nfn main() {}\n```\n",
+        );
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        assert_eq!(report.status(), CheckStatus::Passed);
+        assert!(file_violations(&report).is_empty());
+    }
+
+    #[test]
+    fn it_applies_language_test_limits() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_config(
+            tempdir.path(),
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                test = 1
+
+                [languages.rust.limits.max_lines_per_file]
+                test = 2
+            "#},
+        );
+        write_file(tempdir.path(), "tests/lib.rs", "fn a() {}\nfn b() {}\n");
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        assert_eq!(report.status(), CheckStatus::Passed);
+        assert!(file_violations(&report).is_empty());
+    }
+
+    #[test]
     fn it_applies_global_language_and_path_precedence_to_production_file_limits() {
         let tempdir = tempfile::tempdir().unwrap();
         write_config(
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_lines_per_file = { code_non_test = 1 }
+                max_lines_per_file = { production = 1 }
 
                 [languages.rust]
                 enabled = true
 
                 [languages.rust.limits]
-                max_lines_per_file = { code_non_test = 2 }
+                max_lines_per_file = { production = 2 }
 
                 [[overrides]]
                 paths = ["src/**"]
-                max_lines_per_file = { code_non_test = 3 }
+                max_lines_per_file = { production = 3 }
                 reason = "generated bindings are tracked separately"
             "#},
         );
@@ -975,19 +1090,19 @@ mod when_resolving_limits {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_lines_per_file = { code_non_test = 1 }
+                max_lines_per_file = { production = 1 }
 
                 [languages.rust]
                 enabled = true
 
                 [[overrides]]
                 paths = ["src/**"]
-                max_lines_per_file = { code_non_test = 2 }
+                max_lines_per_file = { production = 2 }
                 reason = "package-wide exception"
 
                 [[overrides]]
                 paths = ["src/legacy/**"]
-                max_lines_per_file = { code_non_test = 3 }
+                max_lines_per_file = { production = 3 }
                 reason = "legacy exception"
             "#},
         );
@@ -1018,7 +1133,7 @@ mod when_resolving_limits {
 
                 [[overrides]]
                 paths = ["src/**"]
-                max_lines_per_file = { code_non_test = 10 }
+                max_lines_per_file = { production = 10 }
                 reason = "file LOC exception"
             "#},
         );
@@ -1044,7 +1159,7 @@ mod when_resolving_limits {
                 enabled = true
 
                 [languages.rust.limits]
-                max_lines_per_file = { code_non_test = 100 }
+                max_lines_per_file = { production = 100 }
             "#},
         );
         write_file(tempdir.path(), "src/a.rs", "fn a() {}\n");
@@ -1144,7 +1259,7 @@ mod when_check_is_path_scoped {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true
@@ -1480,7 +1595,7 @@ mod when_path_classified_tests_are_disabled {
                 check_path_tests = false
 
                 [limits]
-                max_lines_per_file = { code = 1 }
+                max_lines_per_file = { test = 1 }
                 max_leaf_files_per_directory = { test = 1 }
             "#},
         );
@@ -1529,8 +1644,8 @@ mod when_multiple_files_violate {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
-                code = 1
+                production = 1
+                test = 1
 
                 [languages.rust]
                 enabled = true

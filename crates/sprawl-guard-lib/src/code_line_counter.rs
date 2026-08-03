@@ -1,7 +1,8 @@
-//! Source code-line counting adapters.
+//! Configured-LOC counting adapters.
 
 use std::path::Path;
 
+use serde::Serialize;
 use tokei::{CodeStats, Config as TokeiConfig};
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
 const TOKEI_BACKEND_ID: &str = "tokei";
 const TOKEI_BACKEND_VERSION: &str = "14.0.0";
 
-/// Counts source code lines with a specific backend.
+/// Counts configured LOC with a specific backend.
 pub trait CodeLineCounter {
     /// Measures logical lines for a source file on disk.
     ///
@@ -81,7 +82,7 @@ impl CodeLineCounter for TokeiCodeLineCounter {
 }
 
 /// One configured LOC measurement and its complete logical-line breakdown.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct LocMeasurement {
     /// Line categories selected for the aggregate.
     included_line_types: IncludedLineTypes,

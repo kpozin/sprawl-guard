@@ -67,7 +67,7 @@ mod when_writing_the_initial_baseline {
             &root,
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [ratchet]
                 file = "custom-ratchet.toml"
@@ -122,7 +122,7 @@ mod when_the_ratchet_file_already_exists {
             &root,
             indoc! {r#"
                 [limits.max_lines_per_file]
-                code_non_test = 1
+                production = 1
 
                 [languages.rust]
                 enabled = true

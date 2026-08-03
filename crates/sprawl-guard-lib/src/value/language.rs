@@ -4,6 +4,9 @@ use std::str::FromStr;
 use serde::{Deserialize, Deserializer, Serialize};
 use tokei::LanguageType;
 
+use super::language_group::LanguageGroupId;
+use super::line_types::IncludedLineTypes;
+
 /// Error returned when a language identifier is not supported by `tokei`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LanguageIdError {
@@ -36,6 +39,29 @@ impl LanguageId {
     /// Returns the underlying `tokei` language.
     pub const fn as_tokei(self) -> LanguageType {
         self.0
+    }
+
+    /// Reports whether the language treats prose as a logical comment.
+    pub fn is_literate(self) -> bool {
+        self.0.is_literate()
+    }
+
+    /// Returns the automatic directory fan-out group for this language.
+    pub fn automatic_group(self) -> LanguageGroupId {
+        if self.is_literate() {
+            LanguageGroupId::Documentation
+        } else {
+            LanguageGroupId::Source
+        }
+    }
+
+    /// Applies the automatic literate-language policy to global included line types.
+    pub fn automatic_included_line_types(self, global: IncludedLineTypes) -> IncludedLineTypes {
+        if self.is_literate() {
+            global.with_comments()
+        } else {
+            global
+        }
     }
 }
 

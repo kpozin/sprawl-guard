@@ -79,6 +79,26 @@ impl IncludedLineTypes {
     pub fn contains(self, line_type: IncludedLineType) -> bool {
         self.as_slice().contains(&line_type)
     }
+
+    /// Returns the same set with comments included.
+    pub const fn with_comments(self) -> Self {
+        match self {
+            Self::Code | Self::CodeAndComments => Self::CodeAndComments,
+            Self::CodeAndBlankLines | Self::All => Self::All,
+        }
+    }
+}
+
+impl fmt::Display for IncludedLineTypes {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (index, line_type) in self.as_slice().iter().enumerate() {
+            if index > 0 {
+                formatter.write_str(", ")?;
+            }
+            line_type.fmt(formatter)?;
+        }
+        Ok(())
+    }
 }
 
 impl TryFrom<Vec<IncludedLineType>> for IncludedLineTypes {
@@ -288,6 +308,24 @@ mod tests {
         }
     }
 
+    mod when_displaying_included_line_types {
+        use super::*;
+
+        #[test]
+        fn it_uses_canonical_order_and_names() {
+            let cases = [
+                (IncludedLineTypes::Code, "code"),
+                (IncludedLineTypes::CodeAndComments, "code, comments"),
+                (IncludedLineTypes::CodeAndBlankLines, "code, blank_lines"),
+                (IncludedLineTypes::All, "code, comments, blank_lines"),
+            ];
+
+            for (included, expected) in cases {
+                assert_eq!(included.to_string(), expected);
+            }
+        }
+    }
+
     mod when_summing_line_counts {
         use super::*;
 
@@ -320,6 +358,26 @@ mod tests {
                 .unwrap_err();
 
             assert_eq!(error.count(), u64::from(u32::MAX) + 1);
+        }
+    }
+
+    mod when_adding_comments_for_a_literate_language {
+        use super::*;
+
+        #[test]
+        fn it_preserves_the_global_blank_line_selection() {
+            assert_eq!(
+                IncludedLineTypes::CodeAndBlankLines.with_comments(),
+                IncludedLineTypes::All
+            );
+        }
+
+        #[test]
+        fn it_does_not_change_an_existing_comment_selection() {
+            assert_eq!(
+                IncludedLineTypes::CodeAndComments.with_comments(),
+                IncludedLineTypes::CodeAndComments
+            );
         }
     }
 }

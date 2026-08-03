@@ -35,14 +35,16 @@ pub use ratchet::{
     TestDirectoryRatchet, TestFileRatchet,
 };
 pub use resolved_limits::{
-    LeafFileLimit, MatchedOverride, OverrideOrdinal, ResolvedCodeLineLimit, ResolvedLeafFileLimit,
+    MatchedOverride, OverrideOrdinal, ResolvedFileLocLimit, ResolvedLeafFileLimit,
     SourceResolvedLimits,
 };
 pub use rust_cfg::{ExcludedItemCount, RustCfgTestInfo, RustCfgTestStatus};
 pub use value::glob::{GlobPattern, GlobPatternError};
 pub use value::language::{LanguageId, LanguageIdError};
 pub use value::language_group::{CustomLanguageGroupId, LanguageGroupId, LanguageGroupIdError};
-pub use value::limits::{CodeLines, LeafFiles, LimitValueError, LimitValueKind};
+pub use value::limits::{
+    FiniteOrUnlimited, LeafFileLimit, LeafFiles, LimitValueError, LimitValueKind, LocLimit,
+};
 pub use value::line_types::{
     CountedLoc, IncludedLineType, IncludedLineTypes, IncludedLineTypesError, LineCount,
     LineCountOverflow, LineCounts,

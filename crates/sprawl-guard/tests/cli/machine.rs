@@ -145,7 +145,7 @@ mod run {
     }
 
     /// Ratchet-producing commands whose machine payloads share one schema.
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Eq, PartialEq)]
     enum RatchetPayloadKind {
         Baseline,
         Ratchet,
@@ -226,6 +226,22 @@ mod run {
             })
         );
         assert_eq!(stderr(output), "");
+        assert_eq!(
+            json["result"]["payload"]["file_measurements"],
+            json!([{
+                "kind": "file_loc",
+                "path": "src/lib.rs",
+                "language": "Rust",
+                "included_line_types": ["code"],
+                "line_counts": {"code": 2, "comments": 0, "blank_lines": 0},
+                "actual": 2,
+                "limit": 1,
+                "ratchet": null,
+            }])
+        );
+        assert!(stdout(direct).starts_with(
+            "# src/lib.rs: configured LOC 2; included line types: code; code: 2; comments: 0; blank lines: 0\n"
+        ));
     }
 
     /// Verifies the shared write result and persisted ratchet produced by ratchet commands.

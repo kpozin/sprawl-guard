@@ -1,8 +1,8 @@
 //! Current limits carried by measured ratchet diagnostics.
 
+use crate::FiniteOrUnlimited;
 use crate::LeafFileLimit;
 use crate::ratchet::RatchetCount;
-use crate::resolved_limits::FiniteOrUnlimited;
 
 /// Current finite or unlimited limit carried by a measured ratchet diagnostic.
 pub type RatchetLimit = FiniteOrUnlimited<RatchetCount>;

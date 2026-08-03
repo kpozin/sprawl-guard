@@ -1,5 +1,6 @@
 use serde::Serialize;
 
+use crate::code_line_counter::LocMeasurement;
 use crate::{
     DiagnosticDetail, LanguageGroupId, LanguageId, RelativePath, RustCfgTestInfo,
     SourceResolvedLimits,
@@ -39,11 +40,7 @@ pub struct ClassifiedSource {
 impl ClassifiedSource {
     /// Creates a classified source with the built-in group for its language.
     pub fn new(path: RelativePath, language: LanguageId, kind: SourceKind) -> Self {
-        let group = if language.as_tokei().is_literate() {
-            LanguageGroupId::Documentation
-        } else {
-            LanguageGroupId::Source
-        };
+        let group = language.automatic_group();
         Self {
             path,
             language,
@@ -160,26 +157,91 @@ pub(crate) struct TraversalIncidentSortKey<'incident> {
 /// fields describe later phases that affect the file during `check`, so
 /// `sprawl-guard explain` can answer more than the source/non-source decision.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct SourceExplanation {
-    /// Included source classification.
-    pub source: ClassifiedSource,
-    /// Resolved file and directory limits used by `check`, when available.
-    ///
-    /// Path-only explanations for missing files do not have this field because
-    /// no filesystem-backed source was available for later check-phase
-    /// diagnostics.
-    pub resolved_limits: Option<SourceResolvedLimits>,
-    /// Rust-specific preprocessing status, when the source is a Rust file.
-    pub rust_cfg_test: Option<RustCfgTestInfo>,
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum SourceExplanation {
+    /// Classification-only result for a path that was not measured.
+    Classified {
+        /// Included source classification.
+        source: ClassifiedSource,
+    },
+    /// Existing source measured with its complete effective policy.
+    Measured {
+        /// Included source classification.
+        source: ClassifiedSource,
+        /// Resolved file and directory limits used by `check`.
+        resolved_limits: SourceResolvedLimits,
+        /// Configured-LOC measurement and logical-line breakdown.
+        measurement: LocMeasurement,
+        /// Rust-specific preprocessing status, when the source is Rust.
+        rust_cfg_test: Option<RustCfgTestInfo>,
+    },
 }
 
 impl SourceExplanation {
     /// Creates an explanation before later-phase diagnostics are attached.
     pub(super) fn classified(source: ClassifiedSource) -> Self {
-        Self {
+        Self::Classified { source }
+    }
+
+    /// Creates an explanation for a successfully measured existing source.
+    pub(super) fn measured(
+        source: ClassifiedSource,
+        resolved_limits: SourceResolvedLimits,
+        measurement: LocMeasurement,
+        rust_cfg_test: Option<RustCfgTestInfo>,
+    ) -> Self {
+        Self::Measured {
             source,
-            resolved_limits: None,
-            rust_cfg_test: None,
+            resolved_limits,
+            measurement,
+            rust_cfg_test,
+        }
+    }
+
+    /// Returns the included source classification.
+    pub fn source(&self) -> &ClassifiedSource {
+        match self {
+            Self::Classified { source } | Self::Measured { source, .. } => source,
+        }
+    }
+
+    /// Returns resolved limits when this existing source was measured.
+    pub fn resolved_limits(&self) -> Option<&SourceResolvedLimits> {
+        match self {
+            Self::Classified { .. } => None,
+            Self::Measured {
+                resolved_limits, ..
+            } => Some(resolved_limits),
+        }
+    }
+
+    /// Returns the configured-LOC measurement for an existing source.
+    pub fn measurement(&self) -> Option<&LocMeasurement> {
+        match self {
+            Self::Classified { .. } => None,
+            Self::Measured { measurement, .. } => Some(measurement),
+        }
+    }
+
+    /// Returns Rust preprocessing details for a measured Rust source.
+    pub fn rust_cfg_test(&self) -> Option<&RustCfgTestInfo> {
+        match self {
+            Self::Classified { .. }
+            | Self::Measured {
+                rust_cfg_test: None,
+                ..
+            } => None,
+            Self::Measured {
+                rust_cfg_test: Some(info),
+                ..
+            } => Some(info),
+        }
+    }
+
+    /// Consumes the explanation and returns its source classification.
+    pub(super) fn into_source(self) -> ClassifiedSource {
+        match self {
+            Self::Classified { source } | Self::Measured { source, .. } => source,
         }
     }
 }
