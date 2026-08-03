@@ -20,7 +20,7 @@ use super::output::{PartialOutputConfig, merge_output};
 use super::ratchet::{PartialRatchetConfig, merge_ratchet};
 use super::tests::{PartialTestsConfig, merge_tests};
 use super::traversal::{PartialTraversalConfig, merge_traversal};
-use super::{Config, PathOverride};
+use super::{Config, ConfigSchemaVersion, PathOverride};
 
 const PRIMARY_CONFIG_FILE: &str = "sprawl-guard.toml";
 const ALIAS_CONFIG_FILE: &str = ".sprawlrc.toml";
@@ -107,10 +107,28 @@ fn read_root_config(path: &Path) -> Result<PartialConfig> {
         path: path.to_path_buf(),
         source,
     })?;
-    toml::from_str(&contents).map_err(|source| SprawlError::ParseToml {
-        path: path.to_path_buf(),
-        source,
-    })
+    let document =
+        toml::from_str::<toml::Value>(&contents).map_err(|source| SprawlError::ParseToml {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    validate_root_schema_version(&document)?;
+    document
+        .try_into()
+        .map_err(|source| SprawlError::ParseToml {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+fn validate_root_schema_version(document: &toml::Value) -> Result<()> {
+    let Some(version) = document.get("schema_version") else {
+        return Err(SprawlError::MissingConfigSchemaVersion);
+    };
+    if let Some(version) = version.as_integer() {
+        ConfigSchemaVersion::try_from(version)?;
+    }
+    Ok(())
 }
 
 /// Reads an included config fragment after enforcing the fragment-only schema.
@@ -235,6 +253,7 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
     // Keep this destructuring exhaustive so new root config fields fail compilation until their
     // precedence and merge semantics are handled here.
     let PartialConfig {
+        schema_version,
         config: config_include,
         limits,
         ignore,
@@ -248,6 +267,7 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
         output,
     } = partial;
 
+    config.schema_version = schema_version;
     if let Some(value) = config_include {
         merge_config_include(&mut config.config, value);
     }
@@ -306,6 +326,7 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PartialConfig {
+    schema_version: ConfigSchemaVersion,
     config: Option<PartialConfigInclude>,
     limits: Option<PartialLimits>,
     ignore: Option<PartialIgnoreConfig>,

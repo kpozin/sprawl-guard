@@ -11,7 +11,7 @@ mod reference;
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sprawl_guard_lib::{LanguageId, TraversalErrorPolicy};
+use sprawl_guard_lib::TraversalErrorPolicy;
 
 use crate::error::{CliError, Result};
 
@@ -68,14 +68,6 @@ enum Command {
 /// Arguments for `init`.
 #[derive(Debug, Args)]
 struct InitArgs {
-    /// Language IDs to enable in the generated config.
-    #[arg(long, value_delimiter = ',', conflicts_with = "all_languages")]
-    languages: Vec<LanguageId>,
-
-    /// Enable every supported language in the generated config.
-    #[arg(long)]
-    all_languages: bool,
-
     /// Print planned config and advisory output without creating files.
     #[arg(long)]
     dry_run: bool,

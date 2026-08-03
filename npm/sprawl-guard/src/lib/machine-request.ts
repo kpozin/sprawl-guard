@@ -65,12 +65,10 @@ const KNOWN_VALUE_OPTIONS = new Set([
   "--color",
   "--config",
   "--format",
-  "--languages",
   "--traversal-error-policy",
 ]);
 const KNOWN_FLAG_OPTIONS = new Set([
   "--all",
-  "--all-languages",
   "--allow-raises",
   "--detected",
   "--dry-run",

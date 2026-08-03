@@ -257,7 +257,6 @@ fn machine_runtime_error_code(error: &CliError) -> MachineRuntimeErrorCode {
         CliError::MachineContractValueNonString { .. } => MachineRuntimeErrorCode::RenderJsonFailed,
         CliError::ExistingConfig { .. } => MachineRuntimeErrorCode::ExistingConfig,
         CliError::InvalidMachineExitCode { .. } => MachineRuntimeErrorCode::InvalidExitCode,
-        CliError::NoInitLanguages => MachineRuntimeErrorCode::NoInitLanguages,
         CliError::InitAdvisoryScan { .. } => MachineRuntimeErrorCode::LibraryError,
         CliError::WriteConfig { .. } => MachineRuntimeErrorCode::WriteConfigFailed,
         CliError::RenderJson { .. } => MachineRuntimeErrorCode::RenderJsonFailed,

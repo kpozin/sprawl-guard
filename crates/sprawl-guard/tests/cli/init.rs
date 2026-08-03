@@ -1,6 +1,5 @@
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
-use sprawl_guard_lib::config::supported_language_ids;
 use std::process::Output;
 
 use super::common::*;
@@ -15,70 +14,23 @@ fn assert_init_writes_config(root: &TempDir, expected: toml::Table) -> Output {
     output
 }
 
-mod when_supported_languages_are_detected {
+mod when_the_repository_has_supported_sources {
     use super::*;
 
     #[test]
-    fn it_writes_a_minimal_config_for_only_detected_languages() {
+    fn it_writes_a_minimal_config_without_language_tables() {
         let root = TempDir::new().unwrap();
         write_file(&root, "src/lib.rs", "fn main() {}\n");
 
         let output = assert_init_writes_config(
             &root,
             toml::toml! {
-                [languages.rust]
-                enabled = true
+                schema_version = 1
             },
         );
+
         assert!(stdout(&output).contains("Wrote "));
-    }
-
-    #[test]
-    fn it_detects_typescript_only_repositories() {
-        let root = TempDir::new().unwrap();
-        write_file(&root, "src/index.ts", "export const value = 1;\n");
-
-        assert_init_writes_config(
-            &root,
-            toml::toml! {
-                [languages.typescript]
-                enabled = true
-            },
-        );
-    }
-
-    #[test]
-    fn it_detects_mixed_repositories() {
-        let root = TempDir::new().unwrap();
-        write_file(&root, "src/lib.rs", "pub fn value() -> u8 { 1 }\n");
-        write_file(&root, "src/index.ts", "export const value = 1;\n");
-
-        assert_init_writes_config(
-            &root,
-            toml::toml! {
-                [languages.rust]
-                enabled = true
-
-                [languages.typescript]
-                enabled = true
-            },
-        );
-    }
-
-    #[test]
-    fn it_uses_ignore_rules_when_detecting_languages() {
-        let root = TempDir::new().unwrap();
-        write_file(&root, ".gitignore", "ignored/**\n");
-        write_file(&root, "ignored/index.ts", "export const ignored = true;\n");
-        write_file(&root, "src/lib.rs", "pub fn value() -> u8 { 1 }\n");
-
-        assert_init_writes_config(
-            &root,
-            toml::toml! {
-                [languages.rust]
-                enabled = true
-            },
-        );
+        assert!(!stdout(&output).contains("Selected languages:"));
     }
 }
 
@@ -97,12 +49,11 @@ mod when_config_path_is_explicit {
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert!(!root.child("sprawl-guard.toml").path().exists());
-        assert_toml_contains(
-            &parse_toml(&std::fs::read_to_string(root.child("custom-sprawl.toml")).unwrap()),
-            toml::toml! {
-                [languages.rust]
-                enabled = true
-            },
+        assert_eq!(
+            parse_toml(&std::fs::read_to_string(root.child("custom-sprawl.toml")).unwrap()),
+            toml_value(toml::toml! {
+                schema_version = 1
+            }),
         );
         assert_eq!(stderr(&output), "");
     }
@@ -147,90 +98,23 @@ mod when_config_path_is_explicit {
     }
 }
 
-mod when_languages_are_explicit {
+mod when_language_selection_flags_are_supplied {
     use super::*;
 
     #[test]
-    fn it_writes_those_languages_without_matching_files() {
+    fn it_rejects_the_removed_flags() {
         let root = TempDir::new().unwrap();
 
-        let output = sprawl_guard(&root)
-            .args(["init", "--languages", "rust,typescript"])
-            .output()
-            .unwrap();
-        let config = read_config_toml(&root);
+        for args in [
+            vec!["init", "--languages", "rust"],
+            vec!["init", "--all-languages"],
+        ] {
+            let output = sprawl_guard(&root).args(args).output().unwrap();
 
-        assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(
-            config,
-            toml_value(toml::toml! {
-                [languages.rust]
-                enabled = true
-
-                [languages.typescript]
-                enabled = true
-            })
-        );
-        assert_eq!(stderr(&output), "");
-    }
-
-    #[test]
-    fn it_normalizes_aliases_to_canonical_lowercase_keys() {
-        let root = TempDir::new().unwrap();
-
-        let output = sprawl_guard(&root)
-            .args(["init", "--languages", "TypeScript", "--dry-run"])
-            .output()
-            .unwrap();
-
-        assert_exit_code(&output, exit_codes::SUCCESS);
-        let config = toml_from_stdout_config(&output);
-
-        assert_eq!(
-            config,
-            toml_value(toml::toml! {
-                [languages.typescript]
-                enabled = true
-            })
-        );
-        assert_eq!(stderr(&output), "");
-    }
-}
-
-mod when_all_languages_are_requested {
-    use super::*;
-
-    #[test]
-    fn it_writes_every_supported_language_section() {
-        let root = TempDir::new().unwrap();
-
-        let output = sprawl_guard(&root)
-            .args(["init", "--all-languages"])
-            .output()
-            .unwrap();
-        let config = read_config_toml(&root);
-        let language_table = config["languages"].as_table().unwrap();
-
-        assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(language_table.len(), supported_language_ids().len());
-        for language in supported_language_ids() {
-            let key = language.to_string().to_ascii_lowercase();
-            assert_eq!(language_table[&key]["enabled"].as_bool(), Some(true));
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert!(stderr(&output).contains("unexpected argument"));
+            assert!(!root.child("sprawl-guard.toml").path().exists());
         }
-        assert_toml_contains(
-            &config,
-            toml::toml! {
-                [languages.rust]
-                enabled = true
-
-                [languages.typescript]
-                enabled = true
-
-                [languages."c++"]
-                enabled = true
-            },
-        );
-        assert_eq!(stderr(&output), "");
     }
 }
 
@@ -242,7 +126,7 @@ mod when_dry_run_is_used {
         let root = TempDir::new().unwrap();
 
         let output = sprawl_guard(&root)
-            .args(["init", "--languages", "rust", "--dry-run"])
+            .args(["init", "--dry-run"])
             .output()
             .unwrap();
         let config_path = root.child("sprawl-guard.toml");
@@ -254,8 +138,7 @@ mod when_dry_run_is_used {
         assert_eq!(
             config,
             toml_value(toml::toml! {
-                [languages.rust]
-                enabled = true
+                schema_version = 1
             })
         );
         assert_eq!(stderr(&output), "");
@@ -267,7 +150,7 @@ mod when_dry_run_is_used {
         write_config(&root, "[languages.rust]\nenabled = true\n");
 
         let output = sprawl_guard(&root)
-            .args(["init", "--languages", "rust", "--dry-run"])
+            .args(["init", "--dry-run"])
             .output()
             .unwrap();
 
@@ -285,10 +168,7 @@ mod when_config_already_exists {
         let root = TempDir::new().unwrap();
         write_config(&root, "[languages.rust]\nenabled = true\n");
 
-        let output = sprawl_guard(&root)
-            .args(["init", "--languages", "rust"])
-            .output()
-            .unwrap();
+        let output = sprawl_guard(&root).arg("init").output().unwrap();
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
         assert!(stderr(&output).contains("config file already exists:"));
@@ -309,18 +189,22 @@ mod when_config_already_exists {
     }
 }
 
-mod when_no_languages_are_selected_or_detected {
+mod when_the_repository_is_empty {
     use super::*;
 
     #[test]
-    fn it_exits_without_writing_config() {
+    fn it_writes_the_minimal_config() {
         let root = TempDir::new().unwrap();
 
-        let output = sprawl_guard(&root).arg("init").output().unwrap();
+        let output = assert_init_writes_config(
+            &root,
+            toml::toml! {
+                schema_version = 1
+            },
+        );
 
-        assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
-        assert!(!root.child("sprawl-guard.toml").path().exists());
-        assert!(stderr(&output).contains("no supported source files found"));
+        assert!(stdout(&output).contains("Wrote "));
+        assert!(!stdout(&output).contains("Selected languages:"));
     }
 }
 
@@ -332,10 +216,7 @@ mod when_advisory_scan_fails {
         let root = TempDir::new().unwrap();
         write_oversized_rust_source(&root, "src/huge.rs");
 
-        let output = sprawl_guard(&root)
-            .args(["init", "--languages", "rust"])
-            .output()
-            .unwrap();
+        let output = sprawl_guard(&root).arg("init").output().unwrap();
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
         assert!(!root.child("sprawl-guard.toml").path().exists());
@@ -368,8 +249,7 @@ mod when_generated_vendor_like_paths_are_included {
         assert_eq!(
             config,
             toml_value(toml::toml! {
-                [languages.javascript]
-                enabled = true
+                schema_version = 1
             })
         );
         assert_eq!(stderr(&output), "");

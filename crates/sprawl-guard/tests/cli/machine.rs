@@ -334,7 +334,7 @@ mod run {
     fn it_keeps_init_advisory_failures_inside_the_machine_envelope() {
         let root = TempDir::new().unwrap();
         write_oversized_rust_source(&root, "src/huge.rs");
-        let request = machine_request(&root, &["init", "--languages", "rust"]);
+        let request = machine_request(&root, &["init"]);
         let (output, json) = run_json_stdin(&["machine", "run"], &request);
         let result_stderr = assert_library_runtime_error(&output, &json);
 
@@ -370,24 +370,32 @@ mod run {
     fn it_matches_init_dry_run_output() {
         let root = TempDir::new().unwrap();
         let direct = sprawl_guard(&root)
-            .args(["init", "--languages", "rust", "--dry-run"])
+            .args(["init", "--dry-run"])
             .output()
             .unwrap();
-        let request = machine_request(&root, &["init", "--languages", "rust", "--dry-run"]);
+        let request = machine_request(&root, &["init", "--dry-run"]);
         let (output, json) = run_machine_request(&request);
 
         assert_completed_result_matches_direct_streams(&output, &json, &direct);
+        assert!(
+            !json["result"]["payload"]
+                .as_object()
+                .unwrap()
+                .contains_key("selected_languages")
+        );
         assert_eq!(
             json!({
                 "kind": json["result"]["payload"]["kind"],
                 "target": json["result"]["payload"]["target"],
-                "selected_languages": json["result"]["payload"]["selected_languages"],
+                "config": json["result"]["payload"]["config"],
                 "mode": json["result"]["payload"]["mode"],
             }),
             json!({
                 "kind": "init",
                 "target": root.path().canonicalize().unwrap().join("sprawl-guard.toml"),
-                "selected_languages": ["Rust"],
+                "config": {
+                    "schema_version": 1,
+                },
                 "mode": {
                     "kind": "dry_run",
                     "overwrite_warning": serde_json::Value::Null,
@@ -400,10 +408,16 @@ mod run {
     #[test]
     fn it_writes_init_config_inside_the_machine_envelope() {
         let root = TempDir::new().unwrap();
-        let request = machine_request(&root, &["init", "--languages", "rust"]);
+        let request = machine_request(&root, &["init"]);
         let (output, json) = run_machine_request(&request);
 
         assert_exit_code(&output, exit_codes::SUCCESS);
+        assert!(
+            !json["result"]["payload"]
+                .as_object()
+                .unwrap()
+                .contains_key("selected_languages")
+        );
         assert_eq!(
             json!({
                 "kind": json["result"]["kind"],
@@ -411,7 +425,7 @@ mod run {
                 "stderr": json["result"]["stderr"],
                 "payload_kind": json["result"]["payload"]["kind"],
                 "target": json["result"]["payload"]["target"],
-                "selected_languages": json["result"]["payload"]["selected_languages"],
+                "config": json["result"]["payload"]["config"],
                 "mode": json["result"]["payload"]["mode"],
             }),
             json!({
@@ -420,7 +434,9 @@ mod run {
                 "stderr": "",
                 "payload_kind": "init",
                 "target": root.path().canonicalize().unwrap().join("sprawl-guard.toml"),
-                "selected_languages": ["Rust"],
+                "config": {
+                    "schema_version": 1,
+                },
                 "mode": {
                     "kind": "written",
                 },
@@ -432,12 +448,11 @@ mod run {
                 .unwrap()
                 .contains("Wrote ")
         );
-        assert_toml_contains(
-            &read_config_toml(&root),
-            toml::toml! {
-                [languages.rust]
-                enabled = true
-            },
+        assert_eq!(
+            read_config_toml(&root),
+            toml_value(toml::toml! {
+                schema_version = 1
+            })
         );
         assert_eq!(stderr(&output), "");
     }
@@ -449,7 +464,7 @@ mod run {
         let commands = [
             ("check", vec!["check", "--format", "json"]),
             ("explain", vec!["explain", "--format", "json", "src/lib.rs"]),
-            ("init", vec!["init", "--languages", "rust", "--dry-run"]),
+            ("init", vec!["init", "--dry-run"]),
             ("languages", vec!["languages", "--format", "json"]),
             ("config resolved", vec!["config", "resolved"]),
             ("config export", vec!["config", "export"]),

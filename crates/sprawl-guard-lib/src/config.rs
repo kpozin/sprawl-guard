@@ -11,6 +11,7 @@ mod load;
 mod output;
 mod overrides;
 mod ratchet;
+mod schema;
 mod tests;
 mod traversal;
 mod types;
@@ -36,6 +37,7 @@ pub use overrides::{
     PathOverride,
 };
 pub use ratchet::RatchetConfig;
+pub use schema::ConfigSchemaVersion;
 pub use tests::TestsConfig;
 pub use traversal::{
     SourceFileByteLimit, SourceFileByteLimitError, SymlinkTraversal, TraversalConfig,

@@ -124,6 +124,15 @@ pub enum SprawlError {
         /// TOML parser error.
         source: toml::de::Error,
     },
+    /// A root config file omitted its required schema version.
+    #[error("config file is missing required schema_version = 1")]
+    MissingConfigSchemaVersion,
+    /// A root config file used an unsupported numeric schema version.
+    #[error("unsupported config schema version {version}; expected version 1")]
+    UnsupportedConfigSchemaVersion {
+        /// Version read from the root config file.
+        version: i64,
+    },
     /// A ratchet TOML file could not be parsed.
     #[error("failed to parse ratchet file {path}: {source}")]
     ParseRatchet {

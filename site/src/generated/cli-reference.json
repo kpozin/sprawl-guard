@@ -78,24 +78,6 @@
       "usage": "Usage: sprawl-guard init [OPTIONS]",
       "arguments": [
         {
-          "id": "languages",
-          "syntax": "--languages <LANGUAGES>",
-          "help": "Language IDs to enable in the generated config",
-          "conflicts_with": [
-            "--all-languages"
-          ],
-          "default_values": [],
-          "possible_values": []
-        },
-        {
-          "id": "all_languages",
-          "syntax": "--all-languages",
-          "help": "Enable every supported language in the generated config",
-          "conflicts_with": [],
-          "default_values": [],
-          "possible_values": []
-        },
-        {
           "id": "dry_run",
           "syntax": "--dry-run",
           "help": "Print planned config and advisory output without creating files",

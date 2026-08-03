@@ -7,6 +7,15 @@ Sprawl Guard discovers `sprawl-guard.toml` or `.sprawlrc.toml` under the reposit
 exist, discovery fails. `--config PATH` selects an explicit file. Unknown sections and fields are
 errors.
 
+Every root configuration must declare the schema version:
+
+```toml title="sprawl-guard.toml"
+schema_version = 1
+```
+
+Run `sprawl-guard init` to create this minimal file, then add the sections below. Include fragments
+omit `schema_version` and may contain only `[[overrides]]`.
+
 Use `sprawl-guard config resolved` to inspect the effective policy. Use
 `sprawl-guard config export` to print a complete configuration suitable for committing.
 

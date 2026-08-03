@@ -1,9 +1,9 @@
 use crate::config::{
-    CommonLanguageConfig, Config, ConfigInclude, FilesConfig, IgnoreConfig, LanguageConfig,
-    LanguageGroupsConfig, LanguageLimits, LanguageMode, Limits, MaxLeafFilesPerDirectoryLimits,
-    MaxLinesPerFileLimits, OutputConfig, OutputFormat, RatchetConfig, RustCfgTestExclusion,
-    RustLanguageConfig, SourceFileByteLimit, SymlinkTraversal, TestsConfig, TraversalConfig,
-    TraversalDepth, TraversalEntryLimit, TraversalErrorPolicy,
+    CommonLanguageConfig, Config, ConfigInclude, ConfigSchemaVersion, FilesConfig, IgnoreConfig,
+    LanguageConfig, LanguageGroupsConfig, LanguageLimits, LanguageMode, Limits,
+    MaxLeafFilesPerDirectoryLimits, MaxLinesPerFileLimits, OutputConfig, OutputFormat,
+    RatchetConfig, RustCfgTestExclusion, RustLanguageConfig, SourceFileByteLimit, SymlinkTraversal,
+    TestsConfig, TraversalConfig, TraversalDepth, TraversalEntryLimit, TraversalErrorPolicy,
 };
 use crate::{
     ColorMode, GlobPattern, IncludedLineTypes, LanguageId, LeafFileLimit, LeafFiles, LocLimit,
@@ -23,6 +23,7 @@ pub fn built_in_config() -> Config {
     let languages = default_languages();
     let language_groups = LanguageGroupsConfig::automatic(languages.keys().copied());
     Config {
+        schema_version: ConfigSchemaVersion::CURRENT,
         config: ConfigInclude { include: vec![] },
         limits: Limits {
             max_lines_per_file: MaxLinesPerFileLimits {

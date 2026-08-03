@@ -5,15 +5,17 @@ use serde::Serialize;
 use crate::{CustomLanguageGroupId, LanguageGroupId, LanguageId};
 
 use super::{
-    ConfigInclude, FilesConfig, IgnoreConfig, LanguageConfig, LanguageGroupsConfig, LanguageMode,
-    Limits, MaxLinesPerFileLimits, OutputConfig, PathOverride, RatchetConfig, TestsConfig,
-    TraversalConfig,
+    ConfigInclude, ConfigSchemaVersion, FilesConfig, IgnoreConfig, LanguageConfig,
+    LanguageGroupsConfig, LanguageMode, Limits, MaxLinesPerFileLimits, OutputConfig, PathOverride,
+    RatchetConfig, TestsConfig, TraversalConfig,
 };
 
 /// Fully resolved `sprawl-guard` configuration.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Root configuration schema version.
+    pub schema_version: ConfigSchemaVersion,
     /// Config include settings.
     pub config: ConfigInclude,
     /// Production source limits.

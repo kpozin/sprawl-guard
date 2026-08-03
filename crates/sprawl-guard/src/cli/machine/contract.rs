@@ -32,7 +32,6 @@ pub(super) enum MachineRuntimeErrorCode {
     InvalidExitCode,
     LibraryError,
     MissingRatchetFile,
-    NoInitLanguages,
     NotImplemented,
     RatchetRaises,
     RenderConfigFailed,
@@ -42,14 +41,13 @@ pub(super) enum MachineRuntimeErrorCode {
 
 impl MachineRuntimeErrorCode {
     /// All runtime failure categories currently emitted by the machine transport.
-    pub(super) const VARIANTS: [Self; 12] = [
+    pub(super) const VARIANTS: [Self; 11] = [
         Self::AllWithPaths,
         Self::AmbiguousRatchetReplacement,
         Self::ExistingConfig,
         Self::InvalidExitCode,
         Self::LibraryError,
         Self::MissingRatchetFile,
-        Self::NoInitLanguages,
         Self::NotImplemented,
         Self::RatchetRaises,
         Self::RenderConfigFailed,

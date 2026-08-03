@@ -1,14 +1,12 @@
 mod advisory;
 
-use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::json;
-use sprawl_guard_lib::classification::discover_sources;
-use sprawl_guard_lib::config::{built_in_config, supported_language_ids};
-use sprawl_guard_lib::{LanguageId, SprawlError};
+use sprawl_guard_lib::SprawlError;
+use sprawl_guard_lib::config::{ConfigSchemaVersion, built_in_config};
 
 use crate::error::{CliError, Result};
 
@@ -27,7 +25,6 @@ pub(super) struct InitExecution {
     advisory: InitAdvisory,
     config_text: String,
     mode: InitExecutionMode,
-    selected_languages: Vec<LanguageId>,
     target: PathBuf,
 }
 
@@ -39,10 +36,8 @@ pub(super) fn execute_init(
     let root = resolve_cli_root(root)?;
     let target = resolve_target_config_path(&root, config_path.as_deref());
     reject_existing_config_for_write(&root, &target, config_path.as_deref(), args.dry_run)?;
-    let selected_languages = select_languages(&root, &args)?;
-    let config_text = render_minimal_config(&selected_languages)?;
-    let selected_config = selected_language_config(selected_languages.iter().copied())?;
-    let advisory = run_advisory_scan(&root, &target, &selected_config)?;
+    let config_text = render_minimal_config()?;
+    let advisory = run_advisory_scan(&root, &target, &built_in_config())?;
     let overwrite_warning = existing_config_for_write(&root, &target, config_path.as_deref());
     let mode = if args.dry_run {
         InitExecutionMode::DryRun { overwrite_warning }
@@ -58,7 +53,6 @@ pub(super) fn execute_init(
         advisory,
         config_text,
         mode,
-        selected_languages,
         target,
     })
 }
@@ -85,11 +79,6 @@ pub(super) fn render_init_stdout(execution: &InitExecution, quiet: bool) -> Stri
             output.push('\n');
         }
         InitExecutionMode::Written => {
-            output.push_str("Selected languages:\n");
-            for language in &execution.selected_languages {
-                writeln!(&mut output, "  {}", init_language_key(*language)).unwrap();
-            }
-            output.push('\n');
             writeln!(&mut output, "Wrote {}", execution.target.display()).unwrap();
             output.push('\n');
         }
@@ -102,7 +91,6 @@ pub(super) fn init_payload(execution: &InitExecution) -> serde_json::Value {
     json!({
         "kind": "init",
         "target": execution.target,
-        "selected_languages": execution.selected_languages,
         "config": toml::from_str::<toml::Value>(&execution.config_text)
             .expect("generated init config must stay valid TOML"),
         "mode": match &execution.mode {
@@ -162,66 +150,13 @@ fn existing_config_for_write(
         .find(|path| path.exists())
 }
 
-fn select_languages(root: &Path, args: &InitArgs) -> Result<Vec<LanguageId>> {
-    if args.all_languages {
-        return Ok(supported_language_ids());
-    }
-    if !args.languages.is_empty() {
-        return Ok(sorted_unique_languages(args.languages.iter().copied()));
-    }
-    detect_languages(root)
-}
-
-fn detect_languages(root: &Path) -> Result<Vec<LanguageId>> {
-    let config = built_in_config();
-    let sources = discover_sources(root, &config)?;
-    let languages = sorted_unique_languages(sources.into_iter().map(|source| source.language()));
-    if languages.is_empty() {
-        return Err(CliError::NoInitLanguages);
-    }
-    Ok(languages)
-}
-
-fn sorted_unique_languages(languages: impl IntoIterator<Item = LanguageId>) -> Vec<LanguageId> {
-    languages
-        .into_iter()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
-fn selected_language_config(
-    languages: impl IntoIterator<Item = LanguageId>,
-) -> Result<sprawl_guard_lib::config::Config> {
-    let mut config = built_in_config();
-    let selected = languages.into_iter().collect::<BTreeSet<_>>();
-    config.disable_languages(
-        supported_language_ids()
-            .into_iter()
-            .filter(|language| !selected.contains(language)),
-    );
-    Ok(config)
-}
-
-fn render_minimal_config(languages: &[LanguageId]) -> Result<String> {
-    let mut root = toml::map::Map::new();
-    let mut language_tables = toml::map::Map::new();
-    for language in languages {
-        let mut language_table = toml::map::Map::new();
-        language_table.insert("enabled".to_owned(), toml::Value::Boolean(true));
-        language_tables.insert(
-            init_language_key(*language),
-            toml::Value::Table(language_table),
-        );
-    }
-    root.insert("languages".to_owned(), toml::Value::Table(language_tables));
-    let toml = toml::to_string_pretty(&toml::Value::Table(root))
-        .map_err(|source| CliError::RenderConfig { source })?;
-    Ok(format!("{header}{toml}", header = minimal_config_header()))
-}
-
-fn init_language_key(language: LanguageId) -> String {
-    language.to_string().to_ascii_lowercase()
+fn render_minimal_config() -> Result<String> {
+    let root = toml::Table::from_iter([(
+        "schema_version".to_owned(),
+        toml::Value::Integer(ConfigSchemaVersion::CURRENT.into()),
+    )]);
+    let toml = toml::to_string_pretty(&root).map_err(|source| CliError::RenderConfig { source })?;
+    Ok(format!("{}{toml}", minimal_config_header()))
 }
 
 fn minimal_config_header() -> &'static str {
@@ -232,25 +167,4 @@ fn minimal_config_header() -> &'static str {
      #\n\
      # Debug why a path is included or excluded:\n\
      #   sprawl-guard explain path/to/file\n\n"
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    mod init_language_key {
-        use super::*;
-
-        #[test]
-        fn it_lowercases_the_canonical_tokei_name() {
-            assert_eq!(
-                super::init_language_key(LanguageId::new("typescript").unwrap()),
-                "typescript"
-            );
-            assert_eq!(
-                super::init_language_key(LanguageId::new("c++").unwrap()),
-                "c++"
-            );
-        }
-    }
 }

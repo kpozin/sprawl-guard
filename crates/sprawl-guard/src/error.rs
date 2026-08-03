@@ -22,9 +22,6 @@ pub enum CliError {
         /// Existing config path.
         path: std::path::PathBuf,
     },
-    /// Init could not select any language.
-    #[error("no supported source files found; pass --languages or --all-languages")]
-    NoInitLanguages,
     /// The initial config could not be written.
     #[error("failed to write config {path}: {source}")]
     WriteConfig {

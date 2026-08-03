@@ -8,15 +8,24 @@ use tokei::LanguageType;
 
 use super::*;
 use crate::config::{
-    LanguageConfig, SourceFileByteLimit, SymlinkTraversal, TraversalDepth, TraversalEntryLimit,
-    TraversalErrorPolicy,
+    ConfigSchemaVersion, LanguageConfig, SourceFileByteLimit, SymlinkTraversal, TraversalDepth,
+    TraversalEntryLimit, TraversalErrorPolicy,
 };
 use crate::{
     CustomLanguageGroupId, GlobPattern, IncludedLineTypes, LanguageGroupId, LeafFileLimit,
     LeafFiles,
 };
 
-fn load(root: &Path) -> Result<LoadedConfig> {
+fn load_config_fixture(root: &Path) -> Result<LoadedConfig> {
+    let config_path = root.join(PRIMARY_CONFIG_FILE);
+    if config_path.exists() {
+        let contents = fs::read_to_string(&config_path).unwrap();
+        fs::write(config_path, format!("schema_version = 1\n{contents}")).unwrap();
+    }
+    load_raw_config(root)
+}
+
+fn load_raw_config(root: &Path) -> Result<LoadedConfig> {
     load_resolved_config(&LoadOptions {
         root: root.to_path_buf(),
         config: None,
@@ -34,6 +43,81 @@ fn language<'config>(config: &'config Config, id: &str) -> &'config LanguageConf
     config.languages.get(&LanguageId::new(id).unwrap()).unwrap()
 }
 
+mod when_config_schema_version_is_read {
+    use super::*;
+
+    #[test]
+    fn it_rejects_a_missing_version_with_a_typed_error() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "").unwrap();
+
+        let error = load_raw_config(tempdir.path()).unwrap_err();
+
+        assert!(matches!(error, SprawlError::MissingConfigSchemaVersion));
+    }
+
+    #[test]
+    fn it_accepts_version_one() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            "schema_version = 1\n",
+        )
+        .unwrap();
+
+        let loaded = load_raw_config(tempdir.path()).unwrap();
+
+        assert_eq!(loaded.config.schema_version, ConfigSchemaVersion::V1);
+    }
+
+    #[test]
+    fn it_rejects_an_unsupported_numeric_version_with_a_typed_error() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            "schema_version = 2\n",
+        )
+        .unwrap();
+
+        let error = load_raw_config(tempdir.path()).unwrap_err();
+
+        assert!(matches!(
+            error,
+            SprawlError::UnsupportedConfigSchemaVersion { version: 2 }
+        ));
+    }
+
+    #[test]
+    fn it_rejects_a_nonnumeric_version_as_invalid_toml_schema() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            "schema_version = \"1\"\n",
+        )
+        .unwrap();
+
+        let error = load_raw_config(tempdir.path()).unwrap_err();
+
+        assert!(matches!(error, SprawlError::ParseToml { .. }));
+    }
+
+    #[test]
+    fn it_assigns_the_current_version_when_no_config_file_exists() {
+        let tempdir = tempfile::tempdir().unwrap();
+
+        let loaded = load_raw_config(tempdir.path()).unwrap();
+
+        assert_eq!(loaded.config.schema_version, ConfigSchemaVersion::CURRENT);
+    }
+
+    #[test]
+    fn it_serializes_the_version_before_root_tables() {
+        let serialized = toml::to_string_pretty(&built_in_config()).unwrap();
+
+        assert!(serialized.starts_with("schema_version = 1\n"));
+    }
+}
+
 mod when_config_is_minimal {
     use super::*;
 
@@ -49,7 +133,7 @@ mod when_config_is_minimal {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
         let rust = language(&loaded.config, "rust");
 
         assert!(rust.is_enabled());
@@ -83,7 +167,7 @@ mod when_config_is_minimal {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "").unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(loaded.config.languages.len(), LanguageType::list().len());
         for (language, _) in LanguageType::list() {
@@ -112,7 +196,7 @@ mod when_config_is_minimal {
     fn it_does_not_materialize_bundled_language_globs_when_serialized() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "").unwrap();
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         let serialized = toml::Value::try_from(&loaded.config).unwrap();
         let rust = serialized
@@ -140,7 +224,7 @@ mod when_language_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert!(!language(&loaded.config, "rust").is_enabled());
     }
@@ -157,7 +241,7 @@ mod when_language_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
         let include = language(&loaded.config, "rust")
             .common()
             .include
@@ -179,7 +263,7 @@ mod when_language_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
         let rust = language(&loaded.config, "rust").common();
 
         assert_eq!(rust.include, None);
@@ -200,7 +284,7 @@ mod when_language_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
         let limits = &language(&loaded.config, "rust")
             .common()
             .limits
@@ -226,7 +310,7 @@ mod when_language_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_patterns(
             &language(&loaded.config, "rust").common().exclude,
@@ -247,7 +331,7 @@ mod when_language_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert!(!language(&loaded.config, "rust").is_enabled());
     }
@@ -261,7 +345,7 @@ mod when_config_has_unknown_keys {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "unknown = true\n").unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("unknown field"));
     }
@@ -275,7 +359,7 @@ mod when_config_include_table_is_sparse {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "[config]\n").unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert!(loaded.config.config.include.is_empty());
     }
@@ -296,7 +380,7 @@ mod when_tests_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_patterns(
             &loaded.config.tests.globs,
@@ -326,7 +410,7 @@ mod when_traversal_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(
             loaded.config.traversal.follow_symlinks,
@@ -369,7 +453,7 @@ mod when_limits_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(
             loaded.config.limits.max_lines_per_file.production.get(),
@@ -394,7 +478,7 @@ mod when_limits_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(
             loaded.config.limits.max_leaf_files_per_directory.production,
@@ -418,7 +502,7 @@ mod when_limits_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(
             loaded.config.limits.max_leaf_files_per_directory.production,
@@ -445,7 +529,7 @@ mod when_limits_config_is_partial {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
         let limits = &loaded.config.overrides[0].limits;
 
         assert_eq!(limits.production_loc_per_file().unwrap().get(), 600);
@@ -483,7 +567,7 @@ mod when_language_groups_are_configured {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
         let frontend = CustomLanguageGroupId::try_new("frontend".to_owned()).unwrap();
         let group = loaded
             .config
@@ -532,7 +616,7 @@ mod when_language_groups_are_configured {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(
             loaded
@@ -556,7 +640,7 @@ mod when_language_groups_are_configured {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(
             loaded
@@ -590,7 +674,7 @@ mod when_language_groups_are_configured {
             "#},
         )
         .unwrap();
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         let serialized = toml::Value::try_from(&loaded.config).unwrap();
         let groups = serialized
@@ -614,7 +698,7 @@ mod when_config_toml_is_invalid {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "[limits\n").unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("failed to parse"));
     }
@@ -627,7 +711,7 @@ mod when_config_values_are_invalid {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), config).unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains(expected));
     }
@@ -644,7 +728,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("invalid glob pattern"));
     }
@@ -661,7 +745,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("must be greater than zero"));
     }
@@ -711,7 +795,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("expected a positive integer"));
     }
@@ -750,7 +834,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("must not contain '..'"));
     }
@@ -767,7 +851,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("forward slash separators"));
     }
@@ -784,7 +868,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("forward slash separators"));
     }
@@ -801,7 +885,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("must not contain ':'"));
     }
@@ -818,7 +902,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("unsupported color mode"));
     }
@@ -835,7 +919,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("unsupported language ID"));
     }
@@ -853,7 +937,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("exclude_cfg_test"));
         assert!(error.to_string().contains("TypeScript"));
@@ -871,7 +955,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("Rust"));
         assert!(error.to_string().contains("include"));
@@ -891,7 +975,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(
             error
@@ -913,7 +997,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(
             error
@@ -936,7 +1020,7 @@ mod when_config_values_are_invalid {
         )
         .unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(
             error
@@ -1065,7 +1149,7 @@ mod when_both_config_names_exist {
         fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "").unwrap();
         fs::write(tempdir.path().join(ALIAS_CONFIG_FILE), "").unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        let error = load_config_fixture(tempdir.path()).unwrap_err();
 
         assert!(error.to_string().contains("ambiguous config files"));
     }
@@ -1074,8 +1158,7 @@ mod when_both_config_names_exist {
 mod when_include_fragment_contains_non_override_tables {
     use super::*;
 
-    #[test]
-    fn it_rejects_the_fragment() {
+    fn fragment_error(contents: &str) -> SprawlError {
         let tempdir = tempfile::tempdir().unwrap();
         fs::create_dir(tempdir.path().join("sprawl-guard.d")).unwrap();
         fs::write(
@@ -1086,18 +1169,30 @@ mod when_include_fragment_contains_non_override_tables {
             "#},
         )
         .unwrap();
-        fs::write(
-            tempdir.path().join("sprawl-guard.d/bad.toml"),
-            indoc! {r#"
-                [limits.max_lines_per_file]
-                production = 900
-            "#},
-        )
-        .unwrap();
+        fs::write(tempdir.path().join("sprawl-guard.d/bad.toml"), contents).unwrap();
 
-        let error = load(tempdir.path()).unwrap_err();
+        load_config_fixture(tempdir.path()).unwrap_err()
+    }
+
+    #[test]
+    fn it_rejects_the_fragment() {
+        let error = fragment_error(indoc! {r#"
+            [limits.max_lines_per_file]
+            production = 900
+        "#});
 
         assert!(error.to_string().contains("may contain only [[overrides]]"));
+    }
+
+    #[test]
+    fn it_rejects_a_schema_version_in_the_fragment() {
+        let error = fragment_error("schema_version = 1\n");
+
+        assert!(matches!(
+            error,
+            SprawlError::IncludeFragmentUnsupportedTable { table, .. }
+                if table == "schema_version"
+        ));
     }
 }
 
@@ -1142,7 +1237,7 @@ mod when_include_fragments_match {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
         let reasons = loaded
             .config
             .overrides
@@ -1188,7 +1283,7 @@ mod when_include_globs_match_symlink_directories {
         )
         .unwrap();
 
-        let loaded = load(tempdir.path()).unwrap();
+        let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert!(loaded.includes.is_empty());
         assert!(loaded.config.overrides.is_empty());

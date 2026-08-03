@@ -39,10 +39,12 @@ mod when_the_hidden_cli_reference_generator_is_requested {
             argument(command(&document, &["sprawl-guard"]), "version")["syntax"],
             "-V, --version",
         );
-        assert_eq!(
-            argument(command(&document, &["sprawl-guard", "init"]), "languages")["syntax"],
-            "--languages <LANGUAGES>",
-        );
+        let init_arguments = command(&document, &["sprawl-guard", "init"])["arguments"]
+            .as_array()
+            .unwrap();
+        assert!(init_arguments.iter().all(|argument| {
+            !matches!(argument["id"].as_str(), Some("languages" | "all_languages"))
+        }));
         assert_eq!(
             argument(command(&document, &["sprawl-guard", "check"]), "paths")["syntax"],
             "[PATHS]...",

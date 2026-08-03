@@ -21,9 +21,11 @@ fn assert_config_command_outputs_full_config(root: &TempDir, command: &str) {
         .args(["config", command])
         .output()
         .unwrap();
-    let config = parse_toml(&stdout(&output));
+    let stdout = stdout(&output);
+    let config = parse_toml(&stdout);
 
     assert_exit_code(&output, exit_codes::SUCCESS);
+    assert!(stdout.starts_with("schema_version = 1\n"));
     assert_toml_contains(
         &config,
         toml::toml! {

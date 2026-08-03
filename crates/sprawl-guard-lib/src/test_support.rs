@@ -29,7 +29,11 @@ pub(crate) fn load_config(root: &Path) -> Config {
 }
 
 pub(crate) fn write_config(root: &Path, contents: &str) {
-    fs::write(root.join("sprawl-guard.toml"), contents).unwrap();
+    fs::write(
+        root.join("sprawl-guard.toml"),
+        format!("schema_version = 1\n{contents}"),
+    )
+    .unwrap();
 }
 
 pub(crate) fn write_rust_enabled_config(root: &Path) {

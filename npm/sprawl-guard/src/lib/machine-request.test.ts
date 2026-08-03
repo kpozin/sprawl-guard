@@ -182,6 +182,21 @@ describe("buildMachineRunRequest", () => {
     });
   });
 
+  describe("when a removed init language flag appears before a root flag", () => {
+    test("it leaves root handling to Rust instead of consuming obsolete option grammar", () => {
+      for (const argv of [
+        ["init", "--languages", "rust", "--root", "/repo"],
+        ["init", "--all-languages", "--root", "/repo"],
+      ]) {
+        const request = buildMachineRunRequest(argv);
+
+        assert.ok(Result.isOk(request));
+        assert.equal(request.value.hostRoot, path.resolve(process.cwd()));
+        assert.deepEqual(JSON.parse(request.value.requestJson).argv, argv);
+      }
+    });
+  });
+
   describe("when root appears after the command", () => {
     test("it uses the root for preopen selection and rewrites the value", () => {
       const request = buildMachineRunRequest(["check", "--root", "/repo"]);

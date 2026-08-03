@@ -30,12 +30,16 @@ pub(crate) fn sprawl_guard_no_root() -> Command {
 }
 
 pub(crate) fn write_config(root: &TempDir, contents: &str) {
-    root.child("sprawl-guard.toml").write_str(contents).unwrap();
+    root.child("sprawl-guard.toml")
+        .write_str(&format!("schema_version = 1\n{contents}"))
+        .unwrap();
     ignore_fixture_file(root, "sprawl-guard.toml");
 }
 
 pub(crate) fn write_alias_config(root: &TempDir, contents: &str) {
-    root.child(".sprawlrc.toml").write_str(contents).unwrap();
+    root.child(".sprawlrc.toml")
+        .write_str(&format!("schema_version = 1\n{contents}"))
+        .unwrap();
     ignore_fixture_file(root, ".sprawlrc.toml");
 }
 

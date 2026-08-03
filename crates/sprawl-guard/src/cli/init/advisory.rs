@@ -14,8 +14,6 @@ use sprawl_guard_lib::{
 use crate::error::CliError;
 use crate::error::Result;
 
-use super::init_language_key;
-
 const GENERATED_VENDOR_ADVISORY_THRESHOLD: usize = 100;
 
 pub(super) struct InitAdvisory {
@@ -141,7 +139,7 @@ impl SourceSummary {
             writeln!(
                 output,
                 "  {:<12} {}",
-                init_language_key(*language),
+                language_key(*language),
                 file_count(*count)
             )
             .unwrap();
@@ -245,12 +243,14 @@ impl GeneratedVendorWarning {
     fn language_summary(&self) -> String {
         self.language_counts
             .iter()
-            .map(|(language, count)| {
-                format!("{} {}", file_count(*count), init_language_key(*language))
-            })
+            .map(|(language, count)| format!("{} {}", file_count(*count), language_key(*language)))
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+fn language_key(language: LanguageId) -> String {
+    language.to_string().to_ascii_lowercase()
 }
 
 #[derive(Default, Serialize)]

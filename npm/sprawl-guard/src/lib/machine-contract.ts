@@ -28,7 +28,6 @@ export enum MachineRuntimeErrorCode {
   InvalidExitCode = "invalid_exit_code",
   LibraryError = "library_error",
   MissingRatchetFile = "missing_ratchet_file",
-  NoInitLanguages = "no_init_languages",
   NotImplemented = "not_implemented",
   RatchetRaises = "ratchet_raises",
   RenderConfigFailed = "render_config_failed",
