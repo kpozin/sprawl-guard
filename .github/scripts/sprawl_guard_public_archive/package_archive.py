@@ -65,12 +65,22 @@ class DefaultFeaturesExpectation(StrEnum):
 
 
 @dataclass(frozen=True)
-class DependencyExpectation:
-    """Closed contract for one normalized registry dependency."""
+class FixedDependencyExpectation:
+    """Contract for a registry dependency pinned independently of the package version."""
 
     name: CargoDependencyName
     version: CargoVersion
     default_features: DefaultFeaturesExpectation | None = None
+
+
+@dataclass(frozen=True)
+class PackageVersionDependencyExpectation:
+    """Contract for a registry dependency pinned to the package's own version."""
+
+    name: CargoDependencyName
+
+
+DependencyExpectation = FixedDependencyExpectation | PackageVersionDependencyExpectation
 
 
 @dataclass(frozen=True)
@@ -88,7 +98,6 @@ class PackageSpec:
     """Expected identity, files, and normalized dependency of one crate archive."""
 
     name: CargoPackageName
-    version: CargoVersion
     metadata: PackageMetadata
     dependency: DependencyExpectation
     allowed_content_directories: tuple[PurePosixPath, ...]
@@ -97,14 +106,13 @@ class PackageSpec:
 
 LIBRARY_PACKAGE = PackageSpec(
     name=CargoPackageName.LIBRARY,
-    version=CargoVersion(0, 1, 0),
     metadata=PackageMetadata(
         description="Implementation library for the sprawl-guard CLI.",
         documentation="https://docs.rs/sprawl-guard-lib",
         keywords=("lint", "repository", "architecture", "tooling"),
         categories=("development-tools",),
     ),
-    dependency=DependencyExpectation(
+    dependency=FixedDependencyExpectation(
         name=CargoDependencyName.TOKEI,
         version=CargoVersion(14, 0, 0),
         default_features=DefaultFeaturesExpectation.DISABLED,
@@ -118,16 +126,14 @@ LIBRARY_PACKAGE = PackageSpec(
 
 CLI_PACKAGE = PackageSpec(
     name=CargoPackageName.CLI,
-    version=CargoVersion(0, 1, 0),
     metadata=PackageMetadata(
         description="Repository sprawl checker CLI.",
         documentation="https://docs.rs/sprawl-guard",
         keywords=("lint", "repository", "architecture", "ratchet"),
         categories=("command-line-utilities", "development-tools"),
     ),
-    dependency=DependencyExpectation(
+    dependency=PackageVersionDependencyExpectation(
         name=CargoDependencyName.LIBRARY,
-        version=CargoVersion(0, 1, 0),
     ),
     allowed_content_directories=(
         PurePosixPath("src"),
@@ -237,7 +243,7 @@ def _read_normalized_manifest(
 
 
 def _validate_normalized_dependency(
-    manifest: dict[str, Any], spec: PackageSpec
+    manifest: dict[str, Any], spec: PackageSpec, package_version: str
 ) -> None:
     dependencies = _toml_table(manifest.get("dependencies"), "dependencies")
     expectation = spec.dependency
@@ -245,13 +251,21 @@ def _validate_normalized_dependency(
         dependencies.get(expectation.name.value),
         f"dependency {expectation.name.value}",
     )
-    expected: dict[str, object] = {"version": expectation.version.exact_requirement()}
-    if expectation.default_features is not None:
-        expected["default-features"] = expectation.default_features.cargo_value()
+    match expectation:
+        case FixedDependencyExpectation():
+            exact_requirement = expectation.version.exact_requirement()
+            expected: dict[str, object] = {"version": exact_requirement}
+            if expectation.default_features is not None:
+                expected["default-features"] = (
+                    expectation.default_features.cargo_value()
+                )
+        case PackageVersionDependencyExpectation():
+            exact_requirement = f"={package_version}"
+            expected = {"version": exact_requirement}
     if dependency != expected:
         raise PackageValidationError(
             f"dependency {expectation.name.value} is not registry-normalized at "
-            f"{expectation.version.exact_requirement()}"
+            f"{exact_requirement}"
         )
 
 
@@ -312,8 +326,8 @@ def _validate_package_metadata(
         )
 
 
-def validate_package_archive(archive: Path, spec: PackageSpec) -> None:
-    """Checks one `.crate` archive and its normalized Cargo manifest."""
+def validate_package_archive(archive: Path, spec: PackageSpec) -> str:
+    """Checks one `.crate` archive and returns its normalized package version."""
     try:
         with tarfile.open(archive, mode="r:gz") as package:
             members = _archive_members(package)
@@ -379,12 +393,15 @@ def validate_package_archive(archive: Path, spec: PackageSpec) -> None:
             package_table = _toml_table(manifest.get("package"), "package")
             package_name = package_table.get("name")
             package_version = package_table.get("version")
-            expected_version = spec.version.render()
-            if package_name != spec.name.value or package_version != expected_version:
+            if (
+                package_name != spec.name.value
+                or not isinstance(package_version, str)
+                or not package_version
+            ):
                 raise PackageValidationError(
                     f"crate archive has unexpected package identity: {package_name} {package_version}"
                 )
-            expected_prefix = f"{spec.name.value}-{expected_version}"
+            expected_prefix = f"{spec.name.value}-{package_version}"
             expected_filename = f"{expected_prefix}.crate"
             if (
                 prefix.as_posix() != expected_prefix
@@ -396,7 +413,7 @@ def validate_package_archive(archive: Path, spec: PackageSpec) -> None:
                 )
             _validate_package_metadata(package_table, spec)
             _validate_dependency_locations(manifest)
-            _validate_normalized_dependency(manifest, spec)
+            _validate_normalized_dependency(manifest, spec, package_version)
             for license_path, expected_digest in EXPECTED_LICENSE_DIGESTS.items():
                 license_file = package.extractfile(relative_members[license_path])
                 if (
@@ -406,6 +423,7 @@ def validate_package_archive(archive: Path, spec: PackageSpec) -> None:
                     raise PackageValidationError(
                         f"crate archive contains unexpected license text: {license_path}"
                     )
+            return package_version
     except PackageValidationError:
         raise
     except (OSError, tarfile.TarError) as error:
@@ -435,5 +453,10 @@ def validate_package_directory(package_directory: Path) -> None:
     if unexpected_archives:
         rendered = ", ".join(archive.name for archive in unexpected_archives)
         raise PackageValidationError(f"unexpected crate archives: {rendered}")
-    for archive, spec in zip(expected_archives, PACKAGE_SPECS, strict=True):
+    package_versions = {
         validate_package_archive(archive, spec)
+        for archive, spec in zip(expected_archives, PACKAGE_SPECS, strict=True)
+    }
+    if len(package_versions) != 1:
+        rendered = ", ".join(sorted(package_versions))
+        raise PackageValidationError(f"crate archive versions disagree: {rendered}")

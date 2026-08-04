@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { PACKAGE_VERSION } from "./package-manifests.ts";
 import { resolveReleaseMetadata } from "./release-metadata.ts";
 
 const MATCHING_CARGO_METADATA = {
   packages: [
-    { name: "sprawl-guard", version: "0.1.0" },
-    { name: "sprawl-guard-lib", version: "0.1.0" },
+    { name: "sprawl-guard", version: PACKAGE_VERSION },
+    { name: "sprawl-guard-lib", version: PACKAGE_VERSION },
   ],
 };
+const RELEASE_TAG = `v${PACKAGE_VERSION}`;
 const RELEASE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 const OTHER_COMMIT = "89abcdef0123456789abcdef0123456789abcdef";
 
@@ -30,15 +32,15 @@ describe("resolveReleaseMetadata", () => {
           githubRefName: "main",
           githubRefType: "branch",
           inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),
         {
           kind: "ok",
           releaseCommit: RELEASE_COMMIT,
-          releaseTag: "v0.1.0",
-          releaseVersion: "0.1.0",
+          releaseTag: RELEASE_TAG,
+          releaseVersion: PACKAGE_VERSION,
         },
       );
     });
@@ -50,10 +52,10 @@ describe("resolveReleaseMetadata", () => {
         resolveManualReleaseMetadata({
           cargoMetadata: MATCHING_CARGO_METADATA,
           githubEventCommit: RELEASE_COMMIT,
-          githubRefName: "v0.1.0",
+          githubRefName: RELEASE_TAG,
           githubRefType: "tag",
           inputReleaseCommit: OTHER_COMMIT,
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),
@@ -73,7 +75,7 @@ describe("resolveReleaseMetadata", () => {
           cargoMetadata: MATCHING_CARGO_METADATA,
           githubEventCommit: RELEASE_COMMIT,
           githubEventName: "push",
-          githubRefName: "v0.1.0",
+          githubRefName: RELEASE_TAG,
           githubRefType: "tag",
           inputReleaseCommit: "",
           inputReleaseTag: "",
@@ -92,10 +94,10 @@ describe("resolveReleaseMetadata", () => {
           cargoMetadata: MATCHING_CARGO_METADATA,
           githubEventCommit: RELEASE_COMMIT,
           githubEventName: "release",
-          githubRefName: "v0.1.0",
+          githubRefName: RELEASE_TAG,
           githubRefType: "tag",
           inputReleaseCommit: "",
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }).kind,
@@ -111,7 +113,7 @@ describe("resolveReleaseMetadata", () => {
           cargoMetadata: MATCHING_CARGO_METADATA,
           githubEventCommit: OTHER_COMMIT,
           githubEventName: "push",
-          githubRefName: "v0.1.0",
+          githubRefName: RELEASE_TAG,
           githubRefType: "tag",
           inputReleaseCommit: "",
           inputReleaseTag: "",
@@ -154,7 +156,7 @@ describe("resolveReleaseMetadata", () => {
           githubRefName: "main",
           githubRefType: "branch",
           inputReleaseCommit: "",
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),
@@ -172,7 +174,7 @@ describe("resolveReleaseMetadata", () => {
           githubRefName: "main",
           githubRefType: "branch",
           inputReleaseCommit: "main",
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),
@@ -190,7 +192,7 @@ describe("resolveReleaseMetadata", () => {
           githubRefName: "main",
           githubRefType: "branch",
           inputReleaseCommit: OTHER_COMMIT,
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),
@@ -212,7 +214,7 @@ describe("resolveReleaseMetadata", () => {
           githubRefName: "main",
           githubRefType: "branch",
           inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: OTHER_COMMIT,
         }),
@@ -234,7 +236,7 @@ describe("resolveReleaseMetadata", () => {
           githubRefName: "main",
           githubRefType: "branch",
           inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }).kind,
@@ -253,7 +255,7 @@ describe("resolveReleaseMetadata", () => {
           githubRefName: "main",
           githubRefType: "branch",
           inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: "v0.1.0",
+          inputReleaseTag: RELEASE_TAG,
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),

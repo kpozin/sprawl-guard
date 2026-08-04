@@ -1,6 +1,6 @@
 [package]
 name = "sprawl-guard"
-version = "0.1.0"
+version = "0.2.0-dev.0"
 edition = "2024"
 description = "Repository sprawl checker CLI."
 documentation = "https://docs.rs/sprawl-guard"
@@ -18,7 +18,7 @@ clap = { workspace = true, features = ["derive"] }
 indoc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-sprawl-guard-lib = { version = "=0.1.0", path = "../sprawl-guard-lib" }
+sprawl-guard-lib = { version = "=0.2.0-dev.0", path = "../sprawl-guard-lib" }
 thiserror.workspace = true
 toml.workspace = true
 

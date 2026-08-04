@@ -1,6 +1,6 @@
 [package]
 name = "sprawl-guard-lib"
-version = "0.1.0"
+version = "0.2.0-dev.0"
 edition = "2024"
 description = "Implementation library for the sprawl-guard CLI."
 documentation = "https://docs.rs/sprawl-guard-lib"
