@@ -16,7 +16,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 ### Changed
 
 - All bundled languages are enabled by default.
-- Configuration and setup documentation now covers the complete schema and package installation paths.
+- Configuration and setup documentation now covers the complete schema and package installation
+  paths.
 
 ## [0.1.0] - 2026-07-23
 
