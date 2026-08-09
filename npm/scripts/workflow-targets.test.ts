@@ -12,6 +12,7 @@ const RELEASE_WORKFLOW_URL = new URL(
 );
 const WORKFLOW_STEP_SCHEMA = z.object({
   id: z.string().min(1).optional(),
+  if: z.string().min(1).optional(),
   name: z.string().min(1),
   run: z.string().min(1).optional(),
   uses: z.string().min(1).optional(),
@@ -35,26 +36,15 @@ const CI_WORKFLOW_SCHEMA = z.object({
   }),
 });
 
-const WORKFLOW_AUTHORITY_SCHEMA = z.object({
-  permissions: z.record(z.string(), z.unknown()),
-  jobs: z.record(z.string(), z.unknown()),
-});
-const REGISTRY_PUBLISH_COMMAND_PATTERN =
-  /(?:^|[\n;&|])\s*(?:npm|pnpm|cargo)\b[^\n;&|]*\bpublish(?:\s|$)/u;
-
 const RELEASE_WORKFLOW_SCHEMA = z.object({
+  concurrency: z.object({
+    group: z.literal("sprawl-guard-release"),
+    "cancel-in-progress": z.literal(false),
+  }),
   permissions: z.record(z.string(), z.unknown()),
   on: z.object({
     workflow_dispatch: z.object({
       inputs: z.object({
-        release_commit: z.object({
-          required: z.literal(true),
-          type: z.literal("string"),
-        }),
-        release_tag: z.object({
-          required: z.literal(true),
-          type: z.literal("string"),
-        }),
         npm_channel: z.object({
           default: z.literal("latest"),
           options: z.tuple([
@@ -79,7 +69,11 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
           default: z.literal(false),
           type: z.literal("boolean"),
         }),
-      }),
+        publish_registries: z.object({
+          default: z.literal(false),
+          type: z.literal("boolean"),
+        }),
+      }).strict(),
     }),
   }).strict(),
   jobs: z.object({
@@ -91,6 +85,7 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
     "artifact-build": z.object({
+      permissions: z.record(z.string(), z.string()),
       steps: z.array(WORKFLOW_STEP_SCHEMA),
       strategy: z.object({
         matrix: z.object({
@@ -103,7 +98,18 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
         }),
       }),
     }),
+    "artifact-attestation": z.object({
+      if: z.string().min(1),
+      needs: z.array(z.string().min(1)),
+      permissions: z.record(z.string(), z.string()),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
     "package-assembly": z.object({
+      permissions: z.record(z.string(), z.string()),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
+    "cargo-candidate": z.object({
+      permissions: z.record(z.string(), z.string()),
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
     "verify-npm-candidate-native": z.object({
@@ -132,7 +138,22 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
     "draft-release": z.object({
+      if: z.string().min(1),
       needs: z.array(z.string().min(1)),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
+    "publish-cargo": z.object({
+      environment: z.literal("release"),
+      if: z.string().min(1),
+      needs: z.array(z.string().min(1)),
+      permissions: z.record(z.string(), z.string()),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
+    "publish-npm": z.object({
+      environment: z.literal("release"),
+      if: z.string().min(1),
+      needs: z.array(z.string().min(1)),
+      permissions: z.record(z.string(), z.string()),
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
     "verify-published-cargo": z.object({
@@ -224,23 +245,6 @@ function stepWithName<TStep extends { readonly name: string }>(
   return step;
 }
 
-/** Collects scalar workflow values after YAML parsing. */
-function workflowScalarValues(value: unknown): readonly string[] {
-  if (typeof value === "string") {
-    return [value];
-  }
-  if (Array.isArray(value)) {
-    return value.flatMap(workflowScalarValues);
-  }
-  if (typeof value === "object" && value !== null) {
-    return Object.entries(value).flatMap(([key, entryValue]) => [
-      key,
-      ...workflowScalarValues(entryValue),
-    ]);
-  }
-  return [];
-}
-
 describe("native runtime workflow coverage", () => {
   describe("when comparing CI with the release artifact matrix", () => {
     it("smoke-tests every native release target", () => {
@@ -300,7 +304,7 @@ describe("native runtime workflow coverage", () => {
 
       const commands = [
         commandForStep(packageAssemblySteps, "Stage package payloads"),
-        commandForStep(draftReleaseSteps, "Validate release assets and generate checksums"),
+        commandForStep(packageAssemblySteps, "Validate release assets and generate checksums"),
         commandForStep(draftReleaseSteps, "Replace and verify draft release assets"),
       ];
       assert.match(commands[0] ?? "", /stage:publish-payloads \.\.\/release-artifacts/u);
@@ -327,11 +331,15 @@ describe("native runtime workflow coverage", () => {
         releaseWorkflow.on.workflow_dispatch.inputs.verify_npm.default,
         false,
       );
+      assert.equal(
+        releaseWorkflow.on.workflow_dispatch.inputs.publish_registries.default,
+        false,
+      );
     });
   });
 
   describe("when starting release assembly", () => {
-    it("requires a manual immutable source and explicit npm channel selection", () => {
+    it("uses the selected tag ref and explicit npm channel selection", () => {
       const releaseWorkflow = parseWorkflow(
         RELEASE_WORKFLOW_URL,
         RELEASE_WORKFLOW_SCHEMA,
@@ -342,6 +350,7 @@ describe("native runtime workflow coverage", () => {
         releaseWorkflow.on.workflow_dispatch.inputs.npm_channel.options,
         ["latest", "next", "beta", "rc", "canary", "custom"],
       );
+      assert.equal(releaseWorkflow.concurrency.group, "sprawl-guard-release");
     });
   });
 
@@ -424,39 +433,131 @@ describe("native runtime workflow coverage", () => {
   });
 
   describe("when inspecting workflow registry authority", () => {
-    it("contains no registry publication jobs, credentials, or OIDC permission", () => {
+    it("isolates attestation authority from artifact builders", () => {
       const releaseWorkflow = parseWorkflow(
         RELEASE_WORKFLOW_URL,
-        WORKFLOW_AUTHORITY_SCHEMA,
+        RELEASE_WORKFLOW_SCHEMA,
       );
-      const scalars = workflowScalarValues(releaseWorkflow);
+      const artifactJob = releaseWorkflow.jobs["artifact-build"];
+      assert.deepEqual(artifactJob.permissions, { contents: "read" });
+      const attestationJob = releaseWorkflow.jobs["artifact-attestation"];
+      assert.deepEqual(attestationJob.needs.toSorted(), [
+        "cargo-candidate",
+        "package-assembly",
+        "verify-npm-candidate-musl",
+        "verify-npm-candidate-native",
+        "verify-npm-candidate-wasi",
+      ]);
+      assert.ok(
+        releaseWorkflow.jobs["draft-release"].needs.includes("artifact-attestation"),
+      );
+      assert.match(
+        releaseWorkflow.jobs["draft-release"].if,
+        /artifact-attestation\.result == 'success'.*artifact-attestation\.result == 'skipped'/u,
+      );
+      assert.deepEqual(attestationJob.permissions, {
+        "artifact-metadata": "write",
+        attestations: "write",
+        contents: "read",
+        "id-token": "write",
+      });
+      const attestation = stepWithName(
+        attestationJob.steps,
+        "Attest release artifact provenance",
+      );
+      const subjects = String(attestation.with?.["subject-path"]);
+      assert.match(subjects, /attestation-subjects\/github-release-assets\/\*/u);
+      assert.match(subjects, /attestation-subjects\/cargo\/\*\.crate/u);
+      assert.match(subjects, /attestation-subjects\/npm\/\*\.tgz/u);
+      assert.doesNotMatch(String(attestation.with?.["subject-path"]), /release-.*\.tar/u);
+      assert.match(attestationJob.if, /repository\.visibility == 'public'/u);
+    });
 
-      assert.equal(scalars.includes("id-token"), false);
-      assert.equal(scalars.some((value) => value.includes("secrets.")), false);
-      assert.equal(
-        scalars.some((value) =>
-          /(?:NPM|NODE_AUTH|CARGO(?:_REGISTRY|_REGISTRIES_CRATES_IO)?)_TOKEN/u.test(value),
+    it("keeps candidate assembly free of publication authority", () => {
+      const releaseWorkflow = parseWorkflow(
+        RELEASE_WORKFLOW_URL,
+        RELEASE_WORKFLOW_SCHEMA,
+      );
+      assert.deepEqual(releaseWorkflow.jobs["cargo-candidate"].permissions, {
+        contents: "read",
+      });
+      const cargoUpload = stepWithName(
+        releaseWorkflow.jobs["cargo-candidate"].steps,
+        "Upload Cargo publication candidate",
+      );
+      assert.match(String(cargoUpload.with?.path), /sprawl-guard-lib-/u);
+      assert.ok(
+        String(cargoUpload.with?.path).includes(
+          "target/package/sprawl-guard-${{ needs.release-metadata.outputs.release_version }}.crate",
         ),
-        false,
+      );
+      assert.ok(releaseWorkflow.jobs["draft-release"].needs.includes("cargo-candidate"));
+      assert.match(
+        releaseWorkflow.jobs["draft-release"].if,
+        /cargo-candidate\.result == 'success'/u,
+      );
+      assert.deepEqual(releaseWorkflow.jobs["package-assembly"].permissions, {
+        contents: "read",
+      });
+      const releaseAssetUpload = stepWithName(
+        releaseWorkflow.jobs["package-assembly"].steps,
+        "Upload GitHub Release assets",
+      );
+      assert.equal(releaseAssetUpload.with?.name, "github-release-assets");
+      assert.equal(
+        releaseAssetUpload.with?.path,
+        "release-artifact-archives/github-release-assets",
       );
       assert.equal(
-        scalars.some((value) => /release:publish-(?:cargo|npm)/u.test(value)),
-        false,
+        stepWithName(
+          releaseWorkflow.jobs["draft-release"].steps,
+          "Download validated GitHub Release assets",
+        ).with?.name,
+        "github-release-assets",
       );
       assert.equal(
-        scalars.some((value) => REGISTRY_PUBLISH_COMMAND_PATTERN.test(value)),
+        releaseWorkflow.jobs["draft-release"].steps.some(
+          ({ name }) => name === "Validate release assets and generate checksums",
+        ),
         false,
       );
     });
 
-    it("recognizes registry publish commands with global options", () => {
-      for (const command of [
-        "npm --prefix package publish",
-        "pnpm --dir npm publish",
-        "cargo +stable publish",
-      ]) {
-        assert.match(command, REGISTRY_PUBLISH_COMMAND_PATTERN);
+    it("grants short-lived registry authority only after the draft is ready", () => {
+      const releaseWorkflow = parseWorkflow(
+        RELEASE_WORKFLOW_URL,
+        RELEASE_WORKFLOW_SCHEMA,
+      );
+      const cargoJob = releaseWorkflow.jobs["publish-cargo"];
+      const npmJob = releaseWorkflow.jobs["publish-npm"];
+      for (const job of [cargoJob, npmJob]) {
+        assert.deepEqual(job.permissions, {
+          contents: "read",
+          "id-token": "write",
+        });
+        assert.match(job.if, /inputs\.publish_registries/u);
+        assert.match(job.if, /repository\.visibility == 'public'/u);
+        assert.ok(job.needs.includes("draft-release"));
       }
+      assert.ok(npmJob.needs.includes("publish-cargo"));
+
+      const cargoPublish = stepWithName(cargoJob.steps, "Publish Cargo crates");
+      assert.equal(
+        cargoPublish.env?.CARGO_REGISTRY_TOKEN,
+        "${{ steps.crates-io-auth.outputs.token }}",
+      );
+
+      const npmPublish = stepWithName(npmJob.steps, "Publish npm packages");
+      assert.match(npmPublish.run ?? "", /release:publish-npm-trusted/u);
+      assert.equal(npmPublish.env?.NODE_AUTH_TOKEN, undefined);
+      assert.doesNotMatch(npmPublish.run ?? "", /dist-tag/u);
+      for (const job of [cargoJob, npmJob]) {
+        assert.match(
+          commandForStep(job.steps, "Install npm workspace dependencies"),
+          /pnpm install --frozen-lockfile --ignore-scripts/u,
+        );
+      }
+      assert.doesNotMatch(JSON.stringify([cargoJob, npmJob]), /secrets\./u);
     });
   });
 
@@ -469,8 +570,11 @@ describe("native runtime workflow coverage", () => {
       for (const jobName of [
         "release-metadata",
         "artifact-build",
+        "cargo-candidate",
         "package-assembly",
         "draft-release",
+        "publish-cargo",
+        "publish-npm",
       ] as const) {
         const checkoutSteps = releaseWorkflow.jobs[jobName].steps.filter(
           (step) => step.uses?.startsWith("actions/checkout@") === true,
@@ -480,7 +584,7 @@ describe("native runtime workflow coverage", () => {
         assert.equal(
           checkoutSteps[0]?.with?.ref,
           jobName === "release-metadata"
-            ? "${{ inputs.release_commit }}"
+            ? "${{ github.sha }}"
             : "${{ needs.release-metadata.outputs.release_commit }}",
         );
       }
@@ -663,6 +767,8 @@ describe("native runtime workflow coverage", () => {
         const job = releaseWorkflow.jobs[jobName];
         const commands = job.steps.flatMap(({ run }) => run ?? []).join("\n");
         assert.match(commands, /npm --prefix/u);
+        assert.match(commands, /@kpozin\/sprawl-guard@\$\{NPM_DIST_TAG\}/u);
+        assert.match(commands, /installed_(?:native_|wasi_)?wrapper_version/u);
         assert.match(commands, /createRequire\([^\n]*package\.json/u);
         assert.match(commands, /unset SPRAWL_GUARD_BINARY/u);
         assert.doesNotMatch(commands, /npm --prefix [^\n]+ exec -- node/u);

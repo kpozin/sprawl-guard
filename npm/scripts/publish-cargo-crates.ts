@@ -687,20 +687,29 @@ export function cargoPackageArguments(
   ];
 }
 
-/** Packages the library candidate that can exist before the first registry upload. */
+/** Packages both Cargo candidates before the first registry upload. */
 export function prepareCargoCrates(args: {
   readonly expectation: ReleaseSourceExpectation;
   readonly workspaceRoot: string;
 }): PublishCargoCratesResult {
-  const requests = cargoPublicationRequests(args).slice(0, 1);
-  for (const request of requests) {
-    const packaged = runCargo(
-      cargoPackageArguments(request.packageName),
-      args.workspaceRoot,
-    );
-    if (packaged.kind === "failed") {
-      return failedPublication(request, packaged.detail);
-    }
+  const requests = cargoPublicationRequests(args);
+  const packaged = runCargo(
+    [
+      "package",
+      "--locked",
+      "--no-verify",
+      "--registry",
+      CRATES_IO_REGISTRY_NAME,
+      "--workspace",
+    ],
+    args.workspaceRoot,
+  );
+  if (packaged.kind === "failed") {
+    return {
+      kind: "failed",
+      packageName: "sprawl-guard-lib",
+      detail: packaged.detail,
+    };
   }
   const packages: Array<{ checksum: string; packageName: CargoPackageName }> =
     [];
@@ -821,9 +830,9 @@ export function validateCargoPublicationCandidate(args: {
         "Cargo publication candidate does not match the frozen release source",
     };
   }
-  const expectedPackageNames = cargoPublicationRequests(args)
-    .slice(0, 1)
-    .map(({ packageName }) => packageName);
+  const expectedPackageNames = cargoPublicationRequests(args).map(
+    ({ packageName }) => packageName,
+  );
   if (
     parsed.data.packages.length !== expectedPackageNames.length ||
     parsed.data.packages.some(
@@ -843,7 +852,7 @@ export function validateCargoPublicationCandidate(args: {
       checksum,
     ]),
   );
-  for (const request of cargoPublicationRequests(args).slice(0, 1)) {
+  for (const request of cargoPublicationRequests(args)) {
     const packaged = packageCrate(request);
     if (packaged.kind === "failed") {
       return failedPublication(request, packaged.detail);
@@ -948,10 +957,7 @@ function productionOperations(
       if (packaged.kind === "failed") {
         return packaged;
       }
-      if (
-        request.packageName === "sprawl-guard-lib" &&
-        packaged.checksum !== checksums.get(request.packageName)
-      ) {
+      if (packaged.checksum !== checksums.get(request.packageName)) {
         return {
           kind: "failed",
           detail: "packaged crate differs from the frozen Cargo candidate",

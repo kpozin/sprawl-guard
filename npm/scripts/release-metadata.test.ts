@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { PACKAGE_VERSION } from "./package-manifests.ts";
 import { resolveReleaseMetadata } from "./release-metadata.ts";
+import { RELEASE_COMMIT_SCHEMA } from "./release-source.ts";
 
 const MATCHING_CARGO_METADATA = {
   packages: [
@@ -10,29 +11,22 @@ const MATCHING_CARGO_METADATA = {
   ],
 };
 const RELEASE_TAG = `v${PACKAGE_VERSION}`;
-const RELEASE_COMMIT = "0123456789abcdef0123456789abcdef01234567";
-const OTHER_COMMIT = "89abcdef0123456789abcdef0123456789abcdef";
-
-function resolveManualReleaseMetadata(
-  args: Omit<Parameters<typeof resolveReleaseMetadata>[0], "githubEventName">,
-) {
-  return resolveReleaseMetadata({
-    ...args,
-    githubEventName: "workflow_dispatch",
-  });
-}
+const RELEASE_COMMIT = RELEASE_COMMIT_SCHEMA.parse(
+  "0123456789abcdef0123456789abcdef01234567",
+);
+const OTHER_COMMIT = RELEASE_COMMIT_SCHEMA.parse(
+  "89abcdef0123456789abcdef0123456789abcdef",
+);
 
 describe("resolveReleaseMetadata", () => {
-  describe("when a manual run supplies a valid existing tag", () => {
-    it("returns the immutable commit, tag, and version", () => {
+  describe("when GitHub dispatches the workflow from a valid tag", () => {
+    it("derives the immutable commit, tag, and version from the event", () => {
       assert.deepEqual(
-        resolveManualReleaseMetadata({
+        resolveReleaseMetadata({
           cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: OTHER_COMMIT,
-          githubRefName: "main",
-          githubRefType: "branch",
-          inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: RELEASE_TAG,
+          githubEventCommit: RELEASE_COMMIT,
+          githubRefName: RELEASE_TAG,
+          githubRefType: "tag",
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),
@@ -46,153 +40,82 @@ describe("resolveReleaseMetadata", () => {
     });
   });
 
-  describe("when a manual run is launched from a tag ref", () => {
-    it("validates the recorded commit instead of trusting the event ref", () => {
-      assert.deepEqual(
-        resolveManualReleaseMetadata({
-          cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: RELEASE_COMMIT,
-          githubRefName: RELEASE_TAG,
-          githubRefType: "tag",
-          inputReleaseCommit: OTHER_COMMIT,
-          inputReleaseTag: RELEASE_TAG,
-          tagCommit: RELEASE_COMMIT,
-          workingTreeCommit: RELEASE_COMMIT,
-        }),
-        {
-          kind: "release_commit_mismatch",
-          expectedCommit: OTHER_COMMIT,
-          tagCommit: RELEASE_COMMIT,
-        },
-      );
-    });
-  });
-
-  describe("when a tag push omits the manual input", () => {
-    it("uses the pushed tag", () => {
-      assert.equal(
-        resolveReleaseMetadata({
-          cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: RELEASE_COMMIT,
-          githubEventName: "push",
-          githubRefName: RELEASE_TAG,
-          githubRefType: "tag",
-          inputReleaseCommit: "",
-          inputReleaseTag: "",
-          tagCommit: RELEASE_COMMIT,
-          workingTreeCommit: RELEASE_COMMIT,
-        }).kind,
-        "ok",
-      );
-    });
-  });
-
-  describe("when a published-release event supplies the tag", () => {
-    it("uses the event commit selected by GitHub Pages", () => {
-      assert.equal(
-        resolveReleaseMetadata({
-          cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: RELEASE_COMMIT,
-          githubEventName: "release",
-          githubRefName: RELEASE_TAG,
-          githubRefType: "tag",
-          inputReleaseCommit: "",
-          inputReleaseTag: RELEASE_TAG,
-          tagCommit: RELEASE_COMMIT,
-          workingTreeCommit: RELEASE_COMMIT,
-        }).kind,
-        "ok",
-      );
-    });
-  });
-
-  describe("when a pushed tag moved before checkout", () => {
-    it("rejects the fetched tag instead of replacing the event commit", () => {
+  describe("when GitHub dispatches the workflow from a branch", () => {
+    it("rejects the mutable source", () => {
       assert.deepEqual(
         resolveReleaseMetadata({
           cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: OTHER_COMMIT,
-          githubEventName: "push",
-          githubRefName: RELEASE_TAG,
-          githubRefType: "tag",
-          inputReleaseCommit: "",
-          inputReleaseTag: "",
-          tagCommit: RELEASE_COMMIT,
-          workingTreeCommit: RELEASE_COMMIT,
-        }),
-        {
-          kind: "release_commit_mismatch",
-          expectedCommit: OTHER_COMMIT,
-          tagCommit: RELEASE_COMMIT,
-        },
-      );
-    });
-  });
-
-  describe("when a manual run omits the tag", () => {
-    it("rejects the request", () => {
-      assert.deepEqual(
-        resolveManualReleaseMetadata({
-          cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: OTHER_COMMIT,
+          githubEventCommit: RELEASE_COMMIT,
           githubRefName: "main",
           githubRefType: "branch",
-          inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: "",
           tagCommit: null,
           workingTreeCommit: RELEASE_COMMIT,
         }),
-        { kind: "missing_release_tag" },
+        {
+          kind: "release_ref_not_tag",
+          actualRefName: "main",
+          actualRefType: "branch",
+        },
       );
     });
   });
 
-  describe("when a manual run omits the expected release commit", () => {
-    it("rejects the request", () => {
+  describe("when the selected tag is malformed", () => {
+    it("rejects it before inspecting package versions", () => {
       assert.deepEqual(
-        resolveManualReleaseMetadata({
+        resolveReleaseMetadata({
           cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: OTHER_COMMIT,
-          githubRefName: "main",
-          githubRefType: "branch",
-          inputReleaseCommit: "",
-          inputReleaseTag: RELEASE_TAG,
+          githubEventCommit: RELEASE_COMMIT,
+          githubRefName: "release",
+          githubRefType: "tag",
+          tagCommit: null,
+          workingTreeCommit: RELEASE_COMMIT,
+        }),
+        { kind: "invalid_release_tag", releaseTag: "release" },
+      );
+    });
+  });
+
+  describe("when the selected tag no longer exists", () => {
+    it("rejects the release", () => {
+      assert.deepEqual(
+        resolveReleaseMetadata({
+          cargoMetadata: MATCHING_CARGO_METADATA,
+          githubEventCommit: RELEASE_COMMIT,
+          githubRefName: RELEASE_TAG,
+          githubRefType: "tag",
+          tagCommit: null,
+          workingTreeCommit: RELEASE_COMMIT,
+        }),
+        { kind: "release_tag_not_found", releaseTag: RELEASE_TAG },
+      );
+    });
+  });
+
+  describe("when GitHub supplies an invalid event commit", () => {
+    it("rejects the release", () => {
+      assert.deepEqual(
+        resolveReleaseMetadata({
+          cargoMetadata: MATCHING_CARGO_METADATA,
+          githubEventCommit: "main",
+          githubRefName: RELEASE_TAG,
+          githubRefType: "tag",
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),
-        { kind: "missing_release_commit" },
+        { kind: "invalid_release_event_commit", eventCommit: "main" },
       );
     });
   });
 
-  describe("when a manual run supplies a non-SHA release commit", () => {
-    it("rejects the request", () => {
+  describe("when the selected tag resolves to a different commit", () => {
+    it("rejects the moved tag", () => {
       assert.deepEqual(
-        resolveManualReleaseMetadata({
+        resolveReleaseMetadata({
           cargoMetadata: MATCHING_CARGO_METADATA,
           githubEventCommit: OTHER_COMMIT,
-          githubRefName: "main",
-          githubRefType: "branch",
-          inputReleaseCommit: "main",
-          inputReleaseTag: RELEASE_TAG,
-          tagCommit: RELEASE_COMMIT,
-          workingTreeCommit: RELEASE_COMMIT,
-        }),
-        { kind: "invalid_release_commit", releaseCommit: "main" },
-      );
-    });
-  });
-
-  describe("when the tag does not match the manually recorded release commit", () => {
-    it("rejects the request", () => {
-      assert.deepEqual(
-        resolveManualReleaseMetadata({
-          cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: OTHER_COMMIT,
-          githubRefName: "main",
-          githubRefType: "branch",
-          inputReleaseCommit: OTHER_COMMIT,
-          inputReleaseTag: RELEASE_TAG,
+          githubRefName: RELEASE_TAG,
+          githubRefType: "tag",
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }),
@@ -205,16 +128,14 @@ describe("resolveReleaseMetadata", () => {
     });
   });
 
-  describe("when checkout does not match the release tag", () => {
-    it("rejects the request before building", () => {
+  describe("when checkout does not match the selected tag", () => {
+    it("rejects the release before building", () => {
       assert.deepEqual(
-        resolveManualReleaseMetadata({
+        resolveReleaseMetadata({
           cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: OTHER_COMMIT,
-          githubRefName: "main",
-          githubRefType: "branch",
-          inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: RELEASE_TAG,
+          githubEventCommit: RELEASE_COMMIT,
+          githubRefName: RELEASE_TAG,
+          githubRefType: "tag",
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: OTHER_COMMIT,
         }),
@@ -230,36 +151,15 @@ describe("resolveReleaseMetadata", () => {
   describe("when Cargo metadata is malformed", () => {
     it("returns a schema failure", () => {
       assert.equal(
-        resolveManualReleaseMetadata({
+        resolveReleaseMetadata({
           cargoMetadata: { packages: "not-an-array" },
-          githubEventCommit: OTHER_COMMIT,
-          githubRefName: "main",
-          githubRefType: "branch",
-          inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: RELEASE_TAG,
+          githubEventCommit: RELEASE_COMMIT,
+          githubRefName: RELEASE_TAG,
+          githubRefType: "tag",
           tagCommit: RELEASE_COMMIT,
           workingTreeCommit: RELEASE_COMMIT,
         }).kind,
         "invalid_cargo_metadata",
-      );
-    });
-  });
-
-  describe("when the workflow event is not a release entry point", () => {
-    it("rejects the event before selecting a commit source", () => {
-      assert.deepEqual(
-        resolveReleaseMetadata({
-          cargoMetadata: MATCHING_CARGO_METADATA,
-          githubEventCommit: RELEASE_COMMIT,
-          githubEventName: "pull_request",
-          githubRefName: "main",
-          githubRefType: "branch",
-          inputReleaseCommit: RELEASE_COMMIT,
-          inputReleaseTag: RELEASE_TAG,
-          tagCommit: RELEASE_COMMIT,
-          workingTreeCommit: RELEASE_COMMIT,
-        }),
-        { kind: "invalid_release_event", eventName: "pull_request" },
       );
     });
   });

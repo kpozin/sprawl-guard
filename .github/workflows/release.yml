@@ -3,14 +3,6 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
-      release_commit:
-        description: Full commit SHA recorded when the release candidate was frozen
-        required: true
-        type: string
-      release_tag:
-        description: Existing v-prefixed git tag to attach to the draft release
-        required: true
-        type: string
       npm_channel:
         description: npm release channel
         default: latest
@@ -28,6 +20,11 @@ on:
         default: ""
         required: false
         type: string
+      publish_registries:
+        description: Publish to crates.io and npm with trusted publishing
+        default: false
+        required: false
+        type: boolean
       verify_crates:
         description: Verify the locally published Cargo crates from clean registry installs
         default: false
@@ -43,7 +40,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: sprawl-guard-release-${{ inputs.release_tag }}
+  group: sprawl-guard-release
   cancel-in-progress: false
 
 jobs:
@@ -62,7 +59,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: ${{ inputs.release_commit }}
+          ref: ${{ github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
@@ -100,9 +97,8 @@ jobs:
         run: pnpm --dir npm run release:metadata
         env:
           GITHUB_EVENT_COMMIT: ${{ github.sha }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          GITHUB_REF_NAME: ${{ github.ref_name }}
+          GITHUB_REF_TYPE: ${{ github.ref_type }}
           NPM_DIST_TAG: ${{ steps.npm-channel.outputs.npm_dist_tag }}
 
   artifact-build:
@@ -147,6 +143,8 @@ jobs:
             built_artifact_path: target/wasm32-wasip1/release/sprawl-guard.wasm
             artifact_file_name: sprawl-guard.wasm
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -289,6 +287,97 @@ jobs:
             release-${{ matrix.package_target }}.tar
             github-release-assets
 
+  artifact-attestation:
+    if: ${{ github.event.repository.visibility == 'public' }}
+    needs:
+      - cargo-candidate
+      - package-assembly
+      - verify-npm-candidate-musl
+      - verify-npm-candidate-native
+      - verify-npm-candidate-wasi
+    runs-on: ubuntu-24.04
+    permissions:
+      artifact-metadata: write
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Download validated GitHub Release assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: github-release-assets
+          path: attestation-subjects/github-release-assets
+
+      - name: Download Cargo publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cargo-publication-candidate
+          path: attestation-subjects/cargo
+
+      - name: Download npm publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-publication-candidate
+          path: attestation-subjects/npm
+
+      - name: Attest release artifact provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        with:
+          subject-path: |
+            attestation-subjects/github-release-assets/*
+            attestation-subjects/cargo/*.crate
+            attestation-subjects/npm/*.tgz
+
+  cargo-candidate:
+    needs: release-metadata
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: 1.97.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Install npm workspace dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Prepare Cargo publication candidate
+        run: node npm/scripts/publish-cargo-crates.ts prepare "${RELEASE_COMMIT}" "${RELEASE_TAG}"
+        env:
+          RELEASE_COMMIT: ${{ needs.release-metadata.outputs.release_commit }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+
+      - name: Upload Cargo publication candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: cargo-publication-candidate
+          path: |
+            target/package/sprawl-guard-lib-${{ needs.release-metadata.outputs.release_version }}.crate
+            target/package/sprawl-guard-${{ needs.release-metadata.outputs.release_version }}.crate
+            target/package/sprawl-guard-publication.json
+
   package-assembly:
     needs:
       - artifact-build
@@ -367,6 +456,18 @@ jobs:
 
       - name: Verify staged package packs
         run: pnpm --dir npm run verify:staged-payload-packs
+
+      - name: Validate release assets and generate checksums
+        run: pnpm --dir npm run release:prepare-assets ../release-artifact-archives/github-release-assets "${RELEASE_VERSION}"
+        env:
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Upload GitHub Release assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: github-release-assets
+          path: release-artifact-archives/github-release-assets
 
       - name: Prepare assembled npm publication candidate
         run: pnpm --dir npm run release:prepare-npm ../npm-publication-candidate "${RELEASE_COMMIT}" "${RELEASE_TAG}" "${NPM_DIST_TAG}"
@@ -557,7 +658,10 @@ jobs:
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
   draft-release:
+    if: ${{ always() && needs.cargo-candidate.result == 'success' && needs.package-assembly.result == 'success' && needs.release-metadata.result == 'success' && needs.verify-npm-candidate-musl.result == 'success' && needs.verify-npm-candidate-native.result == 'success' && needs.verify-npm-candidate-wasi.result == 'success' && (needs.artifact-attestation.result == 'success' || needs.artifact-attestation.result == 'skipped') }}
     needs:
+      - artifact-attestation
+      - cargo-candidate
       - package-assembly
       - release-metadata
       - verify-npm-candidate-musl
@@ -573,12 +677,11 @@ jobs:
           persist-credentials: false
           ref: ${{ needs.release-metadata.outputs.release_commit }}
 
-      - name: Download built release artifacts
+      - name: Download validated GitHub Release assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          merge-multiple: true
-          path: downloaded-release-artifacts
-          pattern: release-*
+          name: github-release-assets
+          path: downloaded-release-artifacts/github-release-assets
 
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -594,12 +697,7 @@ jobs:
         working-directory: npm
         env:
           CI: "true"
-        run: pnpm install --frozen-lockfile
-
-      - name: Validate release assets and generate checksums
-        run: pnpm --dir npm run release:prepare-assets ../downloaded-release-artifacts/github-release-assets "${RELEASE_VERSION}"
-        env:
-          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Check GitHub CLI version
         run: gh --version
@@ -660,10 +758,121 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
 
-  verify-published-cargo:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_crates }}
+  publish-cargo:
+    if: ${{ inputs.publish_registries && github.event.repository.visibility == 'public' }}
+    needs:
+      - cargo-candidate
+      - draft-release
+      - release-metadata
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: 1.97.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Install npm workspace dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Download Cargo publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cargo-publication-candidate
+          path: target/package
+
+      - name: Authenticate to crates.io
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      - name: Publish Cargo crates
+        run: node npm/scripts/publish-cargo-crates.ts publish "${RELEASE_COMMIT}" "${RELEASE_TAG}"
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
+          RELEASE_COMMIT: ${{ needs.release-metadata.outputs.release_commit }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+
+  publish-npm:
+    if: ${{ inputs.publish_registries && github.event.repository.visibility == 'public' }}
     needs:
       - draft-release
+      - package-assembly
+      - publish-cargo
+      - release-metadata
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+
+      - name: Install trusted-publishing npm CLI
+        run: npm install --global npm@11.18.0 --ignore-scripts
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.7.0
+
+      - name: Install npm workspace dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Download npm publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-publication-candidate
+          path: npm-publication-candidate
+
+      - name: Publish npm packages
+        run: pnpm --dir npm run release:publish-npm-trusted ../npm-publication-candidate "${RELEASE_COMMIT}" "${RELEASE_TAG}" "${NPM_DIST_TAG}"
+        env:
+          NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
+          RELEASE_COMMIT: ${{ needs.release-metadata.outputs.release_commit }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+
+  verify-published-cargo:
+    if: ${{ always() && (inputs.verify_crates || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') }}
+    needs:
+      - draft-release
+      - publish-cargo
       - release-metadata
     runs-on: ubuntu-24.04
     env:
@@ -708,9 +917,10 @@ jobs:
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
   verify-published-npm-native:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_npm }}
+    if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
+      - publish-npm
       - release-metadata
     strategy:
       fail-fast: false
@@ -739,11 +949,14 @@ jobs:
           test ! -e install-smoke
           mkdir install-smoke
           printf '{"private":true}\n' > install-smoke/package.json
-          npm --prefix install-smoke install --save-exact "@kpozin/sprawl-guard@${SPRAWL_GUARD_VERSION}"
+          npm --prefix install-smoke install --save-exact "@kpozin/sprawl-guard@${NPM_DIST_TAG}"
+          installed_wrapper_version="$(node --eval "process.stdout.write(require('node:module').createRequire(require('node:path').resolve('install-smoke/package.json'))('@kpozin/sprawl-guard/package.json').version)")"
+          test "${installed_wrapper_version}" = "${SPRAWL_GUARD_VERSION}"
           node --eval \
             "require('node:module').createRequire(require('node:path').resolve('install-smoke/package.json')).resolve(process.env.NATIVE_PACKAGE_NAME + '/package.json')"
         env:
           NATIVE_PACKAGE_NAME: ${{ matrix.package_name }}
+          NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
       - name: Run the registry-installed native wrapper
@@ -756,9 +969,10 @@ jobs:
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
   verify-published-npm-musl:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_npm }}
+    if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
+      - publish-npm
       - release-metadata
     runs-on: ubuntu-24.04
     env:
@@ -769,11 +983,14 @@ jobs:
         run: |
           docker run --rm \
             --env NPM_RUNTIME_PACKAGE_NAME \
+            --env NPM_DIST_TAG \
             --env SPRAWL_GUARD_VERSION \
             node:22-alpine sh -euxc '
             mkdir /install-smoke
             printf "{\"private\":true}\n" > /install-smoke/package.json
-            npm --prefix /install-smoke install --save-exact "@kpozin/sprawl-guard@${SPRAWL_GUARD_VERSION}"
+            npm --prefix /install-smoke install --save-exact "@kpozin/sprawl-guard@${NPM_DIST_TAG}"
+            installed_wrapper_version="$(node --eval "process.stdout.write(require(\"node:module\").createRequire(\"/install-smoke/package.json\")(\"@kpozin/sprawl-guard/package.json\").version)")"
+            test "${installed_wrapper_version}" = "${SPRAWL_GUARD_VERSION}"
             node --eval \
               "require('node:module').createRequire('/install-smoke/package.json').resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + '/package.json')"
             unset SPRAWL_GUARD_BINARY
@@ -781,12 +998,14 @@ jobs:
             npm --prefix /install-smoke exec -- sprawl-guard --help
           '
         env:
+          NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
   verify-published-npm-wasi:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_npm }}
+    if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
+      - publish-npm
       - release-metadata
     runs-on: ubuntu-24.04
     env:
@@ -814,15 +1033,20 @@ jobs:
           printf '{"private":true}\n' > install-native/package.json
           printf '{"private":true}\n' > install-wasi/package.json
           npm --prefix install-native install --save-exact \
-            "@kpozin/sprawl-guard@${SPRAWL_GUARD_VERSION}"
+            "@kpozin/sprawl-guard@${NPM_DIST_TAG}"
           npm --prefix install-wasi install --save-exact --omit=optional \
-            "@kpozin/sprawl-guard@${SPRAWL_GUARD_VERSION}" \
+            "@kpozin/sprawl-guard@${NPM_DIST_TAG}" \
             "${NPM_RUNTIME_PACKAGE_NAME}@${SPRAWL_GUARD_VERSION}"
+          installed_native_wrapper_version="$(node --eval "process.stdout.write(require('node:module').createRequire(require('node:path').resolve('install-native/package.json'))('@kpozin/sprawl-guard/package.json').version)")"
+          installed_wasi_wrapper_version="$(node --eval "process.stdout.write(require('node:module').createRequire(require('node:path').resolve('install-wasi/package.json'))('@kpozin/sprawl-guard/package.json').version)")"
+          test "${installed_native_wrapper_version}" = "${SPRAWL_GUARD_VERSION}"
+          test "${installed_wasi_wrapper_version}" = "${SPRAWL_GUARD_VERSION}"
           node --eval \
             "require('node:module').createRequire(require('node:path').resolve('install-native/package.json')).resolve(process.env.NPM_NATIVE_PACKAGE_NAME + '/package.json')"
           node --eval \
             "require('node:module').createRequire(require('node:path').resolve('install-wasi/package.json')).resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + '/package.json')"
         env:
+          NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
       - name: Compare registry-installed native and WASI scans

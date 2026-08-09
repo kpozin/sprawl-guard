@@ -26,17 +26,13 @@ const CARGO_METADATA_SCHEMA = z.object({
     }),
   ),
 });
-const RELEASE_EVENT_SCHEMA = z.enum(["push", "release", "workflow_dispatch"]);
 interface ResolveReleaseMetadataArgs {
   readonly cargoMetadata: unknown;
   readonly githubEventCommit: string;
-  readonly githubEventName: string;
   readonly githubRefName: string;
   readonly githubRefType: string;
-  readonly inputReleaseCommit: string;
-  readonly inputReleaseTag: string;
-  readonly tagCommit: string | null;
-  readonly workingTreeCommit: string;
+  readonly tagCommit: ReleaseCommit | null;
+  readonly workingTreeCommit: ReleaseCommit;
 }
 
 interface ResolvedReleaseMetadata {
@@ -48,21 +44,26 @@ interface ResolvedReleaseMetadata {
 
 type ResolveReleaseMetadataResult =
   | ResolvedReleaseMetadata
-  | { readonly kind: "missing_release_tag" }
-  | { readonly kind: "missing_release_commit" }
-  | { readonly kind: "invalid_release_event"; readonly eventName: string }
-  | { readonly kind: "invalid_release_commit"; readonly releaseCommit: string }
+  | {
+      readonly kind: "invalid_release_event_commit";
+      readonly eventCommit: string;
+    }
   | Extract<ParseReleaseTagResult, { readonly kind: "invalid_release_tag" }>
+  | {
+      readonly kind: "release_ref_not_tag";
+      readonly actualRefName: string;
+      readonly actualRefType: string;
+    }
   | { readonly kind: "release_tag_not_found"; readonly releaseTag: ReleaseTag }
   | {
       readonly kind: "release_commit_mismatch";
       readonly expectedCommit: ReleaseCommit;
-      readonly tagCommit: string;
+      readonly tagCommit: ReleaseCommit;
     }
   | {
       readonly kind: "release_checkout_mismatch";
-      readonly tagCommit: string;
-      readonly workingTreeCommit: string;
+      readonly tagCommit: ReleaseCommit;
+      readonly workingTreeCommit: ReleaseCommit;
     }
   | { readonly kind: "invalid_cargo_metadata"; readonly detail: string }
   | Exclude<ValidateReleaseVersionsResult, { readonly kind: "ok" }>;
@@ -79,17 +80,15 @@ type CommandResult =
 export function resolveReleaseMetadata(
   args: ResolveReleaseMetadataArgs,
 ): ResolveReleaseMetadataResult {
-  const requestedTag =
-    args.inputReleaseTag.length > 0
-      ? args.inputReleaseTag
-      : args.githubRefType === "tag"
-        ? args.githubRefName
-        : null;
-  if (requestedTag === null) {
-    return { kind: "missing_release_tag" };
+  if (args.githubRefType !== "tag") {
+    return {
+      kind: "release_ref_not_tag",
+      actualRefName: args.githubRefName,
+      actualRefType: args.githubRefType,
+    };
   }
 
-  const parsedTag = parseReleaseTag(requestedTag);
+  const parsedTag = parseReleaseTag(args.githubRefName);
   if (parsedTag.kind !== "ok") {
     return parsedTag;
   }
@@ -99,31 +98,17 @@ export function resolveReleaseMetadata(
       releaseTag: parsedTag.releaseTag,
     };
   }
-  const event = RELEASE_EVENT_SCHEMA.safeParse(args.githubEventName);
-  if (!event.success) {
-    return { kind: "invalid_release_event", eventName: args.githubEventName };
-  }
-  const expectedCommitValue =
-    event.data === "workflow_dispatch"
-      ? args.inputReleaseCommit
-      : args.githubEventCommit;
-  const expectedCommit =
-    expectedCommitValue.length === 0
-      ? null
-      : RELEASE_COMMIT_SCHEMA.safeParse(expectedCommitValue);
-  if (expectedCommit === null) {
-    return { kind: "missing_release_commit" };
-  }
-  if (!expectedCommit.success) {
+  const eventCommit = RELEASE_COMMIT_SCHEMA.safeParse(args.githubEventCommit);
+  if (!eventCommit.success) {
     return {
-      kind: "invalid_release_commit",
-      releaseCommit: expectedCommitValue,
+      kind: "invalid_release_event_commit",
+      eventCommit: args.githubEventCommit,
     };
   }
-  if (expectedCommit.data !== args.tagCommit) {
+  if (eventCommit.data !== args.tagCommit) {
     return {
       kind: "release_commit_mismatch",
-      expectedCommit: expectedCommit.data,
+      expectedCommit: eventCommit.data,
       tagCommit: args.tagCommit,
     };
   }
@@ -154,7 +139,7 @@ export function resolveReleaseMetadata(
 
   return {
     kind: "ok",
-    releaseCommit: expectedCommit.data,
+    releaseCommit: eventCommit.data,
     releaseTag: parsedTag.releaseTag,
     releaseVersion: parsedTag.releaseVersion,
   };
@@ -181,23 +166,20 @@ function parseJson(text: string): unknown | { readonly kind: "invalid_json" } {
 }
 
 function main(): number {
-  const inputReleaseCommit = process.env.INPUT_RELEASE_COMMIT ?? "";
-  const inputReleaseTag = process.env.INPUT_RELEASE_TAG ?? "";
   const githubRefName = process.env.GITHUB_REF_NAME ?? "";
   const githubRefType = process.env.GITHUB_REF_TYPE ?? "";
   const githubEventCommit = process.env.GITHUB_EVENT_COMMIT ?? "";
-  const githubEventName = process.env.GITHUB_EVENT_NAME ?? "";
-  const requestedTag =
-    inputReleaseTag.length > 0
-      ? inputReleaseTag
-      : githubRefType === "tag"
-        ? githubRefName
-        : "";
-  const parsedTag = parseReleaseTag(requestedTag);
+  if (githubRefType !== "tag") {
+    printFailure({
+      kind: "release_ref_not_tag",
+      actualRefName: githubRefName,
+      actualRefType: githubRefType,
+    });
+    return 1;
+  }
+  const parsedTag = parseReleaseTag(githubRefName);
   if (parsedTag.kind !== "ok") {
-    printFailure(
-      requestedTag.length === 0 ? { kind: "missing_release_tag" } : parsedTag,
-    );
+    printFailure(parsedTag);
     return 1;
   }
 
@@ -240,17 +222,22 @@ function main(): number {
     console.error("cargo metadata returned invalid JSON");
     return 1;
   }
+  const parsedTagCommit = RELEASE_COMMIT_SCHEMA.safeParse(tagCommit.stdout);
+  const parsedWorkingTreeCommit = RELEASE_COMMIT_SCHEMA.safeParse(
+    workingTreeCommit.stdout,
+  );
+  if (!parsedTagCommit.success || !parsedWorkingTreeCommit.success) {
+    console.error("git rev-parse returned an invalid full commit SHA");
+    return 1;
+  }
 
   const result = resolveReleaseMetadata({
     cargoMetadata: parsedCargoMetadata,
     githubEventCommit,
-    githubEventName,
     githubRefName,
     githubRefType,
-    inputReleaseTag,
-    inputReleaseCommit,
-    tagCommit: tagCommit.stdout,
-    workingTreeCommit: workingTreeCommit.stdout,
+    tagCommit: parsedTagCommit.data,
+    workingTreeCommit: parsedWorkingTreeCommit.data,
   });
   if (result.kind !== "ok") {
     printFailure(result);
@@ -292,20 +279,14 @@ function printFailure(
   failure: Exclude<ResolveReleaseMetadataResult, { kind: "ok" }>,
 ): void {
   switch (failure.kind) {
-    case "missing_release_tag":
-      console.error("workflow_dispatch runs must provide inputs.release_tag");
-      return;
-    case "missing_release_commit":
+    case "invalid_release_event_commit":
       console.error(
-        "workflow_dispatch runs must provide inputs.release_commit",
+        `GitHub event commit must be a full lowercase Git SHA: ${failure.eventCommit}`,
       );
       return;
-    case "invalid_release_event":
-      console.error(`unsupported release event: ${failure.eventName}`);
-      return;
-    case "invalid_release_commit":
+    case "release_ref_not_tag":
       console.error(
-        `release commit must be a full lowercase Git SHA: ${failure.releaseCommit}`,
+        `release workflow must be dispatched from a tag, not ${failure.actualRefType}:${failure.actualRefName}`,
       );
       return;
     case "release_commit_mismatch":

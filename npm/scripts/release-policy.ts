@@ -6,7 +6,8 @@ import {
   PUBLIC_PACKAGE_VERSION_SCHEMA,
   type PublicPackageVersion,
 } from "./package-version.ts";
-const RELEASE_TAG_SCHEMA = z
+/** Validates a `v`-prefixed tag containing one publishable package version. */
+export const RELEASE_TAG_SCHEMA = z
   .string()
   .regex(/^v/)
   .transform((tag, context) => {

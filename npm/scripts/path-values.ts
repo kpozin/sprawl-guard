@@ -1,3 +1,5 @@
+import path from "node:path";
+import { z } from "zod";
 import { resolveAbsolutePath, type AbsolutePath } from "../sprawl-guard/src/lib/paths.ts";
 
 declare const absoluteDirectoryPathBrand: unique symbol;
@@ -29,6 +31,18 @@ export type PackageRelativePath = string & {
   readonly [packageRelativePathBrand]: "PackageRelativePath";
 };
 
+/** Validated absolute directory path. */
+export const ABSOLUTE_DIRECTORY_PATH_SCHEMA = z.custom<AbsoluteDirectoryPath>(
+  (value) => typeof value === "string" && path.isAbsolute(value),
+  "must be an absolute directory path",
+);
+
+/** Validated normalized package-relative path using POSIX separators. */
+export const PACKAGE_RELATIVE_PATH_SCHEMA = z.custom<PackageRelativePath>(
+  (value) => typeof value === "string" && isPackageRelativePath(value),
+  "must be a normalized package-relative path",
+);
+
 /** Relative path expected under a payload validation root directory. */
 export type PayloadFileRelativePath = PackageRelativePath & {
   readonly [payloadFileRelativePathBrand]: "PayloadFileRelativePath";
@@ -51,7 +65,7 @@ export type PayloadValidationDetail = string & {
 
 /** Resolves a raw path string into an absolute directory path value. */
 export function absoluteDirectoryPath(value: string): AbsoluteDirectoryPath {
-  return resolveAbsolutePath(value) as unknown as AbsoluteDirectoryPath;
+  return ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(resolveAbsolutePath(value));
 }
 
 /** Resolves a raw path string into an artifact root directory path. */
@@ -118,18 +132,18 @@ export function payloadValidationDetails(
 }
 
 function assertPackageRelativePath(value: string): void {
-  if (
-    value.length === 0
-    || value.includes("\0")
-    || value.includes("\\")
-    || value.startsWith("/")
-    || /^[A-Za-z]:/.test(value)
-  ) {
+  if (!isPackageRelativePath(value)) {
     throw new Error(`invalid package-relative path: ${value}`);
   }
+}
 
-  const segments = value.split("/");
-  if (segments.some((segment) => segment === "" || segment === "." || segment === "..")) {
-    throw new Error(`invalid package-relative path: ${value}`);
-  }
+function isPackageRelativePath(value: string): boolean {
+  return value.length > 0
+    && !value.includes("\0")
+    && !value.includes("\\")
+    && !value.startsWith("/")
+    && !/^[A-Za-z]:/u.test(value)
+    && value.split("/").every(
+      (segment) => segment !== "" && segment !== "." && segment !== "..",
+    );
 }

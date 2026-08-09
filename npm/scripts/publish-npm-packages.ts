@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { gt } from "semver";
 import { z } from "zod";
 import {
   PACKAGE_VERSION,
@@ -22,49 +20,89 @@ import {
   type SelectedNpmDistTag,
   type StagingNpmDistTag,
 } from "./npm-dist-tag.ts";
-import {
-  PUBLIC_PACKAGE_VERSION_SCHEMA,
-  type PublicPackageVersion,
-} from "./package-version.ts";
+import { PUBLIC_PACKAGE_VERSION_SCHEMA } from "./package-version.ts";
 import { PAYLOAD_CHECK_KIND } from "./payload-check.ts";
+import {
+  reconcileNpmDistTag,
+  type NpmPackageName,
+  type NpmPublicationOperations,
+  type NpmPublicationRequest,
+  type PackResult,
+  type PublishArchiveResult,
+  type PublishNpmPackagesResult,
+  type RemoteNpmDistTagInspection,
+  type RemotePackageIntegrityInspection,
+  type SuccessfulPackResult,
+  type ValidationResult,
+} from "./npm-publication/model.ts";
+import {
+  inspectDistTagBeforePublication,
+  prepareNpmPublications,
+  publishPreparedNpmPublications,
+  publishTrustedNpmPublicationRequests,
+  waitForPublishedDistTag,
+} from "./npm-publication/state.ts";
+import {
+  ABSOLUTE_DIRECTORY_PATH_SCHEMA,
+  NPM_ARCHIVE_FILE_NAME_SCHEMA,
+  NPM_ARCHIVE_PATH_SCHEMA,
+  NPM_PACKAGE_INTEGRITY_SCHEMA,
+  NPM_PACKAGE_NAME_SCHEMA,
+  NPM_REGISTRY_URL,
+  PACKAGE_RELATIVE_PATH_SCHEMA,
+  parsePackageRelativePaths,
+  type AbsoluteDirectoryPath,
+  type NpmArchivePath,
+  type NpmPackageIntegrity,
+  type PackageRelativePath,
+} from "./npm-publication/values.ts";
+import {
+  archiveIntegrity,
+  validateArchiveIntegrity,
+  validatePackedPackageManifest,
+  validatePackedPaths,
+  validatePnpmVersion,
+  validateRegularCandidateFile,
+  validateStagedPackageManifest,
+} from "./npm-publication/validation.ts";
+import { RELEASE_TAG_SCHEMA } from "./release-policy.ts";
 import {
   inspectReleaseSource,
   parseReleaseSourceExpectation,
+  RELEASE_COMMIT_SCHEMA,
   type ReleaseCommit,
   type ReleaseSourceExpectation,
 } from "./release-source.ts";
 
 const PNPM_PACK_RESULT_SCHEMA = z.object({
-  filename: z.string().min(1),
-  files: z.array(z.object({ path: z.string().min(1) })),
-  name: z.string().min(1),
-  version: z.string().min(1),
+  filename: NPM_ARCHIVE_PATH_SCHEMA,
+  files: z.array(z.object({ path: PACKAGE_RELATIVE_PATH_SCHEMA })),
+  name: NPM_PACKAGE_NAME_SCHEMA,
+  version: PUBLIC_PACKAGE_VERSION_SCHEMA,
 });
 const NPM_PUBLICATION_CANDIDATE_MANIFEST_FILE = "npm-publication-candidate.json";
 const NPM_PUBLICATION_CANDIDATE_SCHEMA = z
   .object({
     schemaVersion: z.literal(2),
     npmDistTag: SELECTED_NPM_DIST_TAG_SCHEMA,
-    releaseCommit: z.string(),
-    releaseTag: z.string(),
-    releaseVersion: z.string(),
+    releaseCommit: RELEASE_COMMIT_SCHEMA,
+    releaseTag: RELEASE_TAG_SCHEMA,
+    releaseVersion: PUBLIC_PACKAGE_VERSION_SCHEMA,
     packages: z.array(
       z
         .object({
-          archiveFile: z.string().min(1),
-          integrity: z.string().startsWith("sha512-"),
-          packageName: z.string().min(1),
+          archiveFile: NPM_ARCHIVE_FILE_NAME_SCHEMA,
+          integrity: NPM_PACKAGE_INTEGRITY_SCHEMA,
+          packageName: NPM_PACKAGE_NAME_SCHEMA,
         })
         .strict(),
     ),
   })
   .strict();
-const NPM_VIEW_INTEGRITY_SCHEMA = z.string().startsWith("sha512-");
-const REGISTRY_VISIBILITY_ATTEMPTS = 60;
 const REGISTRY_VISIBILITY_INTERVAL_MILLISECONDS = 2_000;
-const NPM_REGISTRY_URL = "https://registry.npmjs.org/";
-const EXPECTED_PNPM_VERSION = "11.7.0";
-const WORKSPACE_ROOT_DIRECTORY = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
+const WORKSPACE_ROOT_DIRECTORY = ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(
+  path.resolve(fileURLToPath(new URL("..", import.meta.url))),
+);
 const NPM_NOT_FOUND_CODE = "E404";
 const TRANSIENT_NPM_FAILURE_PATTERN =
   /(?:EAI_AGAIN|ECONNRESET|ETIMEDOUT|ERR_SOCKET_TIMEOUT|E429|E50[0234]|HTTP (?:408|429|5\d\d))/u;
@@ -72,151 +110,31 @@ const NPM_COMMAND_MAXIMUM_OUTPUT_BYTES = 1_048_576;
 const NPM_READ_COMMAND_TIMEOUT_MILLISECONDS = 30_000;
 const NPM_MUTATION_COMMAND_TIMEOUT_MILLISECONDS = 600_000;
 
-export type NpmPackageName =
-  | (typeof RUNTIME_PACKAGE_DEFINITIONS)[number]["packageName"]
-  | typeof WRAPPER_PACKAGE_NAME;
-
-type ArchiveExpectation =
-  | {
-      readonly kind: "files";
-      readonly requiredPaths: readonly string[];
-    }
-  | {
-      readonly kind: "posix_executable";
-      readonly executablePath: string;
-      readonly requiredPaths: readonly string[];
-    };
-
-/** One staged npm package that must be reconciled with the registry. */
-export interface NpmPublicationRequest {
-  readonly archiveExpectation: ArchiveExpectation;
-  readonly expectedManifestText: string;
-  readonly expectedPackedManifestText: string;
-  readonly expectedPackedPaths: readonly string[];
-  readonly packageDirectory: string;
-  readonly packageName: NpmPackageName;
-}
-
-type RemotePackageIntegrity =
-  | { readonly kind: "absent" }
-  | { readonly kind: "present"; readonly integrity: string };
-
-/** Current registry target for one npm distribution tag. */
-export type RemoteNpmDistTag =
-  | { readonly kind: "absent" }
-  | { readonly kind: "present"; readonly version: PublicPackageVersion };
-
-/** Result of reading one npm channel from the registry. */
-export type RemoteNpmDistTagInspection =
-  | { readonly kind: "ok"; readonly remote: RemoteNpmDistTag }
-  | { readonly kind: "transient_failure"; readonly detail: string }
-  | { readonly kind: "permanent_failure"; readonly detail: string };
-
-/** Decision for reconciling an npm channel with the release version. */
-export type NpmDistTagDecision =
-  | { readonly kind: "keep" }
-  | { readonly kind: "update" }
-  | { readonly kind: "would_move_backward"; readonly currentVersion: PublicPackageVersion };
-
-/** Result of inspecting one immutable package version on npm. */
-export type RemotePackageIntegrityInspection =
-  | { readonly kind: "ok"; readonly integrity: RemotePackageIntegrity }
-  | { readonly kind: "transient_failure"; readonly detail: string }
-  | { readonly kind: "permanent_failure"; readonly detail: string };
-
-/** Decision for reconciling one immutable package version. */
-export type NpmPackageIntegrityDecision =
-  | { readonly kind: "publish" }
-  | { readonly kind: "skip" }
-  | {
-      readonly kind: "integrity_mismatch";
-      readonly localIntegrity: string;
-      readonly remoteIntegrity: string;
-    };
-
 type NpmCommandResult =
   | { readonly kind: "ok"; readonly stdout: string }
   | { readonly kind: "failed"; readonly detail: string };
 
-type PackResult =
-  | {
-      readonly kind: "ok";
-      readonly archivePath: string;
-      readonly integrity: string;
-      readonly packageName: string;
-      readonly version: string;
-    }
-  | { readonly kind: "failed"; readonly detail: string };
-type SuccessfulPackResult = Extract<PackResult, { readonly kind: "ok" }>;
 type NpmPublicationCandidateManifest = z.infer<
   typeof NPM_PUBLICATION_CANDIDATE_SCHEMA
 >;
-
-interface PackagedNpmPublication {
-  readonly packed: SuccessfulPackResult;
-  readonly request: NpmPublicationRequest;
-}
-
-interface PreparedNpmPublication extends PackagedNpmPublication {
-  readonly decision: Exclude<NpmPackageIntegrityDecision, { readonly kind: "integrity_mismatch" }>;
-}
-
-type PublishArchiveResult =
-  | { readonly kind: "ok" }
-  | { readonly kind: "failed"; readonly detail: string };
-type UpdateNpmDistTagResult = PublishArchiveResult;
-
-export type PublishNpmPackagesResult =
-  | { readonly kind: "ok" }
-  | {
-      readonly kind: "failed";
-      readonly packageName: NpmPackageName;
-      readonly detail: string;
-    };
-
-/** Registry and package-manager operations used by the npm publication state machine. */
-export interface NpmPublicationOperations {
-  readonly inspectRemoteDistTag: (
-    packageName: NpmPackageName,
-    npmDistTag: NpmDistTag,
-  ) => RemoteNpmDistTagInspection;
-  readonly inspectRemoteIntegrity: (
-    packageName: NpmPackageName,
-  ) => RemotePackageIntegrityInspection;
-  readonly packPackage: (
-    request: NpmPublicationRequest,
-    temporaryDirectory: string,
-  ) => PackResult;
-  readonly publishArchive: (
-    archivePath: string,
-    expectedIntegrity: string,
-    npmDistTag: NpmDistTag,
-  ) => PublishArchiveResult;
-  readonly removeRemoteDistTag: (
-    packageName: NpmPackageName,
-    npmDistTag: NpmDistTag,
-  ) => UpdateNpmDistTagResult;
-  readonly sleepBeforeRetry: () => Promise<void>;
-  readonly updateRemoteDistTag: (
-    packageName: NpmPackageName,
-    npmDistTag: NpmDistTag,
-  ) => UpdateNpmDistTagResult;
-}
-
 /** Returns all carrier packages followed by the user-facing wrapper package. */
 export function npmPublicationRequests(args: {
-  readonly workspaceRootDirectory: string;
+  readonly workspaceRootDirectory: AbsoluteDirectoryPath;
 }): readonly NpmPublicationRequest[] {
   const publishWorkspace = path.join(args.workspaceRootDirectory, PUBLISH_WORKSPACE_DIRECTORY);
   const generatedTextFiles = publishWorkspaceTextFiles();
+  const wrapperManifestText = generatedTextFile(
+    generatedTextFiles,
+    `${PUBLISH_WORKSPACE_DIRECTORY}/sprawl-guard/package.json`,
+  );
   return [
     ...RUNTIME_PACKAGE_DEFINITIONS.map((definition) => {
-      const requiredPaths = [
+      const requiredPaths = parsePackageRelativePaths([
         "package.json",
         "README.md",
         definition.payloadPath,
         ...PUBLISH_LICENSE_FILE_NAMES,
-      ];
+      ]);
       const expectedManifestText = generatedTextFile(
         generatedTextFiles,
         `${PUBLISH_WORKSPACE_DIRECTORY}/packages/${definition.slug}/package.json`,
@@ -226,44 +144,46 @@ export function npmPublicationRequests(args: {
           definition.payloadCheckKind === PAYLOAD_CHECK_KIND.POSIX_EXECUTABLE
             ? {
                 kind: "posix_executable" as const,
-                executablePath: definition.payloadPath,
+                executablePath: PACKAGE_RELATIVE_PATH_SCHEMA.parse(
+                  definition.payloadPath,
+                ),
                 requiredPaths,
               }
             : { kind: "files" as const, requiredPaths },
         expectedManifestText,
         expectedPackedManifestText: expectedManifestText,
         expectedPackedPaths: requiredPaths,
-        packageDirectory: path.join(publishWorkspace, "packages", definition.slug),
+        packageDirectory: ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(
+          path.join(publishWorkspace, "packages", definition.slug),
+        ),
         packageName: definition.packageName,
       };
     }),
-    (() => {
-      const expectedManifestText = generatedTextFile(
-        generatedTextFiles,
-        `${PUBLISH_WORKSPACE_DIRECTORY}/sprawl-guard/package.json`,
-      );
-      return {
+    {
       archiveExpectation: {
         kind: "files" as const,
-        requiredPaths: [
+        requiredPaths: parsePackageRelativePaths([
           "package.json",
           "README.md",
           "dist/bin/sprawl-guard.js",
           ...PUBLISH_LICENSE_FILE_NAMES,
-        ],
+        ]),
       },
-      expectedManifestText,
-      expectedPackedManifestText: pnpmPackedWrapperManifest(expectedManifestText),
+      expectedManifestText: wrapperManifestText,
+      expectedPackedManifestText: pnpmPackedWrapperManifest(wrapperManifestText),
       expectedPackedPaths: wrapperPackedPaths(),
-      packageDirectory: path.join(publishWorkspace, "sprawl-guard"),
+      packageDirectory: ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(
+        path.join(publishWorkspace, "sprawl-guard"),
+      ),
       packageName: WRAPPER_PACKAGE_NAME,
-      };
-    })(),
+    },
   ];
 }
 
 /** Models pnpm's audited removal of its development-only selector from published metadata. */
-function pnpmPackedWrapperManifest(manifestText: string): string {
+function pnpmPackedWrapperManifest(
+  manifestText: string,
+): string {
   const manifest = JSON.parse(manifestText) as Record<string, unknown>;
   delete manifest.packageManager;
   return `${JSON.stringify(manifest, null, 2)}\n`;
@@ -280,7 +200,7 @@ function generatedTextFile(
   return file.text;
 }
 
-function wrapperPackedPaths(): readonly string[] {
+function wrapperPackedPaths(): readonly PackageRelativePath[] {
   const librarySourceDirectory = path.join(
     WORKSPACE_ROOT_DIRECTORY,
     "sprawl-guard",
@@ -296,13 +216,13 @@ function wrapperPackedPaths(): readonly string[] {
         && !entry.name.endsWith(".test.ts"),
     )
     .map((entry) => `dist/lib/${entry.name.slice(0, -3)}.js`);
-  return [
+  return parsePackageRelativePaths([
     "package.json",
     "README.md",
     ...PUBLISH_LICENSE_FILE_NAMES,
     "dist/bin/sprawl-guard.js",
     ...compiledLibraryPaths,
-  ];
+  ]);
 }
 
 type LoadNpmPublicationCandidateResult =
@@ -316,12 +236,20 @@ type LoadNpmPublicationCandidateResult =
       readonly detail: string;
     };
 
+type LoadedNpmPublication =
+  | {
+      readonly kind: "ok";
+      readonly operations: NpmPublicationOperations;
+      readonly requests: readonly NpmPublicationRequest[];
+    }
+  | Extract<PublishNpmPackagesResult, { readonly kind: "failed" }>;
+
 /** Packs and records the complete npm candidate before registry authentication. */
 export function prepareNpmPublicationCandidate(args: {
   readonly expectation: ReleaseSourceExpectation;
   readonly npmDistTag: SelectedNpmDistTag;
-  readonly outputDirectory: string;
-  readonly workspaceRootDirectory: string;
+  readonly outputDirectory: AbsoluteDirectoryPath;
+  readonly workspaceRootDirectory: AbsoluteDirectoryPath;
 }): PublishNpmPackagesResult {
   const pnpmVersion = runCommand("pnpm", ["--version"], args.workspaceRootDirectory);
   if (pnpmVersion.kind === "failed") {
@@ -331,12 +259,12 @@ export function prepareNpmPublicationCandidate(args: {
       detail: pnpmVersion.detail,
     };
   }
-  const versionFailure = validatePnpmVersion(pnpmVersion.stdout.trim());
-  if (versionFailure !== null) {
+  const versionValidation = validatePnpmVersion(pnpmVersion.stdout.trim());
+  if (versionValidation.kind === "invalid") {
     return {
       kind: "failed",
       packageName: WRAPPER_PACKAGE_NAME,
-      detail: versionFailure,
+      detail: versionValidation.detail,
     };
   }
   try {
@@ -365,7 +293,9 @@ export function prepareNpmPublicationCandidate(args: {
       );
     }
     packages.push({
-      archiveFile: path.basename(packed.archivePath),
+      archiveFile: NPM_ARCHIVE_FILE_NAME_SCHEMA.parse(
+        path.basename(packed.archivePath),
+      ),
       integrity: packed.integrity,
       packageName: request.packageName,
     });
@@ -396,7 +326,7 @@ export function prepareNpmPublicationCandidate(args: {
 }
 
 function loadNpmPublicationCandidate(args: {
-  readonly candidateDirectory: string;
+  readonly candidateDirectory: AbsoluteDirectoryPath;
   readonly expectation: ReleaseSourceExpectation;
   readonly npmDistTag: SelectedNpmDistTag;
   readonly requests: readonly NpmPublicationRequest[];
@@ -406,9 +336,9 @@ function loadNpmPublicationCandidate(args: {
     args.candidateDirectory,
     NPM_PUBLICATION_CANDIDATE_MANIFEST_FILE,
   );
-  const manifestEntryFailure = validateRegularCandidateFile(manifestPath);
-  if (manifestEntryFailure !== null) {
-    return candidateFailure(manifestEntryFailure);
+  const manifestEntryValidation = validateRegularCandidateFile(manifestPath);
+  if (manifestEntryValidation.kind === "invalid") {
+    return candidateFailure(manifestEntryValidation.detail);
   }
   try {
     parsedJson = JSON.parse(
@@ -445,10 +375,12 @@ function loadNpmPublicationCandidate(args: {
       return candidateRequestFailure(request, "npm candidate archive name is not a basename");
     }
     expectedFiles.add(entry.archiveFile);
-    const archivePath = path.join(args.candidateDirectory, entry.archiveFile);
-    const archiveEntryFailure = validateRegularCandidateFile(archivePath);
-    if (archiveEntryFailure !== null) {
-      return candidateRequestFailure(request, archiveEntryFailure);
+    const archivePath = NPM_ARCHIVE_PATH_SCHEMA.parse(
+      path.join(args.candidateDirectory, entry.archiveFile),
+    );
+    const archiveEntryValidation = validateRegularCandidateFile(archivePath);
+    if (archiveEntryValidation.kind === "invalid") {
+      return candidateRequestFailure(request, archiveEntryValidation.detail);
     }
     const validated = validateCandidateArchive({ archivePath, request });
     if (validated.kind === "failed") {
@@ -466,12 +398,14 @@ function loadNpmPublicationCandidate(args: {
   } catch (cause) {
     return candidateFailure(`failed to inspect npm candidate directory: ${String(cause)}`);
   }
-  const candidatePathFailure = validatePackedPaths({
+  const candidatePathValidation = validatePackedPaths({
     actualPaths: actualFiles,
     expectedPaths: [...expectedFiles],
   });
-  if (candidatePathFailure !== null) {
-    return candidateFailure(`npm candidate directory is invalid: ${candidatePathFailure}`);
+  if (candidatePathValidation.kind === "invalid") {
+    return candidateFailure(
+      `npm candidate directory is invalid: ${candidatePathValidation.detail}`,
+    );
   }
   return { kind: "ok", packedByPackageName };
 }
@@ -487,221 +421,52 @@ function candidateRequestFailure(
   return { kind: "failed", packageName: request.packageName, detail };
 }
 
-function validateRegularCandidateFile(filePath: string): string | null {
-  try {
-    const status = fs.lstatSync(filePath);
-    return status.isFile() && status.nlink === 1
-      ? null
-      : `npm candidate entry is not an independent regular file: ${filePath}`;
-  } catch (cause) {
-    return `failed to inspect npm candidate entry ${filePath}: ${String(cause)}`;
-  }
-}
-
-/** Decides whether an immutable npm package version is new, safely resumed, or conflicting. */
-export function reconcileNpmPackageIntegrity(args: {
-  readonly localIntegrity: string;
-  readonly remoteIntegrity: RemotePackageIntegrity;
-}): NpmPackageIntegrityDecision {
-  if (args.remoteIntegrity.kind === "absent") {
-    return { kind: "publish" };
-  }
-  if (args.remoteIntegrity.integrity === args.localIntegrity) {
-    return { kind: "skip" };
-  }
-  return {
-    kind: "integrity_mismatch",
-    localIntegrity: args.localIntegrity,
-    remoteIntegrity: args.remoteIntegrity.integrity,
-  };
-}
-
-/** Decides whether a channel is current, may advance, or would move backward. */
-export function reconcileNpmDistTag(args: {
-  readonly releaseVersion: PublicPackageVersion;
-  readonly remote: RemoteNpmDistTag;
-}): NpmDistTagDecision {
-  if (args.remote.kind === "absent") {
-    return { kind: "update" };
-  }
-  if (args.remote.version === args.releaseVersion) {
-    return { kind: "keep" };
-  }
-  return gt(args.remote.version, args.releaseVersion)
-    ? {
-        kind: "would_move_backward",
-        currentVersion: args.remote.version,
-      }
-    : { kind: "update" };
-}
-
-/** Validates the exact generated manifest before pnpm can run package scripts. */
-export function validateStagedPackageManifest(args: {
-  readonly actualText: string;
-  readonly expectedText: string;
-}): string | null {
-  return args.actualText === args.expectedText
-    ? null
-    : "staged package.json differs from the generated release manifest";
-}
-
-function validatePackedPackageManifest(args: {
-  readonly actualText: string;
-  readonly expectedText: string;
-}): string | null {
-  try {
-    return JSON.stringify(JSON.parse(args.actualText))
-      === JSON.stringify(JSON.parse(args.expectedText))
-      ? null
-      : "packed package.json differs from the generated release manifest";
-  } catch (cause) {
-    return `packed package.json is invalid: ${String(cause)}`;
-  }
-}
-
-/** Validates that a packed archive contains exactly the expected paths. */
-export function validatePackedPaths(args: {
-  readonly actualPaths: readonly string[];
-  readonly expectedPaths: readonly string[];
-}): string | null {
-  const actual = args.actualPaths.toSorted();
-  const expected = args.expectedPaths.toSorted();
-  return actual.length === expected.length
-    && actual.every((actualPath, index) => actualPath === expected[index])
-    ? null
-    : `packed paths differ: expected ${expected.join(", ")}; received ${actual.join(", ")}`;
-}
-
 /** Runs the ordered, resumable npm publication state machine through supplied operations. */
 export async function publishNpmPublicationRequests(args: {
   readonly npmDistTag: SelectedNpmDistTag;
   readonly stagingNpmDistTag: StagingNpmDistTag;
   readonly operations: NpmPublicationOperations;
   readonly requests: readonly NpmPublicationRequest[];
-  readonly temporaryDirectory: string;
+  readonly temporaryDirectory: AbsoluteDirectoryPath;
 }): Promise<PublishNpmPackagesResult> {
-  const packagedPublications: PackagedNpmPublication[] = [];
-  for (const request of args.requests) {
-    const packed = args.operations.packPackage(request, args.temporaryDirectory);
-    if (packed.kind === "failed") {
-      return failedPublication(request, packed.detail);
-    }
-    if (packed.packageName !== request.packageName || packed.version !== PACKAGE_VERSION) {
-      return failedPublication(
-        request,
-        `packed identity ${packed.packageName}@${packed.version} does not match ${request.packageName}@${PACKAGE_VERSION}`,
-      );
-    }
-    packagedPublications.push({ packed, request });
+  const prepared = await prepareNpmPublications(args);
+  if (prepared.kind === "failed") {
+    return prepared;
   }
+  const preparedPublications = prepared.publications;
 
-  const preparedPublications: PreparedNpmPublication[] = [];
-  for (const publication of packagedPublications) {
-    const { packed, request } = publication;
-    const inspected = await inspectBeforePublication(request.packageName, args.operations);
-    if (inspected.kind !== "ok") {
-      return failedPublication(request, inspected.detail);
-    }
-    const decision = reconcileNpmPackageIntegrity({
-      localIntegrity: packed.integrity,
-      remoteIntegrity: inspected.integrity,
-    });
-    if (decision.kind === "integrity_mismatch") {
-      return failedPublication(
-        request,
-        `registry integrity ${decision.remoteIntegrity} differs from staged integrity ${decision.localIntegrity}`,
-      );
-    }
-    const inspectedDistTag = await inspectDistTagBeforePublication(
-      request.packageName,
-      args.npmDistTag,
-      args.operations,
-    );
-    if (inspectedDistTag.kind !== "ok") {
-      return failedPublication(request, inspectedDistTag.detail);
-    }
-    const distTagDecision = reconcileNpmDistTag({
-      releaseVersion: PACKAGE_VERSION,
-      remote: inspectedDistTag.remote,
-    });
-    if (distTagDecision.kind === "would_move_backward") {
-      return failedPublication(
-        request,
-        `npm dist-tag ${args.npmDistTag} already targets newer version ${distTagDecision.currentVersion}`,
-      );
-    }
-    preparedPublications.push({ ...publication, decision });
-  }
-
-  for (const { decision, packed, request } of preparedPublications) {
-    if (decision.kind === "skip") {
-      console.log(
-        `already published with matching integrity: ${request.packageName}@${PACKAGE_VERSION}`,
-      );
-    } else {
-      const reinspection = await inspectBeforePublication(
-        request.packageName,
-        args.operations,
-      );
-      if (reinspection.kind !== "ok") {
-        return failedPublication(request, reinspection.detail);
-      }
-      const currentDecision = reconcileNpmPackageIntegrity({
-        localIntegrity: packed.integrity,
-        remoteIntegrity: reinspection.integrity,
-      });
-      if (currentDecision.kind === "integrity_mismatch") {
-        return failedPublication(
-          request,
-          `registry integrity ${currentDecision.remoteIntegrity} differs from staged integrity ${currentDecision.localIntegrity}`,
-        );
-      }
-      if (currentDecision.kind === "skip") {
-        console.log(
-          `already published with matching integrity: ${request.packageName}@${PACKAGE_VERSION}`,
-        );
-      } else {
-        const published = args.operations.publishArchive(
-          packed.archivePath,
-          packed.integrity,
-          args.stagingNpmDistTag,
-        );
-        if (published.kind === "failed") {
-          return failedPublication(request, published.detail);
-        }
-        const visible = await waitForPublishedPackage(
-          request.packageName,
-          packed.integrity,
-          args.operations,
-        );
-        if (visible !== null) {
-          return failedPublication(request, visible);
-        }
-        console.log(`published ${request.packageName}@${PACKAGE_VERSION}`);
-      }
-    }
+  const publication = await publishPreparedNpmPublications({
+    operations: args.operations,
+    publications: preparedPublications,
+    route: {
+      kind: "local_staging",
+      publicationDistTag: args.stagingNpmDistTag,
+    },
+  });
+  if (publication.kind === "failed") {
+    return publication;
   }
 
   for (const { request } of preparedPublications) {
-    const distTagFailure = await reconcilePublishedDistTag({
+    const distTag = await reconcilePublishedDistTag({
       npmDistTag: args.npmDistTag,
       operations: args.operations,
       packageName: request.packageName,
     });
-    if (distTagFailure !== null) {
-      return failedPublication(request, distTagFailure);
+    if (distTag.kind === "failed") {
+      return failedPublication(request, distTag.detail);
     }
   }
 
   for (const { request } of preparedPublications) {
-    const stagingTagFailure = await removePublishedStagingDistTag({
+    const stagingTag = await removePublishedStagingDistTag({
       operations: args.operations,
       packageName: request.packageName,
       selectedNpmDistTag: args.npmDistTag,
       stagingNpmDistTag: args.stagingNpmDistTag,
     });
-    if (stagingTagFailure !== null) {
-      return failedPublication(request, stagingTagFailure);
+    if (stagingTag.kind === "failed") {
+      return failedPublication(request, stagingTag.detail);
     }
   }
   return { kind: "ok" };
@@ -709,11 +474,49 @@ export async function publishNpmPublicationRequests(args: {
 
 /** Publishes absent packages and safely skips byte-identical versions from a resumed release. */
 export async function publishNpmPackages(args: {
-  readonly candidateDirectory: string;
+  readonly candidateDirectory: AbsoluteDirectoryPath;
   readonly expectation: ReleaseSourceExpectation;
   readonly npmDistTag: SelectedNpmDistTag;
-  readonly workspaceRootDirectory: string;
+  readonly workspaceRootDirectory: AbsoluteDirectoryPath;
 }): Promise<PublishNpmPackagesResult> {
+  const loaded = loadNpmPublicationForRelease(args);
+  if (loaded.kind === "failed") {
+    return loaded;
+  }
+  return publishNpmPublicationRequests({
+    npmDistTag: args.npmDistTag,
+    operations: loaded.operations,
+    requests: loaded.requests,
+    stagingNpmDistTag: npmStagingDistTag(args.expectation.commit),
+    temporaryDirectory: args.candidateDirectory,
+  });
+}
+
+/** Publishes a validated candidate through npm's GitHub Actions trusted publisher. */
+export async function publishTrustedNpmPackages(args: {
+  readonly candidateDirectory: AbsoluteDirectoryPath;
+  readonly expectation: ReleaseSourceExpectation;
+  readonly npmDistTag: SelectedNpmDistTag;
+  readonly workspaceRootDirectory: AbsoluteDirectoryPath;
+}): Promise<PublishNpmPackagesResult> {
+  const loaded = loadNpmPublicationForRelease(args);
+  if (loaded.kind === "failed") {
+    return loaded;
+  }
+  return publishTrustedNpmPublicationRequests({
+    npmDistTag: args.npmDistTag,
+    operations: loaded.operations,
+    requests: loaded.requests,
+    temporaryDirectory: args.candidateDirectory,
+  });
+}
+
+function loadNpmPublicationForRelease(args: {
+  readonly candidateDirectory: AbsoluteDirectoryPath;
+  readonly expectation: ReleaseSourceExpectation;
+  readonly npmDistTag: SelectedNpmDistTag;
+  readonly workspaceRootDirectory: AbsoluteDirectoryPath;
+}): LoadedNpmPublication {
   const requests = npmPublicationRequests(args);
   const candidate = loadNpmPublicationCandidate({
     candidateDirectory: args.candidateDirectory,
@@ -721,16 +524,13 @@ export async function publishNpmPackages(args: {
     npmDistTag: args.npmDistTag,
     requests,
   });
-  if (candidate.kind === "failed") {
-    return candidate;
-  }
-  return publishNpmPublicationRequests({
-    npmDistTag: args.npmDistTag,
-    operations: productionOperations(candidate.packedByPackageName),
-    requests,
-    stagingNpmDistTag: npmStagingDistTag(args.expectation.commit),
-    temporaryDirectory: args.candidateDirectory,
-  });
+  return candidate.kind === "failed"
+    ? candidate
+    : {
+        kind: "ok",
+        operations: productionOperations(candidate.packedByPackageName),
+        requests,
+      };
 }
 
 /** Returns the release-scoped tag used while uploading a complete package set. */
@@ -740,10 +540,10 @@ export function npmStagingDistTag(releaseCommit: ReleaseCommit): StagingNpmDistT
 
 /** Validates a downloaded npm candidate without registry credentials. */
 export function verifyNpmPublicationCandidate(args: {
-  readonly candidateDirectory: string;
+  readonly candidateDirectory: AbsoluteDirectoryPath;
   readonly expectation: ReleaseSourceExpectation;
   readonly npmDistTag: SelectedNpmDistTag;
-  readonly workspaceRootDirectory: string;
+  readonly workspaceRootDirectory: AbsoluteDirectoryPath;
 }): PublishNpmPackagesResult {
   const loaded = loadNpmPublicationCandidate({
     candidateDirectory: args.candidateDirectory,
@@ -754,17 +554,10 @@ export function verifyNpmPublicationCandidate(args: {
   return loaded.kind === "ok" ? { kind: "ok" } : loaded;
 }
 
-/** Validates the audited pnpm version used to form immutable package archives. */
-export function validatePnpmVersion(actualVersion: string): string | null {
-  return actualVersion === EXPECTED_PNPM_VERSION
-    ? null
-    : `pnpm ${EXPECTED_PNPM_VERSION} is required; found ${actualVersion}`;
-}
-
 function failedPublication(
   request: NpmPublicationRequest,
   detail: string,
-): PublishNpmPackagesResult {
+): Extract<PublishNpmPackagesResult, { readonly kind: "failed" }> {
   return {
     kind: "failed",
     packageName: request.packageName,
@@ -772,101 +565,37 @@ function failedPublication(
   };
 }
 
-async function inspectBeforePublication(
-  packageName: NpmPackageName,
-  operations: NpmPublicationOperations,
-): Promise<RemotePackageIntegrityInspection> {
-  for (let attempt = 0; attempt < REGISTRY_VISIBILITY_ATTEMPTS; attempt += 1) {
-    const inspected = operations.inspectRemoteIntegrity(packageName);
-    if (inspected.kind !== "transient_failure") {
-      return inspected;
-    }
-    if (attempt + 1 < REGISTRY_VISIBILITY_ATTEMPTS) {
-      await operations.sleepBeforeRetry();
-    }
-  }
-  return {
-    kind: "permanent_failure",
-    detail: `npm inspection for ${packageName}@${PACKAGE_VERSION} exceeded the retry budget`,
-  };
-}
-
-async function inspectDistTagBeforePublication(
-  packageName: NpmPackageName,
-  npmDistTag: NpmDistTag,
-  operations: NpmPublicationOperations,
-): Promise<RemoteNpmDistTagInspection> {
-  for (let attempt = 0; attempt < REGISTRY_VISIBILITY_ATTEMPTS; attempt += 1) {
-    const inspected = operations.inspectRemoteDistTag(packageName, npmDistTag);
-    if (inspected.kind !== "transient_failure") {
-      return inspected;
-    }
-    if (attempt + 1 < REGISTRY_VISIBILITY_ATTEMPTS) {
-      await operations.sleepBeforeRetry();
-    }
-  }
-  return {
-    kind: "permanent_failure",
-    detail: `npm dist-tag inspection for ${packageName}@${npmDistTag} exceeded the retry budget`,
-  };
-}
-
 async function reconcilePublishedDistTag(args: {
   readonly npmDistTag: NpmDistTag;
   readonly operations: NpmPublicationOperations;
   readonly packageName: NpmPackageName;
-}): Promise<string | null> {
+}): Promise<PublishArchiveResult> {
   const inspected = await inspectDistTagBeforePublication(
     args.packageName,
     args.npmDistTag,
     args.operations,
   );
   if (inspected.kind !== "ok") {
-    return inspected.detail;
+    return { kind: "failed", detail: inspected.detail };
   }
   const decision = reconcileNpmDistTag({
     releaseVersion: PACKAGE_VERSION,
     remote: inspected.remote,
   });
   if (decision.kind === "keep") {
-    return null;
+    return { kind: "ok" };
   }
   if (decision.kind === "would_move_backward") {
-    return `refusing to move npm dist-tag ${args.npmDistTag} backward from ${decision.currentVersion}`;
+    return {
+      kind: "failed",
+      detail: `refusing to move npm dist-tag ${args.npmDistTag} backward from ${decision.currentVersion}`,
+    };
   }
   const updated = args.operations.updateRemoteDistTag(args.packageName, args.npmDistTag);
   if (updated.kind === "failed") {
-    return updated.detail;
+    return updated;
   }
   return waitForPublishedDistTag(args);
-}
-
-async function waitForPublishedDistTag(args: {
-  readonly npmDistTag: NpmDistTag;
-  readonly operations: NpmPublicationOperations;
-  readonly packageName: NpmPackageName;
-}): Promise<string | null> {
-  for (let attempt = 0; attempt < REGISTRY_VISIBILITY_ATTEMPTS; attempt += 1) {
-    const inspected = args.operations.inspectRemoteDistTag(
-      args.packageName,
-      args.npmDistTag,
-    );
-    if (inspected.kind === "permanent_failure") {
-      return inspected.detail;
-    }
-    if (inspected.kind === "ok" && inspected.remote.kind === "present") {
-      if (inspected.remote.version === PACKAGE_VERSION) {
-        return null;
-      }
-      if (gt(inspected.remote.version, PACKAGE_VERSION)) {
-        return `npm dist-tag ${args.npmDistTag} advanced to ${inspected.remote.version}`;
-      }
-    }
-    if (attempt + 1 < REGISTRY_VISIBILITY_ATTEMPTS) {
-      await args.operations.sleepBeforeRetry();
-    }
-  }
-  return `npm did not serve ${args.packageName}@${args.npmDistTag} at ${PACKAGE_VERSION} before the visibility timeout`;
 }
 
 async function removePublishedStagingDistTag(args: {
@@ -874,20 +603,23 @@ async function removePublishedStagingDistTag(args: {
   readonly packageName: NpmPackageName;
   readonly selectedNpmDistTag: SelectedNpmDistTag;
   readonly stagingNpmDistTag: StagingNpmDistTag;
-}): Promise<string | null> {
+}): Promise<PublishArchiveResult> {
   const inspected = await inspectDistTagBeforePublication(
     args.packageName,
     args.stagingNpmDistTag,
     args.operations,
   );
   if (inspected.kind !== "ok") {
-    return inspected.detail;
+    return { kind: "failed", detail: inspected.detail };
   }
   if (
     inspected.remote.kind === "present"
     && inspected.remote.version !== PACKAGE_VERSION
   ) {
-    return `refusing to remove npm staging tag ${args.stagingNpmDistTag} from ${inspected.remote.version}`;
+    return {
+      kind: "failed",
+      detail: `refusing to remove npm staging tag ${args.stagingNpmDistTag} from ${inspected.remote.version}`,
+    };
   }
   const selected = await inspectDistTagBeforePublication(
     args.packageName,
@@ -895,59 +627,43 @@ async function removePublishedStagingDistTag(args: {
     args.operations,
   );
   if (selected.kind !== "ok") {
-    return selected.detail;
+    return { kind: "failed", detail: selected.detail };
   }
   if (
     selected.remote.kind !== "present"
     || selected.remote.version !== PACKAGE_VERSION
   ) {
-    return `refusing to remove npm staging tag ${args.stagingNpmDistTag} because selected npm channel ${args.selectedNpmDistTag} no longer targets ${PACKAGE_VERSION}`;
+    return {
+      kind: "failed",
+      detail: `refusing to remove npm staging tag ${args.stagingNpmDistTag} because selected npm channel ${args.selectedNpmDistTag} no longer targets ${PACKAGE_VERSION}`,
+    };
   }
   if (inspected.remote.kind === "absent") {
-    return null;
+    return { kind: "ok" };
   }
   const removed = args.operations.removeRemoteDistTag(
     args.packageName,
     args.stagingNpmDistTag,
   );
-  return removed.kind === "ok" ? null : removed.detail;
+  return removed;
 }
 
-async function waitForPublishedPackage(
-  packageName: NpmPackageName,
-  expectedIntegrity: string,
-  operations: NpmPublicationOperations,
-): Promise<string | null> {
-  for (let attempt = 0; attempt < REGISTRY_VISIBILITY_ATTEMPTS; attempt += 1) {
-    const inspected = operations.inspectRemoteIntegrity(packageName);
-    if (inspected.kind === "permanent_failure") {
-      return inspected.detail;
-    }
-    if (inspected.kind === "ok" && inspected.integrity.kind === "present") {
-      return inspected.integrity.integrity === expectedIntegrity
-        ? null
-        : `published integrity ${inspected.integrity.integrity} differs from uploaded integrity ${expectedIntegrity}`;
-    }
-    if (attempt + 1 < REGISTRY_VISIBILITY_ATTEMPTS) {
-      await operations.sleepBeforeRetry();
-    }
-  }
-  return `npm did not serve ${packageName}@${PACKAGE_VERSION} before the visibility timeout`;
-}
-
-function packPackage(request: NpmPublicationRequest, temporaryDirectory: string): PackResult {
+function packPackage(
+  request: NpmPublicationRequest,
+  temporaryDirectory: AbsoluteDirectoryPath,
+): PackResult {
   let manifestText: string;
   try {
     manifestText = fs.readFileSync(path.join(request.packageDirectory, "package.json"), "utf8");
   } catch (cause) {
     return { kind: "failed", detail: `failed to read staged package.json: ${String(cause)}` };
   }
-  const manifestFailure = validateStagedPackageManifest({
+  const manifestValidation = validateStagedPackageManifest({
     actualText: manifestText,
     expectedText: request.expectedManifestText,
   });
-  if (manifestFailure !== null) {
-    return { kind: "failed", detail: manifestFailure };
+  if (manifestValidation.kind === "invalid") {
+    return { kind: "failed", detail: manifestValidation.detail };
   }
   const packed = runCommand(
     "pnpm",
@@ -964,7 +680,7 @@ function packPackage(request: NpmPublicationRequest, temporaryDirectory: string)
       detail: `pnpm pack returned invalid JSON: ${z.prettifyError(parsed.error)}`,
     };
   }
-  const archivePath = path.resolve(parsed.data.filename);
+  const archivePath = parsed.data.filename;
   if (path.dirname(archivePath) !== path.resolve(temporaryDirectory)) {
     return {
       kind: "failed",
@@ -972,12 +688,12 @@ function packPackage(request: NpmPublicationRequest, temporaryDirectory: string)
     };
   }
   const packedPaths = new Set(parsed.data.files.map((file) => file.path));
-  const exactPathsFailure = validatePackedPaths({
+  const exactPathsValidation = validatePackedPaths({
     actualPaths: [...packedPaths],
     expectedPaths: request.expectedPackedPaths,
   });
-  if (exactPathsFailure !== null) {
-    return { kind: "failed", detail: exactPathsFailure };
+  if (exactPathsValidation.kind === "invalid") {
+    return { kind: "failed", detail: exactPathsValidation.detail };
   }
   const missingPaths = request.archiveExpectation.requiredPaths.filter(
     (requiredPath) => !packedPaths.has(requiredPath),
@@ -989,12 +705,12 @@ function packPackage(request: NpmPublicationRequest, temporaryDirectory: string)
     };
   }
   if (request.archiveExpectation.kind === "posix_executable") {
-    const modeVerification = verifyArchiveExecutableMode(
+    const modeValidation = verifyArchiveExecutableMode(
       archivePath,
       request.archiveExpectation.executablePath,
     );
-    if (modeVerification !== null) {
-      return { kind: "failed", detail: modeVerification };
+    if (modeValidation.kind === "invalid") {
+      return { kind: "failed", detail: modeValidation.detail };
     }
   }
   return {
@@ -1007,7 +723,7 @@ function packPackage(request: NpmPublicationRequest, temporaryDirectory: string)
 }
 
 function validateCandidateArchive(args: {
-  readonly archivePath: string;
+  readonly archivePath: NpmArchivePath;
   readonly request: NpmPublicationRequest;
 }): PackResult {
   const listed = runCommand("tar", ["-tzf", args.archivePath]);
@@ -1021,12 +737,12 @@ function validateCandidateArchive(args: {
     return { kind: "failed", detail: "npm candidate contains a path outside package/" };
   }
   const packagePaths = archivePaths.map((entry) => entry.slice("package/".length));
-  const pathFailure = validatePackedPaths({
+  const pathValidation = validatePackedPaths({
     actualPaths: packagePaths,
     expectedPaths: args.request.expectedPackedPaths,
   });
-  if (pathFailure !== null) {
-    return { kind: "failed", detail: pathFailure };
+  if (pathValidation.kind === "invalid") {
+    return { kind: "failed", detail: pathValidation.detail };
   }
 
   const verbose = runCommand("tar", ["-tvzf", args.archivePath]);
@@ -1049,20 +765,20 @@ function validateCandidateArchive(args: {
   if (manifest.kind === "failed") {
     return manifest;
   }
-  const manifestFailure = validatePackedPackageManifest({
+  const manifestValidation = validatePackedPackageManifest({
     actualText: manifest.stdout,
     expectedText: args.request.expectedPackedManifestText,
   });
-  if (manifestFailure !== null) {
-    return { kind: "failed", detail: manifestFailure };
+  if (manifestValidation.kind === "invalid") {
+    return { kind: "failed", detail: manifestValidation.detail };
   }
   if (args.request.archiveExpectation.kind === "posix_executable") {
-    const modeFailure = verifyArchiveExecutableMode(
+    const modeValidation = verifyArchiveExecutableMode(
       args.archivePath,
       args.request.archiveExpectation.executablePath,
     );
-    if (modeFailure !== null) {
-      return { kind: "failed", detail: modeFailure };
+    if (modeValidation.kind === "invalid") {
+      return { kind: "failed", detail: modeValidation.detail };
     }
   }
   return {
@@ -1075,17 +791,20 @@ function validateCandidateArchive(args: {
 }
 
 function verifyArchiveExecutableMode(
-  archivePath: string,
-  executablePath: string,
-): string | null {
+  archivePath: NpmArchivePath,
+  executablePath: PackageRelativePath,
+): ValidationResult {
   const listed = runCommand("tar", ["-tvzf", archivePath, `package/${executablePath}`]);
   if (listed.kind === "failed") {
-    return listed.detail;
+    return { kind: "invalid", detail: listed.detail };
   }
   const mode = listed.stdout.slice(0, 10);
   return /^-..x..x..x$/u.test(mode)
-    ? null
-    : `${executablePath} is not executable in ${archivePath}`;
+    ? { kind: "valid" }
+    : {
+        kind: "invalid",
+        detail: `${executablePath} is not executable in ${archivePath}`,
+      };
 }
 
 function inspectRemoteIntegrity(packageName: NpmPackageName): RemotePackageIntegrityInspection {
@@ -1105,7 +824,7 @@ function inspectRemoteIntegrity(packageName: NpmPackageName): RemotePackageInteg
       ? { kind: "transient_failure", detail: viewed.detail }
       : { kind: "permanent_failure", detail: viewed.detail };
   }
-  const parsed = NPM_VIEW_INTEGRITY_SCHEMA.safeParse(parseJson(viewed.stdout));
+  const parsed = NPM_PACKAGE_INTEGRITY_SCHEMA.safeParse(parseJson(viewed.stdout));
   return parsed.success
     ? {
         kind: "ok",
@@ -1152,7 +871,7 @@ function inspectRemoteDistTag(
 function updateRemoteDistTag(
   packageName: NpmPackageName,
   npmDistTag: NpmDistTag,
-): UpdateNpmDistTagResult {
+): PublishArchiveResult {
   const updated = runInteractiveNpmMutation([
     "dist-tag",
     "add",
@@ -1169,7 +888,7 @@ function updateRemoteDistTag(
 function removeRemoteDistTag(
   packageName: NpmPackageName,
   npmDistTag: NpmDistTag,
-): UpdateNpmDistTagResult {
+): PublishArchiveResult {
   return runInteractiveNpmMutation([
     "dist-tag",
     "rm",
@@ -1182,7 +901,7 @@ function removeRemoteDistTag(
 
 /** Returns the npm arguments for an interactive, local registry publication. */
 export function npmPublishArguments(
-  archivePath: string,
+  archivePath: NpmArchivePath,
   npmDistTag: NpmDistTag,
 ): readonly string[] {
   return [
@@ -1198,33 +917,14 @@ export function npmPublishArguments(
   ];
 }
 
-/** Verifies that an archive still has the integrity recorded in its candidate manifest. */
-export function validateArchiveIntegrity(
-  archivePath: string,
-  expectedIntegrity: string,
-): string | null {
-  try {
-    const actualIntegrity = archiveIntegrity(archivePath);
-    return actualIntegrity === expectedIntegrity
-      ? null
-      : `archive integrity changed: expected ${expectedIntegrity}; received ${actualIntegrity}`;
-  } catch (cause) {
-    return `archive integrity could not be verified: ${String(cause)}`;
-  }
-}
-
-function archiveIntegrity(archivePath: string): string {
-  return `sha512-${createHash("sha512").update(fs.readFileSync(archivePath)).digest("base64")}`;
-}
-
 function publishArchive(
-  archivePath: string,
-  expectedIntegrity: string,
+  archivePath: NpmArchivePath,
+  expectedIntegrity: NpmPackageIntegrity,
   npmDistTag: NpmDistTag,
 ): PublishArchiveResult {
-  const integrityFailure = validateArchiveIntegrity(archivePath, expectedIntegrity);
-  if (integrityFailure !== null) {
-    return { kind: "failed", detail: integrityFailure };
+  const integrityValidation = validateArchiveIntegrity(archivePath, expectedIntegrity);
+  if (integrityValidation.kind === "invalid") {
+    return { kind: "failed", detail: integrityValidation.detail };
   }
   return runInteractiveNpmMutation(npmPublishArguments(archivePath, npmDistTag));
 }
@@ -1255,7 +955,7 @@ function parseJson(text: string): unknown {
 function runCommand(
   command: "npm" | "pnpm" | "tar",
   args: readonly string[],
-  cwd?: string,
+  cwd?: AbsoluteDirectoryPath,
 ): NpmCommandResult {
   const result = spawnSync(command, args, {
     cwd,
@@ -1300,11 +1000,16 @@ async function main(): Promise<number> {
   const mode = process.argv[2];
   const candidateDirectoryArgument = process.argv[3];
   if (
-    (mode !== "prepare" && mode !== "verify" && mode !== "publish")
+    (
+      mode !== "prepare"
+      && mode !== "verify"
+      && mode !== "publish"
+      && mode !== "publish-trusted"
+    )
     || candidateDirectoryArgument === undefined
   ) {
     console.error(
-      "usage: publish-npm-packages.ts <prepare|verify|publish> <candidate-directory> <full-commit> <v-tag> <npm-dist-tag>",
+      "usage: publish-npm-packages.ts <prepare|verify|publish|publish-trusted> <candidate-directory> <full-commit> <v-tag> <npm-dist-tag>",
     );
     return 1;
   }
@@ -1318,7 +1023,9 @@ async function main(): Promise<number> {
     console.error("release source requires one validated npm dist-tag");
     return 1;
   }
-  const candidateDirectory = path.resolve(candidateDirectoryArgument);
+  const candidateDirectory = ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(
+    path.resolve(candidateDirectoryArgument),
+  );
   const source = inspectReleaseSource({
     expectation: parsedSource.expectation,
     workspaceRoot: path.resolve(WORKSPACE_ROOT_DIRECTORY, ".."),
@@ -1342,12 +1049,12 @@ async function main(): Promise<number> {
             npmDistTag: parsedNpmDistTag.data,
             workspaceRootDirectory: WORKSPACE_ROOT_DIRECTORY,
           })
-        : await publishNpmPackages({
-          candidateDirectory,
-          expectation: parsedSource.expectation,
-          npmDistTag: parsedNpmDistTag.data,
-          workspaceRootDirectory: WORKSPACE_ROOT_DIRECTORY,
-        });
+        : await (mode === "publish" ? publishNpmPackages : publishTrustedNpmPackages)({
+            candidateDirectory,
+            expectation: parsedSource.expectation,
+            npmDistTag: parsedNpmDistTag.data,
+            workspaceRootDirectory: WORKSPACE_ROOT_DIRECTORY,
+          });
   if (result.kind === "ok") {
     return 0;
   }
