@@ -20,6 +20,10 @@ const CRATES_IO_USER_AGENT = `sprawl-guard-release/${PACKAGE_VERSION} (https://g
 const CARGO_PUBLICATION_MANIFEST_FILE = "sprawl-guard-publication.json";
 const CARGO_COMMAND_MAXIMUM_OUTPUT_BYTES = 1_048_576;
 const CARGO_COMMAND_TIMEOUT_MILLISECONDS = 600_000;
+const CARGO_ARCHIVE_CHECKSUM_SCHEMA = z
+  .string()
+  .regex(/^[0-9a-f]{64}$/u)
+  .brand<"CargoArchiveChecksum">();
 const CARGO_PUBLICATION_MANIFEST_SCHEMA = z
   .object({
     schemaVersion: z.literal(1),
@@ -36,14 +40,21 @@ const CARGO_PUBLICATION_MANIFEST_SCHEMA = z
     ),
   })
   .strict();
+const CRATES_IO_VERSION_RESPONSE_SCHEMA = z.object({
+  version: z.object({ checksum: CARGO_ARCHIVE_CHECKSUM_SCHEMA }),
+});
+const HTTP_NOT_FOUND = 404;
+const HTTP_REQUEST_TIMEOUT = 408;
+const HTTP_TOO_MANY_REQUESTS = 429;
+const HTTP_SERVER_ERROR_MINIMUM = 500;
 const REGISTRY_VISIBILITY_ATTEMPTS = 60;
 const REGISTRY_VISIBILITY_INTERVAL_MILLISECONDS = 2_000;
-const REGISTRY_ARCHIVE_MAXIMUM_BYTES = 16_777_216;
 const REGISTRY_REQUEST_TIMEOUT_MILLISECONDS = 30_000;
 const WORKSPACE_ROOT = path.resolve(
   fileURLToPath(new URL("../..", import.meta.url)),
 );
 
+/** One crate published by the sprawl-guard Cargo workspace. */
 export type CargoPackageName = "sprawl-guard-lib" | "sprawl-guard";
 
 type CargoRegistryReadiness =
@@ -58,9 +69,12 @@ export interface CargoPublicationRequest {
 
 type RemoteArchiveChecksum =
   | { readonly kind: "absent" }
-  | { readonly kind: "present"; readonly checksum: string };
+  | {
+      readonly kind: "present";
+      readonly checksum: string;
+    };
 
-/** Result of inspecting one immutable crate archive on crates.io. */
+/** Result of inspecting one immutable crate version on crates.io. */
 export type RemoteCargoArchiveInspection =
   | { readonly kind: "ok"; readonly checksum: RemoteArchiveChecksum }
   | { readonly kind: "transient_failure"; readonly detail: string }
@@ -540,17 +554,16 @@ function packageCrate(request: CargoPublicationRequest): PackageCrateResult {
   }
 }
 
-/** Downloads and incrementally hashes one bounded crates.io archive response. */
+/** Reads one immutable crate version checksum from crates.io metadata. */
 export async function inspectRemoteCargoArchive(
   packageName: CargoPackageName,
 ): Promise<RemoteCargoArchiveInspection> {
   let response: Response;
   try {
     response = await fetch(
-      `${CRATES_IO_BASE_URL}/${packageName}/${PACKAGE_VERSION}/download`,
+      `${CRATES_IO_BASE_URL}/${packageName}/${PACKAGE_VERSION}`,
       {
         headers: { "User-Agent": CRATES_IO_USER_AGENT },
-        redirect: "follow",
         signal: AbortSignal.timeout(REGISTRY_REQUEST_TIMEOUT_MILLISECONDS),
       },
     );
@@ -560,67 +573,37 @@ export async function inspectRemoteCargoArchive(
       detail: `failed to query crates.io: ${String(cause)}`,
     };
   }
-  if (response.status === 404) {
+  if (response.status === HTTP_NOT_FOUND) {
     return { kind: "ok", checksum: { kind: "absent" } };
   }
   if (!response.ok) {
     const kind =
-      response.status === 408 ||
-      response.status === 429 ||
-      response.status >= 500
+      response.status === HTTP_REQUEST_TIMEOUT ||
+      response.status === HTTP_TOO_MANY_REQUESTS ||
+      response.status >= HTTP_SERVER_ERROR_MINIMUM
         ? "transient_failure"
         : "permanent_failure";
-    return {
-      kind,
-      detail: `crates.io returned HTTP ${response.status}`,
-    };
+    return { kind, detail: `crates.io returned HTTP ${response.status}` };
   }
-  return hashRemoteArchive(response);
-}
-
-async function hashRemoteArchive(
-  response: Response,
-): Promise<RemoteCargoArchiveInspection> {
-  const declaredLength = response.headers.get("content-length");
-  if (
-    declaredLength !== null &&
-    (!/^\d+$/u.test(declaredLength) ||
-      Number(declaredLength) > REGISTRY_ARCHIVE_MAXIMUM_BYTES)
-  ) {
-    return {
-      kind: "permanent_failure",
-      detail: `crates.io archive length is invalid or exceeds ${REGISTRY_ARCHIVE_MAXIMUM_BYTES} bytes`,
-    };
-  }
-  if (response.body === null) {
-    return {
-      kind: "transient_failure",
-      detail: "crates.io returned an archive response without a body",
-    };
-  }
-  const checksum = createHash("sha256");
-  let receivedBytes = 0;
+  let metadata: unknown;
   try {
-    for await (const chunk of response.body) {
-      receivedBytes += chunk.byteLength;
-      if (receivedBytes > REGISTRY_ARCHIVE_MAXIMUM_BYTES) {
-        return {
-          kind: "permanent_failure",
-          detail: `crates.io archive exceeds ${REGISTRY_ARCHIVE_MAXIMUM_BYTES} bytes`,
-        };
-      }
-      checksum.update(chunk);
-    }
+    metadata = await response.json();
   } catch (cause) {
     return {
       kind: "transient_failure",
       detail: `failed to read crates.io response: ${String(cause)}`,
     };
   }
-  return {
-    kind: "ok",
-    checksum: { kind: "present", checksum: checksum.digest("hex") },
-  };
+  const parsed = CRATES_IO_VERSION_RESPONSE_SCHEMA.safeParse(metadata);
+  return parsed.success
+    ? {
+        kind: "ok",
+        checksum: { kind: "present", checksum: parsed.data.version.checksum },
+      }
+    : {
+        kind: "permanent_failure",
+        detail: `invalid crates.io version metadata: ${z.prettifyError(parsed.error)}`,
+      };
 }
 
 function inspectCargoIndex(

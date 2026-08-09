@@ -344,17 +344,17 @@ describe("createFrozenReleaseCheckout", () => {
 });
 
 describe("inspectRemoteCargoArchive", () => {
-  describe("when crates.io declares an oversized archive", () => {
-    it("uses a request deadline and refuses to buffer the response", async () => {
-      let requestHadSignal = false;
+  describe("when the requested version does not exist", () => {
+    it("uses version metadata instead of the archive storage response", async () => {
+      const requestedUrls: string[] = [];
       const fetchMock = mock.method(
         globalThis,
         "fetch",
-        async (_input: string | URL | Request, init?: RequestInit) => {
-          requestHadSignal = init?.signal instanceof AbortSignal;
-          return new Response(new Uint8Array(), {
-            headers: { "content-length": "16777217" },
-            status: 200,
+        async (input: string | URL | Request) => {
+          const url = String(input);
+          requestedUrls.push(url);
+          return new Response(null, {
+            status: url.endsWith("/download") ? 403 : 404,
           });
         },
       );
@@ -365,9 +365,64 @@ describe("inspectRemoteCargoArchive", () => {
         fetchMock.mock.restore();
       }
 
+      assert.deepEqual(requestedUrls, [
+        `https://crates.io/api/v1/crates/sprawl-guard-lib/${PACKAGE_VERSION}`,
+      ]);
+      assert.deepEqual(result, {
+        kind: "ok",
+        checksum: { kind: "absent" },
+      });
+    });
+  });
+
+  describe("when the requested version exists", () => {
+    it("uses the checksum from version metadata without downloading the archive", async () => {
+      const checksum = "a".repeat(64);
+      const requestedUrls: string[] = [];
+      let requestHadSignal = false;
+      const fetchMock = mock.method(
+        globalThis,
+        "fetch",
+        async (input: string | URL | Request, init?: RequestInit) => {
+          requestedUrls.push(String(input));
+          requestHadSignal = init?.signal instanceof AbortSignal;
+          return Response.json({ version: { checksum } });
+        },
+      );
+      let result;
+      try {
+        result = await inspectRemoteCargoArchive("sprawl-guard-lib");
+      } finally {
+        fetchMock.mock.restore();
+      }
+
+      assert.deepEqual(requestedUrls, [
+        `https://crates.io/api/v1/crates/sprawl-guard-lib/${PACKAGE_VERSION}`,
+      ]);
       assert.equal(requestHadSignal, true);
+      assert.deepEqual(result, {
+        kind: "ok",
+        checksum: { kind: "present", checksum },
+      });
+    });
+  });
+
+  describe("when crates.io returns malformed version metadata", () => {
+    it("rejects the checksum instead of treating it as trusted", async () => {
+      const fetchMock = mock.method(
+        globalThis,
+        "fetch",
+        async () => Response.json({ version: { checksum: "not-a-checksum" } }),
+      );
+      let result;
+      try {
+        result = await inspectRemoteCargoArchive("sprawl-guard-lib");
+      } finally {
+        fetchMock.mock.restore();
+      }
+
       assert.equal(result.kind, "permanent_failure");
-      assert.match(result.detail, /exceeds 16777216 bytes/u);
+      assert.match(result.detail, /invalid crates.io version metadata/u);
     });
   });
 });
