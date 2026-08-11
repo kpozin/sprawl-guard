@@ -53,9 +53,14 @@ enum Command {
     Languages(LanguagesArgs),
     /// Run enforcement.
     Check(CheckArgs),
-    /// Create ratchet entries for current violations.
+    /// Create or replace ratchet ceilings from current violations.
+    ///
+    /// Unlike `ratchet`, this command can create entries and can replace or raise existing
+    /// ceilings when explicitly allowed.
     Baseline(BaselineArgs),
-    /// Update an existing ratchet file downward.
+    /// Lower existing ratchet ceilings after violations improve.
+    ///
+    /// This command never creates or raises ceilings. Use `baseline` for those operations.
     Ratchet(RatchetArgs),
     /// Inspect configuration.
     Config(ConfigCommand),
@@ -199,11 +204,19 @@ struct ConfigCommand {
 #[derive(Debug, Subcommand)]
 enum ConfigSubcommand {
     /// Print the fully resolved config used by checks.
-    Resolved,
+    Resolved(ConfigResolvedArgs),
     /// Print a full explicit config suitable for committing.
     Export,
     /// Print the JSON Schema for authored config files.
     Schema,
+}
+
+/// Arguments for `config resolved`.
+#[derive(Debug, Args)]
+struct ConfigResolvedArgs {
+    /// Include only languages detected under the repository root.
+    #[arg(long)]
+    detected: bool,
 }
 
 /// Arguments for `explain`.

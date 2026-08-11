@@ -170,9 +170,8 @@ mod run {
             "files": [{
                 "path": "src/lib.rs",
                 "role": "production",
-                "loc": 2,
+                "max_loc": 2,
             }],
-            "directories": [],
         })
     }
 
@@ -631,7 +630,7 @@ mod run {
             "files": [{
                 "path": "tests/a.rs",
                 "role": "test",
-                "loc": 2,
+                "max_loc": 2,
             }],
             "directories": [{
                 "path": "tests",

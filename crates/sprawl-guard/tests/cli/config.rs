@@ -1,5 +1,6 @@
 use assert_fs::TempDir;
 use indoc::indoc;
+use std::collections::BTreeSet;
 
 use super::common::*;
 
@@ -102,6 +103,31 @@ mod resolved {
         assert_eq!(
             config["files"]["exclude"],
             toml::Value::Array(vec![toml::Value::String("generated/**".to_owned())])
+        );
+        assert_eq!(stderr(&output), "");
+    }
+
+    #[test]
+    fn it_can_limit_language_details_to_languages_detected_under_the_root() {
+        let root = TempDir::new().unwrap();
+        write_sample_config(&root);
+        write_file(&root, "src/lib.rs", "fn main() {}\n");
+        write_file(&root, "web/app.ts", "export const answer = 42;\n");
+
+        let output = sprawl_guard(&root)
+            .args(["config", "resolved", "--detected"])
+            .output()
+            .unwrap();
+        let config = parse_toml(&stdout(&output));
+        let languages = config["languages"].as_table().unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            languages
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["Rust", "TypeScript"]),
         );
         assert_eq!(stderr(&output), "");
     }

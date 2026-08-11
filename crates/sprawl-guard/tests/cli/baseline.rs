@@ -24,12 +24,11 @@ mod when_writing_the_initial_baseline {
             document,
             parse_toml(indoc! {r#"
                 schema_version = 1
-                directories = []
 
                 [[files]]
                 path = "src/lib.rs"
                 role = "production"
-                loc = 2
+                max_loc = 2
             "#})
         );
         assert_eq!(stderr(&output), "");
@@ -95,6 +94,29 @@ mod when_writing_the_initial_baseline {
     }
 }
 
+mod when_comparing_baseline_and_ratchet_help {
+    use super::*;
+
+    #[test]
+    fn it_explains_which_command_can_create_raise_or_only_lower_ceilings() {
+        let root = TempDir::new().unwrap();
+
+        let baseline = sprawl_guard(&root)
+            .args(["baseline", "--help"])
+            .output()
+            .unwrap();
+        let ratchet = sprawl_guard(&root)
+            .args(["ratchet", "--help"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&baseline, exit_codes::SUCCESS);
+        assert!(stdout(&baseline).contains("Create or replace ratchet ceilings"));
+        assert_exit_code(&ratchet, exit_codes::SUCCESS);
+        assert!(stdout(&ratchet).contains("never creates or raises ceilings"));
+    }
+}
+
 mod when_the_ratchet_file_already_exists {
     use super::*;
 
@@ -137,7 +159,7 @@ mod when_the_ratchet_file_already_exists {
                 [[files]]
                 path = "old/lib.rs"
                 role = "production"
-                loc = 9
+                max_loc = 9
             "#},
         );
         write_file(
@@ -158,9 +180,9 @@ mod when_the_ratchet_file_already_exists {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 2);
         let old_file = production_file_ratchet_entry(&ratchet, "old/lib.rs").unwrap();
-        assert_eq!(old_file.loc.get(), 9);
+        assert_eq!(old_file.max_loc.get(), 9);
         let new_file = production_file_ratchet_entry(&ratchet, "new/lib.rs").unwrap();
-        assert_eq!(new_file.loc.get(), 2);
+        assert_eq!(new_file.max_loc.get(), 2);
     }
 
     #[test]
@@ -204,7 +226,7 @@ mod when_the_ratchet_file_already_exists {
                 [[files]]
                 path = "tests/integration.rs"
                 role = "test"
-                loc = 2
+                max_loc = 2
 
                 [[directories]]
                 path = "tests"

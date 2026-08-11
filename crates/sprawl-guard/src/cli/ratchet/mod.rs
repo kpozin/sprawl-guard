@@ -209,7 +209,7 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
                 ratchet.files.push(FileRatchet {
                     path: violation.path.clone(),
                     role: violation.kind.role(),
-                    loc: LocLimit::new(violation.measurement.actual().get())
+                    max_loc: LocLimit::new(violation.measurement.actual().get())
                         .expect("violating file LOC must be positive"),
                 });
             }

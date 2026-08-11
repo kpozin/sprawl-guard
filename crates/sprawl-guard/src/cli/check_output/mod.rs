@@ -106,6 +106,7 @@ fn human_check_report(report: &CheckReport, quiet: bool) -> String {
     if !report.has_violations() {
         output.push_str("No sprawl-guard violations found.\n");
         if !quiet {
+            write_scan_summary(&mut output, report);
             write_traversal_incidents(&mut output, report);
         }
         return output;
@@ -140,6 +141,26 @@ fn human_check_report(report: &CheckReport, quiet: bool) -> String {
         write_traversal_incidents(&mut output, report);
     }
     output
+}
+
+fn write_scan_summary(output: &mut String, report: &CheckReport) {
+    let summary = report.summary();
+    let files_checked = summary.files_checked.into_inner();
+    let directories_checked = summary.directories_checked.into_inner();
+    let languages_detected = summary.languages_detected.into_inner();
+    output.push_str(&format!(
+        "Checked {} source {} in {} {} across {} {}.\n",
+        files_checked,
+        plural(files_checked, "file", "files"),
+        directories_checked,
+        plural(directories_checked, "directory", "directories"),
+        languages_detected,
+        plural(languages_detected, "language", "languages"),
+    ));
+}
+
+fn plural<'word>(count: u32, singular: &'word str, plural: &'word str) -> &'word str {
+    if count == 1 { singular } else { plural }
 }
 
 fn write_warnings(output: &mut String, report: &CheckReport) {
@@ -368,12 +389,13 @@ mod tests {
     use indoc::indoc;
     use serde_json::json;
     use sprawl_guard_lib::{
-        CheckViolation, CheckWarning, CheckWarningKind, DiagnosticDetail, DirectoryFanoutViolation,
+        CheckViolation, CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
+        DetectedLanguageCount, DiagnosticDetail, DirectoryFanoutViolation,
         DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind, FileLocViolation,
         FileRatchetIncreasedViolation, LanguageGroupId, LeafFiles, LineCount, LocLimit,
         NonEmptyTraversalIncidents, RatchetCount, RatchetIncreasedViolation, RatchetLimit,
         RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetViolation, RelativePath,
-        TraversalIncidentSeverity,
+        ScanSummary, TraversalIncidentSeverity,
     };
 
     use super::*;
@@ -389,10 +411,19 @@ mod tests {
         }
     }
 
+    fn scan_summary() -> ScanSummary {
+        ScanSummary::new(
+            CheckedFileCount::new(3),
+            CheckedDirectoryCount::new(2),
+            DetectedLanguageCount::new(1),
+        )
+    }
+
     fn report_with(violations: Vec<FileLocViolation>) -> CheckReport {
         CheckReport::complete(
             report_root(),
             counter_info(),
+            scan_summary(),
             vec![],
             violations
                 .into_iter()
@@ -448,6 +479,7 @@ mod tests {
         CheckReport::complete(
             report_root(),
             counter_info(),
+            scan_summary(),
             vec![rust_cfg_warning()],
             vec![],
         )
@@ -479,6 +511,7 @@ mod tests {
             let report = CheckReport::complete(
                 report_root(),
                 counter_info(),
+                scan_summary(),
                 vec![],
                 vec![
                     CheckViolation::DirectoryFanout(directory_violation(
@@ -509,6 +542,7 @@ mod tests {
             let report = CheckReport::complete(
                 report_root(),
                 counter_info(),
+                scan_summary(),
                 vec![],
                 vec![
                     missing_directory_ratchet(LanguageGroupId::Source, 4),
@@ -546,6 +580,7 @@ mod tests {
             let report = CheckReport::complete(
                 report_root(),
                 counter_info(),
+                scan_summary(),
                 vec![],
                 vec![CheckViolation::Ratchet(RatchetViolation::Stale(
                     RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::Directory(
@@ -572,6 +607,7 @@ mod tests {
             let report = CheckReport::complete(
                 report_root(),
                 counter_info(),
+                scan_summary(),
                 vec![],
                 vec![CheckViolation::Ratchet(RatchetViolation::Increased(
                     RatchetIncreasedViolation::File(FileRatchetIncreasedViolation {
@@ -602,7 +638,13 @@ mod tests {
         fn it_reports_success_when_there_are_no_violations() {
             let output = human_check_report(&report_with(vec![]), false);
 
-            assert_eq!(output, "No sprawl-guard violations found.\n");
+            assert_eq!(
+                output,
+                concat!(
+                    "No sprawl-guard violations found.\n",
+                    "Checked 3 source files in 2 directories across 1 language.\n",
+                )
+            );
         }
 
         #[test]
@@ -619,6 +661,7 @@ mod tests {
                       Rust cfg(test) preprocessing failed for src/lib.rs; counted without cfg(test) exclusion: expected identifier
 
                     No sprawl-guard violations found.
+                    Checked 3 source files in 2 directories across 1 language.
                 "}
             );
         }
@@ -637,6 +680,7 @@ mod tests {
             let report = CheckReport::partial(
                 report_root(),
                 counter_info(),
+                scan_summary(),
                 vec![],
                 NonEmptyTraversalIncidents::new(vec![TraversalIncident {
                     kind: TraversalIncidentKind::ReadDirFailed,
@@ -654,6 +698,7 @@ mod tests {
                 output,
                 indoc! {"
                     No sprawl-guard violations found.
+                    Checked 3 source files in 2 directories across 1 language.
 
                     Traversal warnings:
 
@@ -679,6 +724,11 @@ mod tests {
                     "root": "/repo",
                     "coverage": {
                         "kind": "complete"
+                    },
+                    "summary": {
+                        "files_checked": 3,
+                        "directories_checked": 2,
+                        "languages_detected": 1
                     },
                     "counter": {
                         "backend": "tokei",

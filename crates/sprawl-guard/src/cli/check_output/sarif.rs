@@ -294,12 +294,22 @@ mod tests {
         RatchetStaleViolationKind, RatchetViolation,
     };
     use sprawl_guard_lib::{
-        CheckWarning, CheckWarningKind, DiagnosticDetail, DirectoryRatchetStaleMeasuredViolation,
+        CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
+        DetectedLanguageCount, DiagnosticDetail, DirectoryRatchetStaleMeasuredViolation,
         FileRatchetIncreasedViolation, FileRatchetStaleMeasuredViolation, LanguageGroupId,
         LanguageId, LeafFiles, LineCount, LocLimit, RatchetCount, RatchetLimit, RelativePath,
+        ScanSummary,
     };
 
     use super::*;
+
+    fn scan_summary() -> ScanSummary {
+        ScanSummary::new(
+            CheckedFileCount::new(3),
+            CheckedDirectoryCount::new(2),
+            DetectedLanguageCount::new(1),
+        )
+    }
 
     fn report_with(violations: Vec<CheckViolation>) -> CheckReport {
         CheckReport::complete(
@@ -308,6 +318,7 @@ mod tests {
                 backend: "tokei",
                 version: "14.0.0",
             },
+            scan_summary(),
             vec![],
             violations,
         )
@@ -450,6 +461,7 @@ mod tests {
                     backend: "tokei",
                     version: "14.0.0",
                 },
+                scan_summary(),
                 vec![CheckWarning {
                     kind: CheckWarningKind::RustCfgTestParseFailed,
                     path: RelativePath::new("src/lib.rs").unwrap(),

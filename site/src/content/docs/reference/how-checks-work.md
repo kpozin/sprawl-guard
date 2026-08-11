@@ -90,8 +90,8 @@ ceiling: the maximum permitted measurement for a path that already violates the 
 record Git history, ownership, reasons, languages, or configured limits.
 
 File ceilings are keyed by path and production/test role. Directory ceilings are keyed by path,
-role, and language group. The file stores only the measured `loc` or `leaf_files` ceiling for each
-key.
+role, and language group. The file stores only the allowed `max_loc` or `leaf_files` ceiling for
+each key.
 
 Checks compare each measurement with both its configured limit and any ceiling:
 

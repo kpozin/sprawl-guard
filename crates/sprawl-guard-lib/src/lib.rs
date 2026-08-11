@@ -15,14 +15,15 @@ mod value;
 
 pub use check::{
     AnalysisCoverage, CheckErrorKind, CheckOptions, CheckReport, CheckStatus, CheckViolation,
-    CheckWarning, CheckWarningKind, DirectoryFanoutViolation, DirectoryRatchetIncreasedViolation,
+    CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount,
+    DirectoryFanoutViolation, DirectoryRatchetIncreasedViolation,
     DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
     DirectoryViolationKind, FileLocViolation, FileRatchetIncreasedViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
     NonEmptyTraversalIncidents, RatchetIncreasedViolation, RatchetIncreasedViolationKind,
     RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
     RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation, RatchetViolationKind,
-    ReportRoot, ReportRootError, check_without_ratchet,
+    ReportRoot, ReportRootError, ScanSummary, check_without_ratchet,
 };
 pub use classification::{TraversalIncident, TraversalIncidentKind, TraversalIncidentSeverity};
 pub use config::{

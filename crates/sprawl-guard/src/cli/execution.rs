@@ -183,7 +183,9 @@ fn execute_config(
     command: ConfigCommand,
 ) -> Result<CommandOutcome> {
     let execution = match command.command {
-        ConfigSubcommand::Resolved => config_cli::execute_config_resolved(Some(root), config_path)?,
+        ConfigSubcommand::Resolved(args) => {
+            config_cli::execute_config_resolved(Some(root), config_path, args)?
+        }
         ConfigSubcommand::Export => config_cli::execute_config_export(Some(root), config_path)?,
         ConfigSubcommand::Schema => {
             let payload = config_cli::config_schema_payload()?;

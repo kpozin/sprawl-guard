@@ -1414,7 +1414,7 @@ mod when_checking_with_a_ratchet_file {
                 [[files]]
                 path = "{path}"
                 role = "production"
-                loc = {loc}
+                max_loc = {loc}
             "#},
         );
     }
@@ -1570,12 +1570,12 @@ mod when_checking_with_a_ratchet_file {
                 [[files]]
                 path = "checked/lib.rs"
                 role = "production"
-                loc = 2
+                max_loc = 2
 
                 [[files]]
                 path = "skipped/deleted.rs"
                 role = "production"
-                loc = 2
+                max_loc = 2
             "#},
         );
         write_rust_source_with_function_count(tempdir.path(), "checked/lib.rs", 2);
@@ -1734,7 +1734,7 @@ mod when_path_classified_tests_are_disabled {
                 [[files]]
                 path = "tests/integration.rs"
                 role = "test"
-                loc = 2
+                max_loc = 2
 
                 [[directories]]
                 path = "tests"

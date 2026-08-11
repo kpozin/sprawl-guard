@@ -42,7 +42,7 @@ pub(super) fn lower_ratchet_scope(
                 current.file_ceiling(&entry.key()).map(|value| FileRatchet {
                     path: entry.path,
                     role: entry.role,
-                    loc: std::cmp::min(entry.loc, value),
+                    max_loc: std::cmp::min(entry.max_loc, value),
                 })
             })
             .collect(),
@@ -302,17 +302,17 @@ mod tests {
                 [[files]]
                 path = "z.rs"
                 role = "test"
-                loc = 1
+                max_loc = 1
 
                 [[files]]
                 path = "z.rs"
                 role = "production"
-                loc = 1
+                max_loc = 1
 
                 [[files]]
                 path = "a.rs"
                 role = "test"
-                loc = 1
+                max_loc = 1
             "#});
 
             ratchet.sort();

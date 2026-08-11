@@ -43,9 +43,9 @@ partial report; explicit scope failures and failures reading measured source fil
 
 ### `baseline [PATHS]...`
 
-Prints proposed ratchet contents by default. File-entry previews also show the effective included
-line types and complete logical-line breakdown; the persisted ratchet remains a compact ceiling
-file.
+Creates or replaces ratchet ceilings from current violations. It prints proposed ratchet contents
+by default; `--write` persists them. Unlike `ratchet`, it can create entries and can raise existing
+ceilings when `--allow-raises` is set.
 
 <CliCommandReference path="sprawl-guard baseline" />
 
@@ -55,7 +55,7 @@ arguments are mutually exclusive.
 
 ### `ratchet [PATHS]...`
 
-Prints downward updates for existing ratchet entries.
+Lowers existing ratchet ceilings after violations improve. It never creates or raises ceilings.
 
 <CliCommandReference path="sprawl-guard ratchet" />
 
@@ -65,8 +65,9 @@ With no paths it evaluates the complete ratchet; path arguments restrict the upd
 
 `resolved` prints the built-in defaults merged with the selected root configuration and included
 override fragments. Inherited per-language LOC limits and automatic literate-language line types are
-made explicit. `export` prints the same policy as a complete configuration suitable for committing.
-`schema` prints the JSON Schema for user-authored root configuration files.
+made explicit. Pass `--detected` to include language details only for languages found under the
+root. `export` prints the complete policy suitable for committing. `schema` prints the JSON Schema
+for user-authored root configuration files.
 
 <CliCommandReference path="sprawl-guard config resolved" />
 
@@ -119,6 +120,11 @@ A JSON report with one file violation looks like:
   "coverage": {
     "kind": "complete"
   },
+  "summary": {
+    "files_checked": 12,
+    "directories_checked": 4,
+    "languages_detected": 2
+  },
   "counter": {
     "backend": "tokei",
     "version": "14.0.0"
@@ -143,9 +149,10 @@ A JSON report with one file violation looks like:
 }
 ```
 
-`status` is `passed` or `failed` for a completed policy check. `coverage` reports whether the
+`status` is `passed` or `failed` for a completed policy check. `summary` reports the number of
+source files, distinct source directories, and languages checked. `coverage` reports whether the
 repository scan was complete, `counter` identifies the configured-LOC counter, and `warnings` and
-`violations` contain structured diagnostics.
+`violations` contain structured diagnostics. Successful human output includes the same summary.
 
 Collected traversal failures also produce structured output and use `status: "error"`. Other
 operational failures can write only human-readable stderr, even when `--format json` or

@@ -24,7 +24,7 @@ pub struct RatchetFile {
     #[serde(default)]
     pub files: Vec<FileRatchet>,
     /// Directory fan-out ceilings for both source roles.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub directories: Vec<DirectoryRatchet>,
 }
 
@@ -202,7 +202,7 @@ pub struct FileRatchet {
     /// Production or test role measured at the file.
     pub role: SourceKind,
     /// Grandfathered configured LOC ceiling.
-    pub loc: LocLimit,
+    pub max_loc: LocLimit,
 }
 
 impl FileRatchet {
@@ -301,7 +301,7 @@ impl TryFrom<RatchetFile> for RatchetLookup {
             files: file
                 .files
                 .into_iter()
-                .map(|entry| (entry.key(), entry.loc))
+                .map(|entry| (entry.key(), entry.max_loc))
                 .collect(),
             directories: file
                 .directories
@@ -369,7 +369,7 @@ mod tests {
         let entry = FileRatchet {
             path: RelativePath::new("src/lib.rs").unwrap(),
             role: SourceKind::Production,
-            loc: LocLimit::new(2).unwrap(),
+            max_loc: LocLimit::new(2).unwrap(),
         };
         RatchetFile {
             schema_version: RatchetSchemaVersion::CURRENT,
@@ -392,12 +392,12 @@ mod tests {
                     [[files]]
                     path = "src/client/api.ts"
                     role = "production"
-                    loc = 731
+                    max_loc = 731
 
                     [[files]]
                     path = "src/client/api.test.ts"
                     role = "test"
-                    loc = 1200
+                    max_loc = 1200
 
                     [[directories]]
                     path = "src/api"
@@ -444,12 +444,12 @@ mod tests {
                         [[files]]
                         path = "src/lib.rs"
                         role = "production"
-                        loc = 2
+                        max_loc = 2
 
                         [[files]]
                         path = "src/lib.rs"
                         role = "test"
-                        loc = 3
+                        max_loc = 3
                     "#},
                 )
                 .unwrap();
@@ -467,12 +467,12 @@ mod tests {
                         [[files]]
                         path = "src/lib.rs"
                         role = "production"
-                        loc = 2
+                        max_loc = 2
 
                         [[files]]
                         path = "src/lib.rs"
                         role = "production"
-                        loc = 3
+                        max_loc = 3
                     "#},
                 )
                 .unwrap_err();
@@ -582,16 +582,16 @@ mod tests {
             fn it_rejects_incomplete_file_entries() {
                 for (input, field) in [
                     (
-                        "schema_version = 1\n[[files]]\nrole = \"production\"\nloc = 1",
+                        "schema_version = 1\n[[files]]\nrole = \"production\"\nmax_loc = 1",
                         "path",
                     ),
                     (
-                        "schema_version = 1\n[[files]]\npath = \"a.rs\"\nloc = 1",
+                        "schema_version = 1\n[[files]]\npath = \"a.rs\"\nmax_loc = 1",
                         "role",
                     ),
                     (
                         "schema_version = 1\n[[files]]\npath = \"a.rs\"\nrole = \"production\"",
-                        "loc",
+                        "max_loc",
                     ),
                 ] {
                     assert_missing_field(input, field);
@@ -629,7 +629,7 @@ mod tests {
             #[test]
             fn it_rejects_file_and_directory_entries() {
                 for input in [
-                    "schema_version = 1\n[[files]]\npath = \"a.rs\"\nrole = \"production\"\nloc = 0",
+                    "schema_version = 1\n[[files]]\npath = \"a.rs\"\nrole = \"production\"\nmax_loc = 0",
                     "schema_version = 1\n[[directories]]\npath = \"src\"\nrole = \"production\"\ngroup = \"source\"\nleaf_files = 0",
                 ] {
                     assert!(
@@ -700,7 +700,7 @@ mod tests {
                         [[files]]
                         path = "src/lib.rs"
                         role = "fixture"
-                        loc = 2
+                        max_loc = 2
                     "#},
                 )
                 .unwrap_err();
@@ -722,7 +722,7 @@ mod tests {
                         [[files]]
                         path = ""
                         role = "production"
-                        loc = 2
+                        max_loc = 2
                     "#},
                 )
                 .unwrap_err();
@@ -762,13 +762,31 @@ mod tests {
                         [[files]]
                         path = "src/lib.rs"
                         role = "production"
-                        loc = 2
+                        max_loc = 2
                         owner = "team"
                     "#},
                 )
                 .unwrap_err();
 
                 assert!(error.to_string().contains("unknown field `owner`"));
+            }
+
+            #[test]
+            fn it_rejects_the_legacy_loc_field() {
+                let error = RatchetFile::parse(
+                    Path::new("sprawl-guard.ratchet.toml"),
+                    indoc! {r#"
+                        schema_version = 1
+
+                        [[files]]
+                        path = "src/lib.rs"
+                        role = "production"
+                        loc = 2
+                    "#},
+                )
+                .unwrap_err();
+
+                assert!(error.to_string().contains("unknown field `loc`"));
             }
         }
     }
@@ -789,12 +807,12 @@ mod tests {
                         [[files]]
                         path = "z.rs"
                         role = "production"
-                        loc = 2
+                        max_loc = 2
 
                         [[files]]
                         path = "a.rs"
                         role = "test"
-                        loc = 3
+                        max_loc = 3
 
                         [[directories]]
                         path = "z"

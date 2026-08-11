@@ -214,7 +214,7 @@ fn machine_command_policy(command: &Command) -> MachineCommandPolicy {
         | Command::Baseline(_)
         | Command::Ratchet(_)
         | Command::Config(crate::cli::ConfigCommand {
-            command: ConfigSubcommand::Resolved,
+            command: ConfigSubcommand::Resolved(_),
         })
         | Command::Config(crate::cli::ConfigCommand {
             command: ConfigSubcommand::Export,

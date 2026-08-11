@@ -27,12 +27,12 @@ mod when_writing_updates {
                 [[files]]
                 path = "src/improved.rs"
                 role = "production"
-                loc = 4
+                max_loc = 4
 
                 [[files]]
                 path = "src/obsolete.rs"
                 role = "production"
-                loc = 3
+                max_loc = 3
             "#},
         );
         write_file(
@@ -50,7 +50,7 @@ mod when_writing_updates {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 1);
         let improved_file = production_file_ratchet_entry(&ratchet, "src/improved.rs").unwrap();
-        assert_eq!(improved_file.loc.get(), 2);
+        assert_eq!(improved_file.max_loc.get(), 2);
         assert!(production_file_ratchet_entry(&ratchet, "src/obsolete.rs").is_none());
         assert_eq!(stderr(&output), "");
     }
@@ -76,12 +76,12 @@ mod when_writing_updates {
                 [[files]]
                 path = "checked/lib.rs"
                 role = "production"
-                loc = 4
+                max_loc = 4
 
                 [[files]]
                 path = "skipped/lib.rs"
                 role = "production"
-                loc = 4
+                max_loc = 4
             "#},
         );
         write_file(
@@ -111,9 +111,9 @@ mod when_writing_updates {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 2);
         let checked_file = production_file_ratchet_entry(&ratchet, "checked/lib.rs").unwrap();
-        assert_eq!(checked_file.loc.get(), 2);
+        assert_eq!(checked_file.max_loc.get(), 2);
         let skipped_file = production_file_ratchet_entry(&ratchet, "skipped/lib.rs").unwrap();
-        assert_eq!(skipped_file.loc.get(), 4);
+        assert_eq!(skipped_file.max_loc.get(), 4);
         assert_eq!(stderr(&output), "");
     }
 
@@ -138,7 +138,7 @@ mod when_writing_updates {
                 [[files]]
                 path = "deleted/lib.rs"
                 role = "production"
-                loc = 4
+                max_loc = 4
             "#},
         );
 
@@ -209,12 +209,12 @@ mod when_writing_updates {
                 [[files]]
                 path = "src/lib.rs"
                 role = "production"
-                loc = 4
+                max_loc = 4
 
                 [[files]]
                 path = "src/lib.rs"
                 role = "test"
-                loc = 4
+                max_loc = 4
             "#},
         );
         write_rust_source_with_function_count(&root, "src/lib.rs", 2);
@@ -232,6 +232,6 @@ mod when_writing_updates {
             ratchet.files[0].role,
             sprawl_guard_lib::classification::SourceKind::Test
         );
-        assert_eq!(ratchet.files[0].loc.get(), 2);
+        assert_eq!(ratchet.files[0].max_loc.get(), 2);
     }
 }

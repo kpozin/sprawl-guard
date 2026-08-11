@@ -4,6 +4,53 @@ use serde_json::json;
 
 use super::common::*;
 
+mod when_a_check_succeeds {
+    use super::*;
+
+    fn write_mixed_source_fixture(root: &TempDir) {
+        write_config(root, "");
+        write_file(root, "src/lib.rs", "fn main() {}\n");
+        write_file(root, "web/app.ts", "export const answer = 42;\n");
+    }
+
+    #[test]
+    fn it_reports_the_checked_files_directories_and_languages_in_human_output() {
+        let root = TempDir::new().unwrap();
+        write_mixed_source_fixture(&root);
+
+        let output = sprawl_guard(&root).arg("check").output().unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            stdout(&output),
+            concat!(
+                "No sprawl-guard violations found.\n",
+                "Checked 2 source files in 2 directories across 2 languages.\n",
+            ),
+        );
+        assert_eq!(stderr(&output), "");
+    }
+
+    #[test]
+    fn it_reports_the_checked_files_directories_and_languages_in_json_output() {
+        let root = TempDir::new().unwrap();
+        write_mixed_source_fixture(&root);
+
+        let (output, report) = run_check_json(&root);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            report["summary"],
+            json!({
+                "files_checked": 2,
+                "directories_checked": 2,
+                "languages_detected": 2,
+            }),
+        );
+        assert_eq!(stderr(&output), "");
+    }
+}
+
 mod when_file_loc_is_reported_as_json {
     use super::*;
 
@@ -149,7 +196,13 @@ mod when_rust_production_source_has_file_wide_cfg_test {
         let output = sprawl_guard(&root).arg("check").output().unwrap();
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(stdout(&output), "No sprawl-guard violations found.\n");
+        assert_eq!(
+            stdout(&output),
+            concat!(
+                "No sprawl-guard violations found.\n",
+                "Checked 1 source file in 1 directory across 1 language.\n",
+            )
+        );
         assert_eq!(stderr(&output), "");
     }
 }

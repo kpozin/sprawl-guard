@@ -12,6 +12,7 @@ use crate::rust_cfg::RustCfgTestWarning;
 use crate::{DiagnosticDetail, LanguageGroupId, LanguageId, LeafFiles, LocLimit, RelativePath};
 
 mod ratchet;
+mod summary;
 
 pub use ratchet::{
     DirectoryRatchetIncreasedViolation, DirectoryRatchetStaleMeasuredViolation,
@@ -21,6 +22,7 @@ pub use ratchet::{
     RatchetStaleMissingViolation, RatchetStaleViolation, RatchetStaleViolationKind,
     RatchetViolation, RatchetViolationKind,
 };
+pub use summary::{CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount, ScanSummary};
 
 /// Successful result of one `sprawl-guard check` run.
 ///
@@ -32,6 +34,7 @@ pub struct CheckReport {
     root: ReportRoot,
     counter: CounterInfo,
     coverage: AnalysisCoverage,
+    summary: ScanSummary,
     warnings: Vec<CheckWarning>,
     violations: Vec<CheckViolation>,
 }
@@ -41,11 +44,12 @@ impl Serialize for CheckReport {
     where
         S: Serializer,
     {
-        let mut report = serializer.serialize_struct("CheckReport", 6)?;
+        let mut report = serializer.serialize_struct("CheckReport", 7)?;
         report.serialize_field("status", &self.status())?;
         report.serialize_field("root", &self.root)?;
         report.serialize_field("counter", &self.counter)?;
         report.serialize_field("coverage", &self.coverage)?;
+        report.serialize_field("summary", &self.summary)?;
         report.serialize_field("warnings", &self.warnings)?;
         report.serialize_field("violations", &self.violations)?;
         report.end()
@@ -57,6 +61,7 @@ impl CheckReport {
         root: ReportRoot,
         counter: CounterInfo,
         coverage: AnalysisCoverage,
+        summary: ScanSummary,
         warnings: Vec<CheckWarning>,
         violations: Vec<CheckViolation>,
     ) -> Self {
@@ -64,6 +69,7 @@ impl CheckReport {
             root,
             counter,
             coverage,
+            summary,
             warnings,
             violations,
         }
@@ -73,6 +79,7 @@ impl CheckReport {
     pub fn complete(
         root: ReportRoot,
         counter: CounterInfo,
+        summary: ScanSummary,
         warnings: Vec<CheckWarning>,
         violations: Vec<CheckViolation>,
     ) -> Self {
@@ -80,6 +87,7 @@ impl CheckReport {
             root,
             counter,
             AnalysisCoverage::Complete,
+            summary,
             warnings,
             violations,
         )
@@ -89,6 +97,7 @@ impl CheckReport {
     pub fn partial(
         root: ReportRoot,
         counter: CounterInfo,
+        summary: ScanSummary,
         warnings: Vec<CheckWarning>,
         traversal_incidents: NonEmptyTraversalIncidents,
         violations: Vec<CheckViolation>,
@@ -99,6 +108,7 @@ impl CheckReport {
             AnalysisCoverage::Partial {
                 traversal_incidents,
             },
+            summary,
             warnings,
             violations,
         )
@@ -126,6 +136,11 @@ impl CheckReport {
     /// Returns whether discovery and measurement covered every path required by config.
     pub fn analysis_complete(&self) -> bool {
         matches!(self.coverage, AnalysisCoverage::Complete)
+    }
+
+    /// Returns counts describing the source files covered by this check.
+    pub const fn summary(&self) -> ScanSummary {
+        self.summary
     }
 
     /// Returns non-fatal warnings emitted during the check.

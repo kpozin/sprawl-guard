@@ -328,6 +328,14 @@
       "usage": "Usage: sprawl-guard config resolved [OPTIONS]",
       "arguments": [
         {
+          "id": "detected",
+          "syntax": "--detected",
+          "help": "Include only languages detected under the repository root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "help",
           "syntax": "-h, --help",
           "help": "Print help (see a summary with '-h')",

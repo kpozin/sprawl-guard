@@ -10,7 +10,7 @@ use crate::config::{Config, TraversalErrorPolicy};
 use crate::resolved_limits::LimitResolver;
 use crate::rust_cfg::{RustCfgTestStatus, preprocess_rust_cfg_test, rust_cfg_test_policy_info};
 use crate::source_file::{ensure_source_file_size, read_source_to_string};
-use crate::value::path::{normalize_under_root, resolve_root};
+use crate::value::path::resolve_root;
 use crate::{CountedLoc, IncludedLineTypes, LocLimit, RelativePath, Result, SprawlError};
 
 use super::directory_fanout::directory_fanout_checks;
@@ -24,6 +24,12 @@ use super::report::{
     DirectoryViolationKind, FileLocViolation, FileViolationKind, NonEmptyTraversalIncidents,
     ReportRoot,
 };
+
+mod scope;
+mod summary;
+
+pub(super) use scope::CheckScope;
+use summary::summarize_scan;
 
 /// Inputs for running `sprawl-guard check`.
 pub struct CheckOptions<'config> {
@@ -89,7 +95,7 @@ fn check_with_counter_mode(
     ratchet_application: RatchetApplication,
 ) -> Result<CheckReport> {
     let root = resolve_root(&options.root)?;
-    let scope = CheckScope::new(&root, options.paths)?;
+    let scope = CheckScope::resolve(&root, options.paths)?;
     let ratchet = match ratchet_application {
         RatchetApplication::Apply => RatchetState::load_if_present(&root, options.config)?,
         RatchetApplication::Skip => None,
@@ -115,6 +121,7 @@ fn check_with_counter_mode(
         None => AnalysisCoverage::Complete,
     };
     let directory_checks = directory_fanout_checks(&limit_resolver, &discovery.sources)?;
+    let summary = summarize_scan(&discovery.sources, &directory_checks);
     let source_checks = check_sources(
         &root,
         options.config,
@@ -155,6 +162,7 @@ fn check_with_counter_mode(
             version: counter.backend_version(),
         },
         coverage,
+        summary,
         warnings,
         violations,
     ))
@@ -427,70 +435,5 @@ fn normalize_measurement(
         }
     })
 }
-/// Normalized set of path prefixes that limit which files a check considers.
-///
-/// A scope is not a post-processing filter over violations. It is applied
-/// during source traversal and before source classification, so out-of-scope
-/// trees cannot cause unrelated traversal errors or path-dependent
-/// classification errors such as ambiguous language matches. An empty scope
-/// list means the whole repository is in scope.
-pub(super) struct CheckScope {
-    paths: Vec<RelativePath>,
-}
-
-impl CheckScope {
-    /// Resolves CLI-supplied path scopes under the repository root.
-    ///
-    /// Relative paths stay repository-relative. Absolute paths must already be
-    /// under `root`. Every non-empty scope must exist so typos cannot produce a
-    /// passing empty check.
-    fn new(root: &Path, paths: Vec<PathBuf>) -> Result<Self> {
-        let paths = paths
-            .into_iter()
-            .map(|path| scope_path(root, &path))
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Self { paths })
-    }
-
-    /// Returns normalized path scopes for traversal pruning.
-    fn paths(&self) -> &[RelativePath] {
-        &self.paths
-    }
-
-    pub(super) fn contains(&self, path: &RelativePath) -> bool {
-        self.paths.is_empty() || self.paths.iter().any(|scope| path.is_at_or_under(scope))
-    }
-}
-
-fn scope_path(root: &Path, path: &Path) -> Result<RelativePath> {
-    let absolute_path = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        root.join(path)
-    };
-    if !absolute_path
-        .try_exists()
-        .map_err(|source| crate::SprawlError::ReadFileType {
-            path: absolute_path.clone(),
-            source,
-        })?
-    {
-        return Err(crate::SprawlError::MissingCheckScope {
-            path: path.to_path_buf(),
-        });
-    }
-    if path.is_absolute() {
-        let canonical_path =
-            absolute_path
-                .canonicalize()
-                .map_err(|source| crate::SprawlError::ReadFileType {
-                    path: absolute_path.clone(),
-                    source,
-                })?;
-        return normalize_under_root(root, &canonical_path);
-    }
-    RelativePath::new(path)
-}
-
 #[cfg(test)]
 mod tests;

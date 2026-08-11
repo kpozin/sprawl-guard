@@ -167,7 +167,7 @@ pub(crate) fn write_rust_file_limit_config_and_file_ratchet(
             [[files]]
             path = "{ratchet_path}"
             role = "production"
-            loc = {ratchet_loc}
+            max_loc = {ratchet_loc}
         "#},
     );
 }
