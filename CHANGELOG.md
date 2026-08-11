@@ -4,6 +4,20 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## Unreleased
 
+## [0.2.0] - 2026-08-11
+
+### Added
+
+- Versioned JSON Schema output for configuration files, distributed through the CLI,
+  documentation site, and npm wrapper.
+
+### Changed
+
+- Successful checks now summarize the files, directories, and languages scanned.
+- Resolved configuration output can be limited to detected and explicitly configured languages.
+- Baseline and ratchet help text now distinguishes creating ceilings from lowering them, and
+  ratchet files name LOC ceilings `max_loc`.
+
 ## [0.2.0-dev.0] - 2026-08-03
 
 ### Added

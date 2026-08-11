@@ -556,7 +556,7 @@ describe("publishNpmPublicationRequests", () => {
           { kind: "ok", remote: { kind: "present", version: PACKAGE_VERSION } },
           { kind: "ok", remote: { kind: "present", version: PACKAGE_VERSION } },
           { kind: "ok", remote: { kind: "present", version: PACKAGE_VERSION } },
-          { kind: "ok", remote: { kind: "present", version: VERSION_0_2_0 } },
+          { kind: "ok", remote: { kind: "present", version: VERSION_0_0_9 } },
         ],
         events,
         inspections: [
@@ -594,7 +594,7 @@ describe("publishNpmPublicationRequests", () => {
           { kind: "ok", remote: { kind: "present", version: PACKAGE_VERSION } },
           { kind: "ok", remote: { kind: "present", version: PACKAGE_VERSION } },
           { kind: "ok", remote: { kind: "absent" } },
-          { kind: "ok", remote: { kind: "present", version: VERSION_0_2_0 } },
+          { kind: "ok", remote: { kind: "present", version: VERSION_0_0_9 } },
         ],
         events,
         inspections: [
