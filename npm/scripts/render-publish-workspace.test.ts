@@ -18,6 +18,21 @@ describe("renderPublishWorkspace", () => {
     fs.mkdirSync(tempWorkspaceRoot);
     fs.writeFileSync(path.join(tempPublicRoot, "LICENSE-MIT"), "mit\n");
     fs.writeFileSync(path.join(tempPublicRoot, "LICENSE-APACHE"), "apache\n");
+    fs.mkdirSync(
+      path.join(tempPublicRoot, "site", "public", "schemas", "v1"),
+      { recursive: true },
+    );
+    fs.writeFileSync(
+      path.join(
+        tempPublicRoot,
+        "site",
+        "public",
+        "schemas",
+        "v1",
+        "sprawl-guard.schema.json",
+      ),
+      '{"$schema":"http://json-schema.org/draft-04/schema#"}\n',
+    );
 
     fs.mkdirSync(path.join(tempWorkspaceRoot, "sprawl-guard", "dist", "bin"), {
       recursive: true,
@@ -70,9 +85,23 @@ describe("renderPublishWorkspace", () => {
         "README.md",
         "LICENSE-MIT",
         "LICENSE-APACHE",
+        "schema/",
         "dist/",
         "!dist/lib/*.test.js",
       ]);
+      assert.equal(
+        fs.readFileSync(
+          path.join(
+            tempWorkspaceRoot,
+            ".stage",
+            "sprawl-guard",
+            "schema",
+            "sprawl-guard.schema.json",
+          ),
+          "utf8",
+        ),
+        '{"$schema":"http://json-schema.org/draft-04/schema#"}\n',
+      );
       assert.equal(
         fs.readFileSync(
           path.join(tempWorkspaceRoot, ".stage", "sprawl-guard", "LICENSE-MIT"),

@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::GlobPattern;
@@ -18,13 +19,13 @@ pub(super) fn merge_config_include(config: &mut ConfigInclude, partial: PartialC
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialConfigInclude {
     include: Option<Vec<GlobPattern>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct IncludeFragment {
     #[serde(default)]

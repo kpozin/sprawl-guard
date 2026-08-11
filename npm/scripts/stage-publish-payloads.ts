@@ -7,6 +7,7 @@ import { inspectFilesystemEntry } from "./filesystem-entry.ts";
 import {
   PUBLISH_WORKSPACE_DIRECTORY,
   PUBLISH_LICENSE_FILE_NAMES,
+  PUBLISH_WRAPPER_CONFIG_SCHEMA_PATH,
   RUNTIME_PACKAGE_DEFINITIONS,
   publishWorkspaceTextFiles,
 } from "./package-manifests.ts";
@@ -114,20 +115,19 @@ export function stagePublishPayloads(args: {
   readonly artifactRootDirectory: ArtifactRootDirectory;
 }): StagePublishPayloadsResult {
   const stagedPaths: RenderedWorkspaceRelativePath[] = [];
+  const wrapperDirectory = `${PUBLISH_WORKSPACE_DIRECTORY}/sprawl-guard`;
 
   const renderedWorkspaceEntries = [
     ...publishWorkspaceTextFiles().map((textFile) =>
       renderedWorkspaceRelativePath(textFile.relativePath),
     ),
-    renderedWorkspaceRelativePath(`${PUBLISH_WORKSPACE_DIRECTORY}/sprawl-guard/README.md`),
-    renderedWorkspaceRelativePath(
-      `${PUBLISH_WORKSPACE_DIRECTORY}/sprawl-guard/dist/bin/sprawl-guard.js`,
-    ),
-    ...PUBLISH_LICENSE_FILE_NAMES.map(
-      (fileName) =>
-        renderedWorkspaceRelativePath(
-          `${PUBLISH_WORKSPACE_DIRECTORY}/sprawl-guard/${fileName}`,
-        ),
+    ...[
+      "README.md",
+      "dist/bin/sprawl-guard.js",
+      PUBLISH_WRAPPER_CONFIG_SCHEMA_PATH,
+      ...PUBLISH_LICENSE_FILE_NAMES,
+    ].map((relativePath) =>
+      renderedWorkspaceRelativePath(`${wrapperDirectory}/${relativePath}`),
     ),
     ...RUNTIME_PACKAGE_DEFINITIONS.flatMap((definition) => [
       ...PUBLISH_LICENSE_FILE_NAMES.map(

@@ -1,3 +1,7 @@
+use std::collections::BTreeMap;
+
+use schemars::JsonSchema;
+use schemars::{Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use tokei::LanguageType;
 
@@ -104,7 +108,7 @@ pub struct GenericLanguageConfig;
 /// Root config files may specify only the fields they want to override. Serde flattens the common
 /// fields so users can write `[languages.rust] enabled = true` without nested common/specific
 /// tables.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialLanguageConfig {
     /// Optional shared settings.
@@ -113,6 +117,50 @@ pub(super) struct PartialLanguageConfig {
     /// Optional Rust-only setting.
     #[serde(rename = "exclude_cfg_test")]
     cfg_test_exclusion: Option<RustCfgTestExclusion>,
+}
+
+/// User-authored language settings keyed by `tokei` language ID.
+///
+/// The map needs a custom schema because the enclosing key determines whether Rust-only fields are
+/// valid. Deserialization still uses the same partial config structs as runtime loading.
+#[derive(Debug, Deserialize)]
+#[serde(transparent)]
+pub(super) struct PartialLanguagesConfig(BTreeMap<LanguageId, PartialLanguageConfig>);
+
+impl PartialLanguagesConfig {
+    /// Consumes the authored language entries in deterministic key order.
+    pub(super) fn into_entries(self) -> impl Iterator<Item = (LanguageId, PartialLanguageConfig)> {
+        self.0.into_iter()
+    }
+}
+
+impl JsonSchema for PartialLanguagesConfig {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Language settings".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let mut schema =
+            <BTreeMap<LanguageId, PartialCommonLanguageConfig>>::json_schema(generator);
+        let rust_schema = generator.subschema_for::<PartialLanguageConfig>();
+        schema
+            .get_mut("properties")
+            .and_then(|properties| properties.as_object_mut())
+            .expect("language map schema must define completion properties")
+            .insert("rust".to_owned(), rust_schema.clone().to_value());
+        schema.insert(
+            "patternProperties".to_owned(),
+            json_schema!({
+                "^[Rr][Uu][Ss][Tt]$": rust_schema,
+            })
+            .to_value(),
+        );
+        schema
+    }
 }
 
 impl PartialLanguageConfig {
@@ -167,7 +215,7 @@ pub struct RustLanguageConfig {
 ///
 /// TOML still represents this as a boolean, but the resolved config uses an enum so callers cannot
 /// accidentally pass an unrelated bool where an enablement state is expected.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(from = "bool", into = "bool")]
 pub enum LanguageMode {
     /// Include this language in checks.
@@ -204,7 +252,7 @@ impl LanguageMode {
 ///
 /// This is Rust-specific policy, not a generic language option. It is converted to and from a flat
 /// TOML boolean only at the serialization boundary.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(from = "bool", into = "bool")]
 pub enum RustCfgTestExclusion {
     /// Exclude top-level Rust `cfg(test)` items.
@@ -321,7 +369,7 @@ pub(super) fn merge_language(
 }
 
 /// Optional shared language settings from a user-authored config table.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialCommonLanguageConfig {
     #[serde(rename = "enabled")]
@@ -333,13 +381,13 @@ struct PartialCommonLanguageConfig {
     limits: Option<PartialLanguageLimits>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialLanguageLimits {
     max_lines_per_file: Option<PartialLanguageMaxLinesPerFileLimits>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialLanguageMaxLinesPerFileLimits {
     included_line_types: Option<IncludedLineTypes>,

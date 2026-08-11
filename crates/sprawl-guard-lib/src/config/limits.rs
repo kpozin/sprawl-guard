@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{IncludedLineTypes, LeafFileLimit, LocLimit};
@@ -63,14 +64,14 @@ pub(super) fn merge_max_leaf_files_per_directory_limits(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialLimits {
     max_lines_per_file: Option<PartialMaxLinesPerFileLimits>,
     max_leaf_files_per_directory: Option<PartialMaxLeafFilesPerDirectoryLimits>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialMaxLinesPerFileLimits {
     included_line_types: Option<IncludedLineTypes>,
@@ -78,7 +79,7 @@ struct PartialMaxLinesPerFileLimits {
     test: Option<LocLimit>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialMaxLeafFilesPerDirectoryLimits {
     production: Option<LeafFileLimit>,

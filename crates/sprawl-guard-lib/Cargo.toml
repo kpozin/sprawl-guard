@@ -18,6 +18,7 @@ ignore.workspace = true
 nutype = { workspace = true, features = ["serde"] }
 proc-macro2.workspace = true
 rayon.workspace = true
+schemars.workspace = true
 serde = { workspace = true, features = ["derive"] }
 syn.workspace = true
 thiserror.workspace = true

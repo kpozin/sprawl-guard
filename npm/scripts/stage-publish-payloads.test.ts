@@ -31,6 +31,21 @@ describe("stagePublishPayloads", () => {
     fs.mkdirSync(tempWorkspaceRoot);
     fs.writeFileSync(path.join(tempPublicRoot, "LICENSE-MIT"), "mit\n");
     fs.writeFileSync(path.join(tempPublicRoot, "LICENSE-APACHE"), "apache\n");
+    fs.mkdirSync(
+      path.join(tempPublicRoot, "site", "public", "schemas", "v1"),
+      { recursive: true },
+    );
+    fs.writeFileSync(
+      path.join(
+        tempPublicRoot,
+        "site",
+        "public",
+        "schemas",
+        "v1",
+        "sprawl-guard.schema.json",
+      ),
+      "{}\n",
+    );
     tempArtifactRoot = artifactRootDirectory(
       fs.mkdtempSync(
         path.join(os.tmpdir(), "sprawl-guard-public-stage-payloads-artifacts-"),

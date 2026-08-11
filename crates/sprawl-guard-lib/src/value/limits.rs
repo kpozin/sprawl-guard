@@ -1,6 +1,8 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::num::NonZeroU32;
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Finite or unlimited policy value.
@@ -10,6 +12,35 @@ pub enum FiniteOrUnlimited<Value> {
     Finite(Value),
     /// Measure without enforcing a ceiling.
     Unlimited,
+}
+
+impl<Value> JsonSchema for FiniteOrUnlimited<Value>
+where
+    Value: JsonSchema,
+{
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> Cow<'static, str> {
+        format!("FiniteOrUnlimited_{}", Value::schema_name()).into()
+    }
+
+    fn schema_id() -> Cow<'static, str> {
+        format!("FiniteOrUnlimited<{}>", Value::schema_id()).into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "anyOf": [
+                generator.subschema_for::<Value>(),
+                {
+                    "const": "unlimited",
+                    "type": "string"
+                }
+            ]
+        })
+    }
 }
 
 impl<Value> FiniteOrUnlimited<Value>
@@ -107,7 +138,7 @@ impl fmt::Display for LimitValueKind {
 }
 
 /// Positive configured LOC limit.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct LocLimit(NonZeroU32);
 
@@ -143,7 +174,7 @@ impl fmt::Display for LocLimit {
 }
 
 /// Count of direct leaf files.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct LeafFiles(NonZeroU32);
 

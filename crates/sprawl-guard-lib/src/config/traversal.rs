@@ -1,6 +1,7 @@
 use std::fmt;
 use std::num::{NonZeroU32, NonZeroU64};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Filesystem traversal settings.
@@ -24,7 +25,7 @@ pub struct TraversalConfig {
 }
 
 /// Symlink following policy for source discovery.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SymlinkTraversal {
     /// Do not follow symlinks.
@@ -54,7 +55,7 @@ impl SymlinkTraversal {
 /// This does not affect explicit root/scope failures or read/count failures for
 /// already-discovered source files. Those errors make the check result
 /// incomplete and remain operational failures.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TraversalErrorPolicy {
     /// Collect recoverable traversal incidents, then fail the run.
@@ -72,7 +73,7 @@ pub enum TraversalDepthError {
 }
 
 /// Maximum filesystem traversal depth from the repository root.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct TraversalDepth(NonZeroU32);
 
@@ -123,7 +124,7 @@ pub enum TraversalEntryLimitError {
 }
 
 /// Maximum number of filesystem entries source discovery may inspect.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct TraversalEntryLimit(NonZeroU32);
 
@@ -185,7 +186,7 @@ pub enum SourceFileByteLimitError {
 }
 
 /// Maximum source file size in bytes before configured-LOC counting.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SourceFileByteLimit(NonZeroU64);
 
@@ -248,7 +249,7 @@ pub(super) fn merge_traversal(config: &mut TraversalConfig, partial: PartialTrav
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialTraversalConfig {
     follow_symlinks: Option<SymlinkTraversal>,

@@ -1,3 +1,4 @@
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
 use crate::SprawlError;
@@ -8,6 +9,24 @@ use crate::SprawlError;
 pub enum ConfigSchemaVersion {
     /// Configuration schema version 1.
     V1,
+}
+
+impl JsonSchema for ConfigSchemaVersion {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "ConfigSchemaVersion".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "const": 1,
+            "title": "Configuration schema version",
+            "type": "integer"
+        })
+    }
 }
 
 impl ConfigSchemaVersion {

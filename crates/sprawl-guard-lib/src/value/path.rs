@@ -1,14 +1,15 @@
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Result, SprawlError};
 
 /// Normalized repository-relative path using forward slash separators.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct RelativePath(String);
+pub struct RelativePath(#[schemars(pattern(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$)).*$"))] String);
 
 impl RelativePath {
     /// Normalizes a path that must be relative and must not traverse upward.
@@ -100,9 +101,9 @@ pub(crate) fn resolve_root(root: &Path) -> Result<PathBuf> {
 }
 
 /// Repository-relative ratchet file path.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct RatchetFilePath(RelativePath);
+pub struct RatchetFilePath(#[schemars(length(min = 1), pattern(r"^[^\\:]+$"))] RelativePath);
 
 /// Error returned when a ratchet file path is not repository-relative.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]

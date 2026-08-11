@@ -132,13 +132,7 @@ interface SourceWrapperPackageManifest extends SharedWrapperPackageManifestField
 
 interface PublishWrapperPackageManifest extends SharedWrapperPackageManifestFields {
   readonly publishConfig: PublicPublishConfig;
-  readonly files: readonly [
-    "README.md",
-    "LICENSE-MIT",
-    "LICENSE-APACHE",
-    "dist/",
-    "!dist/lib/*.test.js",
-  ];
+  readonly files: typeof PUBLISH_WRAPPER_FILES;
   readonly optionalDependencies: RuntimePackageDependencies;
 }
 
@@ -303,6 +297,17 @@ export const RUNTIME_PACKAGE_DEFINITIONS = SHARED_RUNTIME_PACKAGE_DEFINITIONS.ma
   attachRuntimePackageBuildMetadata,
 ) satisfies readonly RuntimePackageDefinition[];
 
+/** Package-relative location of the distributed configuration schema. */
+export const PUBLISH_WRAPPER_CONFIG_SCHEMA_PATH =
+  "schema/sprawl-guard.schema.json" as const;
+const PUBLISH_WRAPPER_FILES = [
+  "README.md",
+  ...PUBLISH_LICENSE_FILE_NAMES,
+  "schema/",
+  "dist/",
+  "!dist/lib/*.test.js",
+] as const;
+
 /** Renders the checked-in source wrapper manifest. */
 export function renderSourceWrapperPackageManifest(): SourceWrapperPackageManifest {
   return {
@@ -323,12 +328,7 @@ export function renderPublishWrapperPackageManifest(): PublishWrapperPackageMani
   return {
     ...SHARED_WRAPPER_PACKAGE_MANIFEST_FIELDS,
     publishConfig: PUBLIC_PUBLISH_CONFIG,
-    files: [
-      "README.md",
-      ...PUBLISH_LICENSE_FILE_NAMES,
-      "dist/",
-      "!dist/lib/*.test.js",
-    ],
+    files: PUBLISH_WRAPPER_FILES,
     optionalDependencies: renderRuntimePackageDependencies(),
   };
 }

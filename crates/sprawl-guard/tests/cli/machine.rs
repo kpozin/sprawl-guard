@@ -467,6 +467,7 @@ mod run {
             ("languages", vec!["languages", "--format", "json"]),
             ("config resolved", vec!["config", "resolved"]),
             ("config export", vec!["config", "export"]),
+            ("config schema", vec!["config", "schema"]),
             ("baseline", vec!["baseline"]),
         ];
 

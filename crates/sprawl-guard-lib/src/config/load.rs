@@ -1,12 +1,17 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use globset::{Glob, GlobSetBuilder};
+use schemars::generate::SchemaSettings;
+use schemars::transform::ReplaceConstValue;
+use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 
+use crate::GlobPattern;
+#[cfg(test)]
+use crate::LanguageId;
 use crate::value::path::normalize_under_root;
-use crate::{GlobPattern, LanguageId};
 use crate::{Result, SprawlError};
 
 use super::defaults::built_in_config;
@@ -14,7 +19,7 @@ use super::files::{PartialFilesConfig, merge_global_file_excludes};
 use super::ignore::{PartialIgnoreConfig, merge_ignore};
 use super::include::{IncludeFragment, PartialConfigInclude, merge_config_include};
 use super::language_groups::{PartialLanguageGroupsConfig, resolve_language_groups};
-use super::languages::{PartialLanguageConfig, merge_language};
+use super::languages::{PartialLanguagesConfig, merge_language};
 use super::limits::{PartialLimits, merge_limits};
 use super::output::{PartialOutputConfig, merge_output};
 use super::ratchet::{PartialRatchetConfig, merge_ratchet};
@@ -24,6 +29,9 @@ use super::{Config, ConfigSchemaVersion, PathOverride};
 
 const PRIMARY_CONFIG_FILE: &str = "sprawl-guard.toml";
 const ALIAS_CONFIG_FILE: &str = ".sprawlrc.toml";
+const CONFIG_SCHEMA_ID: &str =
+    "https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.schema.json";
+const CONFIG_SCHEMA_META_SCHEMA: &str = "http://json-schema.org/draft-04/schema#";
 
 /// Options used while loading configuration.
 #[derive(Clone, Debug)]
@@ -73,6 +81,22 @@ pub fn load_resolved_config(options: &LoadOptions) -> Result<LoadedConfig> {
         source,
         includes,
     })
+}
+
+/// Generates the JSON Schema for user-authored root configuration files.
+pub fn authored_config_json_schema() -> Schema {
+    let generator = SchemaSettings::draft07()
+        .with(|settings| {
+            settings.meta_schema = Some(CONFIG_SCHEMA_META_SCHEMA.into());
+            settings
+                .transforms
+                .push(Box::new(ReplaceConstValue::default()));
+        })
+        .for_deserialize()
+        .into_generator();
+    let mut schema = generator.into_root_schema_for::<PartialConfig>();
+    schema.insert("id".to_owned(), CONFIG_SCHEMA_ID.into());
+    schema
 }
 
 /// Finds the root config file, honoring an explicit path before conventional names.
@@ -287,7 +311,7 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
         merge_tests(&mut config.tests, value);
     }
     if let Some(languages) = languages {
-        for (language, value) in languages {
+        for (language, value) in languages.into_entries() {
             let Some(existing) = config.languages.get_mut(&language) else {
                 return Err(SprawlError::UnknownLanguage {
                     language: language.to_string(),
@@ -323,8 +347,10 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
     Ok(())
 }
 
-#[derive(Debug, Deserialize)]
+/// User-authored root configuration before defaults and includes are resolved.
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(title = "Sprawl Guard configuration")]
 struct PartialConfig {
     schema_version: ConfigSchemaVersion,
     config: Option<PartialConfigInclude>,
@@ -333,7 +359,7 @@ struct PartialConfig {
     traversal: Option<PartialTraversalConfig>,
     files: Option<PartialFilesConfig>,
     tests: Option<PartialTestsConfig>,
-    languages: Option<BTreeMap<LanguageId, PartialLanguageConfig>>,
+    languages: Option<PartialLanguagesConfig>,
     language_groups: Option<PartialLanguageGroupsConfig>,
     overrides: Option<Vec<PathOverride>>,
     ratchet: Option<PartialRatchetConfig>,

@@ -1,6 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize};
 use tokei::LanguageType;
 
@@ -21,6 +22,37 @@ pub enum LanguageIdError {
 /// Language identifier backed by `tokei`'s supported language set.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash)]
 pub struct LanguageId(LanguageType);
+
+impl JsonSchema for LanguageId {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "LanguageId".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        // The enum supplies documented lowercase completions. Tokei also accepts aliases and
+        // case-insensitive spellings, which remain strings for the runtime parser to validate.
+        let languages = LanguageType::list()
+            .iter()
+            .map(|(language, _)| language.name().to_lowercase())
+            .collect::<std::collections::BTreeSet<_>>();
+        json_schema!({
+            "anyOf": [
+                {
+                    "enum": languages,
+                    "type": "string"
+                },
+                {
+                    "type": "string"
+                }
+            ],
+            "title": "Language ID",
+        })
+    }
+}
 
 impl LanguageId {
     /// Creates a language identifier.

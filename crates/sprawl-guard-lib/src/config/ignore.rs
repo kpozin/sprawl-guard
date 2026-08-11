@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Ignore traversal settings.
@@ -34,7 +35,7 @@ pub(super) fn merge_ignore(config: &mut IgnoreConfig, partial: PartialIgnoreConf
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialIgnoreConfig {
     respect_gitignore: Option<bool>,

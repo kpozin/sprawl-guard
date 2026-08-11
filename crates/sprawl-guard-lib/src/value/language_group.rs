@@ -2,6 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use nutype::nutype;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Error returned when a custom language-group name is invalid.
@@ -85,6 +86,26 @@ pub enum LanguageGroupId {
     Documentation,
     /// User-defined group with a validated custom name.
     Custom(CustomLanguageGroupId),
+}
+
+impl JsonSchema for LanguageGroupId {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "LanguageGroupId".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "anyOf": [
+                { "enum": ["source", "documentation"], "type": "string" },
+                { "pattern": "^[a-z][a-z0-9_]*$", "type": "string" }
+            ],
+            "title": "Language group ID"
+        })
+    }
 }
 
 impl LanguageGroupId {

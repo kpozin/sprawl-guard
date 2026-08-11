@@ -30,7 +30,7 @@ pub use languages::{
     RustLanguageConfig,
 };
 pub use limits::{Limits, MaxLeafFilesPerDirectoryLimits, MaxLinesPerFileLimits};
-pub use load::{LoadOptions, LoadedConfig, load_resolved_config};
+pub use load::{LoadOptions, LoadedConfig, authored_config_json_schema, load_resolved_config};
 pub use output::{ColorMode, OutputConfig, OutputFormat};
 pub use overrides::{
     OverrideLimits, OverridePaths, OverridePathsError, OverrideReason, OverrideReasonError,

@@ -61,15 +61,18 @@ Prints downward updates for existing ratchet entries.
 
 With no paths it evaluates the complete ratchet; path arguments restrict the update.
 
-### `config resolved` and `config export`
+### `config resolved`, `config export`, and `config schema`
 
 `resolved` prints the built-in defaults merged with the selected root configuration and included
 override fragments. Inherited per-language LOC limits and automatic literate-language line types are
 made explicit. `export` prints the same policy as a complete configuration suitable for committing.
+`schema` prints the JSON Schema for user-authored root configuration files.
 
 <CliCommandReference path="sprawl-guard config resolved" />
 
 <CliCommandReference path="sprawl-guard config export" />
+
+<CliCommandReference path="sprawl-guard config schema" />
 
 ### `explain PATH`
 

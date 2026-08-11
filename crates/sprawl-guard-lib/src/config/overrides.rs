@@ -1,5 +1,6 @@
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{GlobPattern, LeafFileLimit, LocLimit};
@@ -13,9 +14,9 @@ pub enum OverrideReasonError {
 }
 
 /// Human-readable override rationale.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct OverrideReason(String);
+pub struct OverrideReason(#[schemars(pattern(r".*\S.*"))] String);
 
 impl OverrideReason {
     /// Creates an override rationale.
@@ -59,9 +60,9 @@ pub enum OverridePathsError {
 }
 
 /// Non-empty list of glob patterns matched against normalized paths.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct OverridePaths(Vec<GlobPattern>);
+pub struct OverridePaths(#[schemars(length(min = 1))] Vec<GlobPattern>);
 
 impl OverridePaths {
     /// Creates a non-empty override path list.
@@ -205,15 +206,16 @@ impl<'de> Deserialize<'de> for OverrideLimits {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialOverrideLimits {
     max_lines_per_file: Option<PartialOverrideMaxLinesPerFileLimits>,
     max_leaf_files_per_directory: Option<PartialOverrideMaxLeafFilesPerDirectoryLimits>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("minProperties" = 1))]
 struct PartialOverrideMaxLinesPerFileLimits {
     production: Option<LocLimit>,
     test: Option<LocLimit>,
@@ -228,8 +230,9 @@ impl From<PartialOverrideMaxLinesPerFileLimits> for OverrideMaxLinesPerFileLimit
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend("minProperties" = 1))]
 struct PartialOverrideMaxLeafFilesPerDirectoryLimits {
     production: Option<LeafFileLimit>,
     test: Option<LeafFileLimit>,
@@ -247,13 +250,20 @@ impl From<PartialOverrideMaxLeafFilesPerDirectoryLimits>
 }
 
 /// Path override entry.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+#[schemars(extend(
+    "anyOf" = [
+        { "required": ["max_lines_per_file"] },
+        { "required": ["max_leaf_files_per_directory"] }
+    ]
+))]
 pub struct PathOverride {
     /// Non-empty glob patterns matched against normalized paths.
     pub paths: OverridePaths,
     /// Non-empty limit set applied when `paths` match.
     #[serde(flatten)]
+    #[schemars(with = "PartialOverrideLimits")]
     pub limits: OverrideLimits,
     /// Human-readable rationale.
     pub reason: OverrideReason,

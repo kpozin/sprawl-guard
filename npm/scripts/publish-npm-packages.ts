@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   PACKAGE_VERSION,
   PUBLISH_LICENSE_FILE_NAMES,
+  PUBLISH_WRAPPER_CONFIG_SCHEMA_PATH,
   PUBLISH_WORKSPACE_DIRECTORY,
   RUNTIME_PACKAGE_DEFINITIONS,
   WRAPPER_PACKAGE_NAME,
@@ -162,12 +163,7 @@ export function npmPublicationRequests(args: {
     {
       archiveExpectation: {
         kind: "files" as const,
-        requiredPaths: parsePackageRelativePaths([
-          "package.json",
-          "README.md",
-          "dist/bin/sprawl-guard.js",
-          ...PUBLISH_LICENSE_FILE_NAMES,
-        ]),
+        requiredPaths: WRAPPER_REQUIRED_PATHS,
       },
       expectedManifestText: wrapperManifestText,
       expectedPackedManifestText: pnpmPackedWrapperManifest(wrapperManifestText),
@@ -217,13 +213,18 @@ function wrapperPackedPaths(): readonly PackageRelativePath[] {
     )
     .map((entry) => `dist/lib/${entry.name.slice(0, -3)}.js`);
   return parsePackageRelativePaths([
-    "package.json",
-    "README.md",
-    ...PUBLISH_LICENSE_FILE_NAMES,
-    "dist/bin/sprawl-guard.js",
+    ...WRAPPER_REQUIRED_PATHS,
     ...compiledLibraryPaths,
   ]);
 }
+
+const WRAPPER_REQUIRED_PATHS = parsePackageRelativePaths([
+  "package.json",
+  "README.md",
+  ...PUBLISH_LICENSE_FILE_NAMES,
+  "dist/bin/sprawl-guard.js",
+  PUBLISH_WRAPPER_CONFIG_SCHEMA_PATH,
+]);
 
 type LoadNpmPublicationCandidateResult =
   | {

@@ -358,6 +358,24 @@
     {
       "path": [
         "sprawl-guard",
+        "config",
+        "schema"
+      ],
+      "usage": "Usage: sprawl-guard config schema [OPTIONS]",
+      "arguments": [
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help (see a summary with '-h')",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
         "explain"
       ],
       "usage": "Usage: sprawl-guard explain [OPTIONS] <PATH>",

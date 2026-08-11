@@ -1,10 +1,13 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A category of logical lines that can contribute to configured LOC.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum IncludedLineType {
     /// Source code lines.
@@ -51,6 +54,28 @@ pub enum IncludedLineTypes {
     CodeAndBlankLines,
     /// Count code, comments, and blank lines.
     All,
+}
+
+impl JsonSchema for IncludedLineTypes {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "IncludedLineTypes".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "oneOf": [
+                { "const": ["code"] },
+                { "const": ["code", "comments"] },
+                { "const": ["code", "blank_lines"] },
+                { "const": ["code", "comments", "blank_lines"] }
+            ],
+            "title": "Included line types"
+        })
+    }
 }
 
 impl IncludedLineTypes {

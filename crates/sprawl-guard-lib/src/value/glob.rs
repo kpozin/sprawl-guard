@@ -1,6 +1,7 @@
 use std::fmt;
 
 use globset::Glob;
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Error returned when a glob pattern value is invalid.
@@ -20,9 +21,9 @@ pub enum GlobPatternError {
 }
 
 /// Gitignore-style glob pattern.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Serialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct GlobPattern(String);
+pub struct GlobPattern(#[schemars(length(min = 1))] String);
 
 impl GlobPattern {
     /// Creates a glob pattern.

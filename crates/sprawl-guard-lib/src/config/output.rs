@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Output settings.
@@ -11,7 +12,7 @@ pub struct OutputConfig {
 }
 
 /// Output color mode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ColorMode {
     /// Detect whether color should be emitted.
@@ -39,7 +40,7 @@ impl<'de> Deserialize<'de> for ColorMode {
 }
 
 /// Supported output formats.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     /// Human-readable text output.
@@ -59,7 +60,7 @@ pub(super) fn merge_output(config: &mut OutputConfig, partial: PartialOutputConf
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialOutputConfig {
     format: Option<OutputFormat>,

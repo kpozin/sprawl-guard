@@ -202,6 +202,8 @@ enum ConfigSubcommand {
     Resolved,
     /// Print a full explicit config suitable for committing.
     Export,
+    /// Print the JSON Schema for authored config files.
+    Schema,
 }
 
 /// Arguments for `explain`.

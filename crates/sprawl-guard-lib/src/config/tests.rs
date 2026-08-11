@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::GlobPattern;
@@ -25,7 +26,7 @@ pub(super) fn merge_tests(config: &mut TestsConfig, partial: PartialTestsConfig)
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialTestsConfig {
     check_path_tests: Option<bool>,

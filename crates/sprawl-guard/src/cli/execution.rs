@@ -185,6 +185,15 @@ fn execute_config(
     let execution = match command.command {
         ConfigSubcommand::Resolved => config_cli::execute_config_resolved(Some(root), config_path)?,
         ConfigSubcommand::Export => config_cli::execute_config_export(Some(root), config_path)?,
+        ConfigSubcommand::Schema => {
+            let payload = config_cli::config_schema_payload()?;
+            return Ok(CommandOutcome::new(
+                0,
+                config_cli::render_schema_stdout(&payload)?,
+                String::new(),
+                CommandPayload::json(payload),
+            ));
+        }
     };
     Ok(CommandOutcome::new(
         0,

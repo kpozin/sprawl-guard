@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::GlobPattern;
@@ -16,7 +17,7 @@ pub(super) fn merge_global_file_excludes(config: &mut FilesConfig, partial: Part
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialFilesConfig {
     exclude: Option<Vec<GlobPattern>>,

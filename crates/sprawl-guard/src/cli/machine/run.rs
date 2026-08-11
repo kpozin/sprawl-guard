@@ -218,6 +218,9 @@ fn machine_command_policy(command: &Command) -> MachineCommandPolicy {
         })
         | Command::Config(crate::cli::ConfigCommand {
             command: ConfigSubcommand::Export,
+        })
+        | Command::Config(crate::cli::ConfigCommand {
+            command: ConfigSubcommand::Schema,
         }) => MachineCommandPolicy::Allowed,
         Command::Machine(_) => MachineCommandPolicy::Rejected("machine"),
     }

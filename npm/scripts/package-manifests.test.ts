@@ -60,6 +60,7 @@ describe("renderPublishWrapperPackageManifest", () => {
         "README.md",
         "LICENSE-MIT",
         "LICENSE-APACHE",
+        "schema/",
         "dist/",
         "!dist/lib/*.test.js",
       ]);

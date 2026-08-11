@@ -1,3 +1,4 @@
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::RatchetFilePath;
@@ -21,7 +22,7 @@ pub(super) fn merge_ratchet(config: &mut RatchetConfig, partial: PartialRatchetC
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialRatchetConfig {
     file: Option<RatchetFilePath>,

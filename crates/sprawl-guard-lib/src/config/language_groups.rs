@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{CustomLanguageGroupId, LanguageGroupId, LanguageId, LeafFileLimit};
@@ -24,9 +25,11 @@ pub enum LanguageGroupMembersError {
 }
 
 /// Non-empty, duplicate-free languages assigned to a custom group.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct LanguageGroupMembers(Vec<LanguageId>);
+pub struct LanguageGroupMembers(
+    #[schemars(length(min = 1), extend("uniqueItems" = true))] Vec<LanguageId>,
+);
 
 impl LanguageGroupMembers {
     /// Returns the configured languages in authored order.
@@ -167,20 +170,20 @@ pub enum LanguageGroupsError {
     },
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(transparent)]
 pub(super) struct PartialLanguageGroupsConfig(
     BTreeMap<LanguageGroupId, PartialLanguageGroupConfig>,
 );
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialLanguageGroupConfig {
     languages: Option<LanguageGroupMembers>,
     limits: Option<PartialLanguageGroupLimits>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialLanguageGroupLimits {
     max_leaf_files_per_directory: Option<PartialMaxLeafFilesPerDirectoryLimits>,

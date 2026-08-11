@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   PUBLISH_WORKSPACE_DIRECTORY,
   PUBLISH_LICENSE_FILE_NAMES,
+  PUBLISH_WRAPPER_CONFIG_SCHEMA_PATH,
   RUNTIME_PACKAGE_DEFINITIONS,
   publishWorkspaceTextFiles,
 } from "./package-manifests.ts";
@@ -35,6 +36,8 @@ const WORKSPACE_ROOT_DIRECTORY = path.resolve(
   fileURLToPath(new URL("..", import.meta.url)),
 );
 const SOURCE_WRAPPER_DIRECTORY = "sprawl-guard" as const;
+const SOURCE_CONFIG_SCHEMA_PATH =
+  "../site/public/schemas/v1/sprawl-guard.schema.json" as const;
 
 /** Renders the script-free staged publish workspace under `.stage/`. */
 export function renderPublishWorkspace(args: {
@@ -55,6 +58,7 @@ export function renderPublishWorkspace(args: {
   const sourceEntries = [
     `${SOURCE_WRAPPER_DIRECTORY}/README.md`,
     `${SOURCE_WRAPPER_DIRECTORY}/dist`,
+    SOURCE_CONFIG_SCHEMA_PATH,
     ...PUBLISH_LICENSE_FILE_NAMES.map((fileName) => `../${fileName}`),
   ];
 
@@ -100,6 +104,18 @@ export function renderPublishWorkspace(args: {
     return wrapperDistCopy;
   }
   writtenPaths.push(wrapperDistCopy.destinationRelativePath);
+
+  const configSchemaCopy = copySourceEntry({
+    workspaceRootDirectory: args.workspaceRootDirectory,
+    sourceRelativePath: SOURCE_CONFIG_SCHEMA_PATH,
+    destinationRelativePath: `${PUBLISH_WORKSPACE_DIRECTORY}/${SOURCE_WRAPPER_DIRECTORY}/${PUBLISH_WRAPPER_CONFIG_SCHEMA_PATH}`,
+    temporaryStageRootDirectory: temporaryStageRootDirectory.path,
+  });
+  if (configSchemaCopy.kind !== "ok") {
+    safeRemoveDirectory(temporaryStageRootDirectory.path);
+    return configSchemaCopy;
+  }
+  writtenPaths.push(configSchemaCopy.destinationRelativePath);
 
   for (const fileName of PUBLISH_LICENSE_FILE_NAMES) {
     for (const destinationDirectory of [

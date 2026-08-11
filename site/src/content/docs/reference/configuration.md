@@ -19,6 +19,20 @@ omit `schema_version` and may contain only `[[overrides]]`.
 Use `sprawl-guard config resolved` to inspect the effective policy. Use
 `sprawl-guard config export` to print a complete configuration suitable for committing.
 
+## Editor support
+
+Sprawl Guard publishes a JSON Schema for root configuration files. With a Taplo-based editor such as
+the Even Better TOML extension for VS Code, add this directive at the top of `sprawl-guard.toml`:
+
+```toml title="sprawl-guard.toml"
+#:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.schema.json
+schema_version = 1
+```
+
+Run `sprawl-guard config schema` to print the same schema for local or offline use. The schema
+applies to root configuration files; included override fragments use the narrower fragment format
+described below.
+
 ## Sections and defaults
 
 ### `[config]`

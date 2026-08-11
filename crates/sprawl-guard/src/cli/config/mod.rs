@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use serde_json::Value;
-use sprawl_guard_lib::config::{Config, LoadOptions, load_resolved_config};
+use sprawl_guard_lib::config::{
+    Config, LoadOptions, authored_config_json_schema, load_resolved_config,
+};
 
 use crate::error::{CliError, Result};
 
@@ -44,6 +46,19 @@ pub(super) fn render_config_stdout(execution: &ConfigCommandExecution) -> Result
 /// Returns the structured config payload for machine-mode consumers.
 pub(super) fn config_payload(execution: &ConfigCommandExecution) -> Result<Value> {
     serde_json::to_value(&execution.config).map_err(|source| CliError::RenderJson { source })
+}
+
+/// Generates the structured JSON Schema payload for authored config files.
+pub(super) fn config_schema_payload() -> Result<Value> {
+    serde_json::to_value(authored_config_json_schema())
+        .map_err(|source| CliError::RenderJson { source })
+}
+
+/// Renders the generated schema as compact JSON for direct distribution.
+pub(super) fn render_schema_stdout(payload: &Value) -> Result<String> {
+    serde_json::to_string(payload)
+        .map(|output| format!("{output}\n"))
+        .map_err(|source| CliError::RenderJson { source })
 }
 
 fn execute_config_command(
