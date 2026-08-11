@@ -1,7 +1,6 @@
 /node_modules/
 /npm/.stage/
 /npm/node_modules/
-/npm/.stage/
 /npm/.stage.tmp-*/
 /target/
 /release-artifact-archives/

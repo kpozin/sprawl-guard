@@ -31,6 +31,7 @@ npm exec -- sprawl-guard check
 
 ```text
 No sprawl-guard violations found.
+Checked 2 source files in 2 directories across 2 languages.
 ```
 
 If an existing repository exceeds the desired limits, keep the policy strict and

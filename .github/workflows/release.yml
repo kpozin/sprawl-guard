@@ -728,7 +728,6 @@ jobs:
         shell: bash
         run: |
           release_title="sprawl-guard v${RELEASE_VERSION}"
-          release_notes="Draft release for ${RELEASE_TAG}"
           release_state_flags=(
             --prerelease="${GITHUB_PRERELEASE}"
             --latest="${GITHUB_LATEST}"
@@ -740,9 +739,9 @@ jobs:
               echo "refusing to modify non-draft release ${RELEASE_TAG}" >&2
               exit 1
             fi
-            gh release edit "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}" --notes "${release_notes}"
+            gh release edit "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}"
           else
-            gh release create "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}" --notes "${release_notes}"
+            gh release create "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}" --generate-notes
           fi
 
         env:

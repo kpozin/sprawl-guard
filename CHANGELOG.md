@@ -23,4 +23,7 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ### Added
 
-- Initial public-repository scaffold for Cargo packaging, npm packaging, and release automation.
+- Configurable file LOC and directory fan-out limits across supported source languages.
+- Baselines and ratchets for adopting strict limits without accepting further growth.
+- Native Cargo installation and a project-local npm wrapper with platform-specific runtimes.
+- Human-readable, JSON, and SARIF check output for local use and CI.
