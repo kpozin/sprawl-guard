@@ -178,15 +178,14 @@ mod non_utf8_authored_config_path {
         fn it_rejects_the_path_before_migration_output_can_be_lossy() {
             let (tempdir, relative_path, absolute_path) = non_utf8_config_fixture();
 
-            let error = prepare_config_upgrade(&LoadOptions {
+            let result = prepare_config_upgrade(&LoadOptions {
                 root: tempdir.path().to_path_buf(),
                 config: Some(relative_path),
-            })
-            .unwrap_err();
+            });
 
             assert!(matches!(
-                error,
-                SprawlError::NonUtf8ConfigPath { path } if path == absolute_path
+                result,
+                Err(SprawlError::NonUtf8ConfigPath { path }) if path == absolute_path
             ));
         }
     }
