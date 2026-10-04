@@ -4,9 +4,19 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## Unreleased
 
+## [0.3.0-dev.0] - 2026-10-03
+
+This development release changes command names and source-selection behavior. Run
+`sprawl-guard config upgrade` after upgrading, and replace `baseline` and `ratchet` commands with
+`update` and `tighten`.
+
 ### Added
 
 - Versioned JSON Schemas and editor directives for both configuration and ratchet TOML files.
+- Configuration upgrades that preserve authored comments and formatting, with a read-only CI check.
+- Ratchet change previews with before-and-after ceilings; complete TOML remains available.
+- Requested scan scope and configuration provenance in inspection output.
+- Markdown documentation pages for coding agents and an optional staged-snapshot preparation hook.
 
 ### Changed
 
@@ -14,10 +24,15 @@ All notable changes to `sprawl-guard` will be documented in this file.
 - Common dependency lockfiles are excluded from source discovery by default.
 - `update` replaces `baseline` and adds newly discovered ratchet entries without raising existing
   ceilings by default. `tighten` replaces `ratchet` for lowering and removing entries.
+- `init` creates configuration without scanning the repository.
+- Source scans use only in-root ignore policy and consistent dot-name hidden-file filtering.
+- Ratchet operations reject incomplete scans, including malformed or symlinked ignore policy.
+- The WASI fallback runs the CLI directly and preserves its exit status.
 
 ### Removed
 
 - Configuration include fragments; all `[[overrides]]` entries now live in the root configuration.
+- The no-op `--color` option and the silent traversal-depth limit.
 
 ## [0.2.0] - 2026-08-11
 

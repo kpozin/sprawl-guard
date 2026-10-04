@@ -20,6 +20,7 @@ tempfile = "=3.27.0"
 thiserror = "=2.0.18"
 tokei = { version = "=14.0.0", default-features = false }
 toml = "=0.9.12"
+toml_edit = "=0.25.12"
 
 [patch.crates-io]
 tokei = { path = "third_party/rust/tokei-14.0.0-sprawl-guard" }
