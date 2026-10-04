@@ -1,7 +1,8 @@
 # sprawl-guard
 
-`sprawl-guard` keeps source trees navigable with configurable LOC and directory fan-out limits. It
-can record existing violations so they can shrink but not grow.
+`sprawl-guard` enforces configurable limits on logical lines of code (LOC) and directory fan-out to
+keep source trees navigable. It records existing violations as ceilings so they can shrink but not
+grow.
 
 Every language bundled with [Tokei](https://github.com/XAMPPRocky/tokei) is enabled by default. File
 limits count configurable logical line types, and directory limits count direct source files by
@@ -21,13 +22,14 @@ sprawl-guard --version
 From the repository root:
 
 ```sh
-sprawl-guard languages --detected
 sprawl-guard init --dry-run
 sprawl-guard init
+sprawl-guard languages --detected
 sprawl-guard check
 ```
 
-`init` creates a versioned `sprawl-guard.toml` policy file. A passing check prints:
+`init` creates a versioned `sprawl-guard.toml` policy file without scanning repository sources.
+`languages --detected` and `check` perform the explicit follow-up analysis. A passing check prints:
 
 ```text
 No sprawl-guard violations found.

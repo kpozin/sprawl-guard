@@ -1,5 +1,6 @@
 use std::fmt;
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::code_line_counter::LocMeasurement;
@@ -8,12 +9,11 @@ use crate::{
     SourceResolvedLimits,
 };
 
-/// Production/test kind for an included source file.
-///
-/// `SourceKind` is not the source/non-source decision. It is assigned only
-/// after a path has already been accepted as a source file for an enabled
-/// language.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+/// Production or test role assigned to an included source file.
+// Classification assigns this role only after resolving source inclusion and language ownership.
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum SourceKind {
     /// Production source file.
@@ -130,15 +130,13 @@ pub enum TraversalIncidentKind {
     BrokenSymlink,
     /// An ignore file could not be fully parsed.
     IgnoreParseFailed,
-    /// Discovery exceeded the configured entry limit.
-    EntryLimitExceeded,
 }
 
 /// Severity assigned to a traversal incident after config and CLI overrides.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TraversalIncidentSeverity {
-    /// Incident will fail the run after discovery finishes.
+    /// Incident fails the run after discovery finishes.
     Error,
     /// Incident makes analysis partial but does not fail the run by itself.
     Warning,

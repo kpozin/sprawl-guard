@@ -5,18 +5,21 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
 use crate::classification::SourceKind;
+use crate::file_io::write_text_atomically;
+use crate::value::schema::{TomlSchemaDirective, TomlSchemaUrl, authored_toml_schema_generator};
 use crate::{CountedLoc, LanguageGroupId, LeafFiles, LocLimit, RelativePath, Result, SprawlError};
 
-/// Parsed `sprawl-guard.ratchet.toml` contents.
+/// Measured ceilings for current violations.
 ///
-/// A ratchet file stores only measured ceilings for current violations. It
-/// deliberately omits language, owner, reason, and configured limits because
-/// those are either derived during `check` or belong in policy config.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+/// The file omits language, ownership, reasons, and configured limits. Checks derive those values
+/// from source classification and policy.
+#[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+#[schemars(title = "Sprawl Guard ratchet")]
 pub struct RatchetFile {
     /// Ratchet file schema version.
     pub schema_version: RatchetSchemaVersion,
@@ -61,14 +64,23 @@ impl RatchetFile {
 
     /// Writes this ratchet file in stable TOML form.
     pub fn write(&self, path: &Path) -> Result<()> {
-        self.validate()?;
-        let mut stable = self.clone();
-        stable.sort();
-        let output = toml::to_string_pretty(&stable).expect("ratchet file must serialize");
-        fs::write(path, output).map_err(|source| SprawlError::WriteRatchet {
+        let output = self.to_toml()?;
+        write_text_atomically(path, &output).map_err(|source| SprawlError::WriteRatchet {
             path: path.to_path_buf(),
             source,
         })
+    }
+
+    /// Renders this ratchet file in stable TOML form with its editor schema directive.
+    pub fn to_toml(&self) -> Result<String> {
+        self.validate()?;
+        let mut stable = self.clone();
+        stable.sort();
+        let toml = toml::to_string_pretty(&stable).expect("ratchet file must serialize");
+        Ok(format!(
+            "{}\n{toml}",
+            RatchetSchemaVersion::CURRENT.schema_directive()
+        ))
     }
 
     /// Sorts all entries by their complete ratchet identities.
@@ -100,6 +112,46 @@ pub enum RatchetSchemaVersion {
 impl RatchetSchemaVersion {
     /// Schema version emitted by this build.
     pub const CURRENT: Self = Self::V1;
+
+    /// Returns the published JSON Schema for this version.
+    pub fn schema_url(self) -> TomlSchemaUrl {
+        match self {
+            Self::V1 => TomlSchemaUrl::RatchetV1,
+        }
+    }
+
+    /// Returns the Taplo directive for this version's published schema.
+    pub fn schema_directive(self) -> TomlSchemaDirective {
+        TomlSchemaDirective::new(self.schema_url())
+    }
+}
+
+impl JsonSchema for RatchetSchemaVersion {
+    fn inline_schema() -> bool {
+        true
+    }
+
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "RatchetSchemaVersion".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "const": 1,
+            "title": "Ratchet schema version",
+            "type": "integer"
+        })
+    }
+}
+
+/// Generates the JSON Schema for authored ratchet files.
+pub fn authored_ratchet_json_schema() -> Schema {
+    let mut schema = authored_toml_schema_generator().into_root_schema_for::<RatchetFile>();
+    schema.insert(
+        "id".to_owned(),
+        RatchetSchemaVersion::CURRENT.schema_url().as_str().into(),
+    );
+    schema
 }
 
 impl From<RatchetSchemaVersion> for i64 {
@@ -194,15 +246,23 @@ impl FileRatchetKey {
 }
 
 /// One file LOC ratchet ceiling.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileRatchet {
     /// Repository-relative source file path.
+    #[schemars(schema_with = "nonempty_relative_path_schema")]
     pub path: RelativePath,
     /// Production or test role measured at the file.
     pub role: SourceKind,
-    /// Grandfathered configured LOC ceiling.
+    /// Allowed configured LOC ceiling for an existing violation.
     pub max_loc: LocLimit,
+}
+
+fn nonempty_relative_path_schema(generator: &mut SchemaGenerator) -> Schema {
+    let relative_path = RelativePath::json_schema(generator);
+    json_schema!({
+        "allOf": [relative_path, { "minLength": 1 }]
+    })
 }
 
 impl FileRatchet {
@@ -243,7 +303,7 @@ impl DirectoryRatchetKey {
 }
 
 /// One directory fan-out ratchet ceiling.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryRatchet {
     /// Repository-relative directory path. The repository root is `""`.
@@ -252,7 +312,7 @@ pub struct DirectoryRatchet {
     pub role: SourceKind,
     /// Language group measured at this directory.
     pub group: LanguageGroupId,
-    /// Grandfathered direct leaf-file ceiling.
+    /// Allowed direct leaf-file ceiling for an existing violation.
     pub leaf_files: LeafFiles,
 }
 
@@ -747,6 +807,22 @@ mod tests {
 
                 assert!(error.to_string().contains("unknown field"));
             }
+
+            #[test]
+            fn it_rejects_configuration_tables() {
+                let error = RatchetFile::parse(
+                    Path::new("sprawl-guard.ratchet.toml"),
+                    indoc! {r#"
+                        schema_version = 1
+
+                        [limits.max_lines_per_file]
+                        production = 400
+                    "#},
+                )
+                .unwrap_err();
+
+                assert!(error.to_string().contains("unknown field `limits`"));
+            }
         }
 
         mod when_an_entry_contains_unknown_fields {
@@ -833,6 +909,11 @@ mod tests {
 
                 file.write(&path).unwrap();
 
+                let contents = fs::read_to_string(&path).unwrap();
+                assert!(contents.starts_with(concat!(
+                    "#:schema https://kpozin.github.io/sprawl-guard/schemas/v1/",
+                    "sprawl-guard.ratchet.schema.json\n",
+                )));
                 let written = RatchetFile::read(&path).unwrap();
                 assert_eq!(written.files[0].path.as_str(), "a.rs");
                 assert_eq!(written.directories[0].path.as_str(), "a");
@@ -847,6 +928,7 @@ mod tests {
                 let file = ratchet_with_duplicate_file_key();
                 let tempdir = tempdir().unwrap();
                 let path = tempdir.path().join("ratchet.toml");
+                fs::write(&path, "existing ratchet\n").unwrap();
 
                 let error = file.write(&path).unwrap_err();
 
@@ -854,7 +936,7 @@ mod tests {
                     error,
                     SprawlError::DuplicateFileRatchetEntry { .. }
                 ));
-                assert!(!path.exists());
+                assert_eq!(fs::read_to_string(path).unwrap(), "existing ratchet\n");
             }
         }
     }

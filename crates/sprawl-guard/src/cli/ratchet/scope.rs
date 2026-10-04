@@ -4,12 +4,6 @@ use sprawl_guard_lib::{RatchetFile, RelativePath};
 
 use crate::error::Result;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum BaselineScopeRequest {
-    All,
-    Paths,
-}
-
 pub(super) enum RatchetScope {
     All,
     Paths(Vec<RelativePath>),
@@ -24,30 +18,14 @@ impl RatchetScope {
     }
 }
 
-pub(super) fn replacement_scope(
-    root: &Path,
-    paths: &[PathBuf],
-    request: BaselineScopeRequest,
-) -> Result<RatchetScope> {
-    if request == BaselineScopeRequest::All || paths.is_empty() {
-        return Ok(RatchetScope::All);
-    }
-    let paths = paths
-        .iter()
-        .map(|path| normalize_scope_path(root, path))
-        .collect::<Result<Vec<_>>>()?;
-    Ok(RatchetScope::Paths(paths))
-}
-
-/// Splits a `ratchet PATHS...` request into edit scope and measurement scope.
+/// Splits a `tighten PATHS...` request into edit scope and measurement scope.
 ///
-/// The returned `RatchetScope` controls which existing ratchet entries may be
-/// changed or removed. The returned paths are only the scopes that still exist
-/// on disk and should be measured by `check_without_ratchet`. Missing relative
-/// paths are accepted only when they cover existing ratchet entries, which lets
-/// `ratchet deleted/path --write` remove stale entries without letting typos
-/// silently pass.
-pub(super) fn ratchet_update_scope(
+/// The returned `RatchetScope` controls which existing ratchet entries may change or be removed.
+/// The returned paths contain only scopes that still exist on disk and are measured by
+/// `check_without_ratchet`. Missing relative paths are accepted only when they cover existing
+/// ratchet entries. This permits `tighten deleted/path --write` to remove stale entries without
+/// silently accepting typos.
+pub(super) fn tighten_scope(
     root: &Path,
     paths: &[PathBuf],
     previous: &RatchetFile,

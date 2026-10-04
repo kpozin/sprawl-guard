@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use ignore::DirEntry;
 use ignore::WalkBuilder;
@@ -11,44 +11,68 @@ use crate::{DiagnosticDetail, RelativePath, Result, SprawlError};
 
 use super::types::{TraversalIncident, TraversalIncidentKind, TraversalIncidentSeverity};
 
-/// Creates an ignore-aware repository walk from the resolved ignore config.
-pub(super) fn walk_sources(root: &Path, config: &Config) -> ignore::Walk {
-    walk_sources_scoped(root, config, &[])
-}
-
 /// Creates an ignore-aware walk pruned to repository-relative scopes.
 pub(super) fn walk_sources_scoped(
     root: &Path,
     config: &Config,
     scopes: &[RelativePath],
-) -> ignore::Walk {
+) -> impl Iterator<Item = std::result::Result<DirEntry, ignore::Error>> {
     let scopes = scopes
         .iter()
-        .map(|scope| scope.as_str().to_owned())
+        .map(|scope| root.join(scope.to_path_buf()))
         .collect::<Vec<_>>();
     let mut builder = walk_builder(root, config);
-    if !scopes.is_empty() {
-        let root = root.to_path_buf();
-        builder.filter_entry(move |entry| {
-            let Ok(path) = normalize_under_root(&root, entry.path()) else {
-                return false;
-            };
-            is_scope_relevant(path.as_str(), &scopes)
-        });
+    let filter_root = root.to_path_buf();
+    let skip_hidden = config.ignore.skip_hidden;
+    builder.filter_entry(move |entry| {
+        let hidden = entry.path() != filter_root
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.starts_with('.'));
+        (!skip_hidden || !hidden)
+            && (scopes.is_empty() || is_native_scope_relevant(entry.path(), &filter_root, &scopes))
+    });
+    // ignore 0.4 still parses parent ignore files with parents(false). Their
+    // errors are outside this scan's policy and observation budget.
+    let root = root.to_path_buf();
+    builder.build().filter(move |result| match result {
+        Ok(_) => true,
+        Err(error) => !is_parent_ignore_error(&root, error),
+    })
+}
+
+fn is_parent_ignore_error(root: &Path, error: &ignore::Error) -> bool {
+    match error {
+        ignore::Error::Partial(errors) => errors
+            .iter()
+            .all(|error| is_parent_ignore_error(root, error)),
+        ignore::Error::WithPath { path, .. } => {
+            !path.starts_with(root) && path.parent().is_some_and(|parent| root.starts_with(parent))
+        }
+        ignore::Error::WithLineNumber { err, .. } | ignore::Error::WithDepth { err, .. } => {
+            is_parent_ignore_error(root, err)
+        }
+        ignore::Error::Loop { .. }
+        | ignore::Error::Io(_)
+        | ignore::Error::Glob { .. }
+        | ignore::Error::UnrecognizedFileType(_)
+        | ignore::Error::InvalidDefinition => false,
     }
-    builder.build()
 }
 
 fn walk_builder(root: &Path, config: &Config) -> WalkBuilder {
     let mut builder = WalkBuilder::new(root);
     builder
-        .hidden(config.ignore.skip_hidden)
+        // Git stores names, not Windows hidden attributes.
+        .hidden(false)
         .ignore(config.ignore.respect_ignore)
         .git_ignore(config.ignore.respect_gitignore)
-        .git_global(config.ignore.respect_gitignore)
-        .git_exclude(config.ignore.respect_gitignore)
-        .follow_links(config.traversal.follow_symlinks.follows_directories())
-        .max_depth(Some(config.traversal.max_depth.get()));
+        // Only in-root ignore files participate in repository policy.
+        .parents(false)
+        .git_global(false)
+        .git_exclude(false)
+        .follow_links(config.traversal.follow_symlinks.follows_directories());
     #[cfg(not(target_os = "wasi"))]
     builder.same_file_system(config.traversal.same_file_system);
     // `walkdir` rejects filesystem-boundary checks on WASI. Preopens limit the
@@ -70,7 +94,7 @@ fn walk_builder(root: &Path, config: &Config) -> WalkBuilder {
 pub(super) fn is_walked_file(root: &Path, path: &Path, config: &Config) -> Result<bool> {
     let expected = normalize_under_root(root, path)?;
     let mut visited_entries = 0_u32;
-    for result in walk_sources(root, config) {
+    for result in walk_sources_scoped(root, config, std::slice::from_ref(&expected)) {
         let entry = checked_walk_entry(root, config, &mut visited_entries, result)?;
         let Some(file_type) = entry.file_type() else {
             continue;
@@ -96,6 +120,140 @@ pub(super) fn checked_walk_entry(
         path: root.to_path_buf(),
         source,
     })?;
+    reject_symlinked_ignore_files(&entry, config)?;
+    count_walk_entry(root, config, visited_entries)?;
+    if let Some(source) = entry.error() {
+        return Err(SprawlError::Traverse {
+            path: entry.path().to_path_buf(),
+            source: source.clone(),
+        });
+    }
+    Ok(entry)
+}
+
+/// Converts one walker result for discovery while collecting recoverable incidents.
+///
+/// The ignore walker can continue after many descendant errors. Discovery uses
+/// this path so `check` can report every recoverable traversal incident instead
+/// of failing on the first one. The hard entry bound is always an operational
+/// error and is not affected by traversal incident policy.
+pub(super) fn collect_walk_entry(
+    root: &Path,
+    config: &Config,
+    severity: TraversalIncidentSeverity,
+    visited_entries: &mut u32,
+    incidents: &mut Vec<TraversalIncident>,
+    result: std::result::Result<DirEntry, ignore::Error>,
+) -> Result<Option<DirEntry>> {
+    count_walk_entry(root, config, visited_entries)?;
+    let entry = match result {
+        Ok(entry) => entry,
+        Err(source) => {
+            incidents.extend(traversal_incidents_from_ignore_error(
+                root, severity, source,
+            ));
+            return Ok(None);
+        }
+    };
+    reject_symlinked_ignore_files(&entry, config)?;
+    if let Some(source) = entry.error() {
+        incidents.extend(traversal_incidents_from_ignore_error(
+            root,
+            severity,
+            source.clone(),
+        ));
+    }
+    Ok(Some(entry))
+}
+
+/// Refuses policy whose contents are not owned by the scanned directory.
+fn reject_symlinked_ignore_files(entry: &DirEntry, config: &Config) -> Result<()> {
+    if !entry.file_type().is_some_and(|kind| kind.is_dir()) {
+        return Ok(());
+    }
+    for (name, enabled) in [
+        (".ignore", config.ignore.respect_ignore),
+        (".gitignore", config.ignore.respect_gitignore),
+        (".rgignore", config.ignore.respect_rgignore),
+        (".fdignore", config.ignore.respect_fdignore),
+    ] {
+        let path = entry.path().join(name);
+        if enabled && fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_symlink()) {
+            return Err(SprawlError::Traverse {
+                path,
+                source: ignore::Error::Io(std::io::Error::other(
+                    "ignore policy must not be a symlink",
+                )),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use super::*;
+    use crate::test_support::{load_config, write_rust_entry_limit_config};
+
+    mod when_the_scan_root_has_disappeared {
+        use super::*;
+
+        #[test]
+        fn it_preserves_the_root_filesystem_error() {
+            let directory = tempfile::tempdir().unwrap();
+            let config = load_config(directory.path());
+            let root = directory.path().join("missing");
+
+            let results = walk_sources_scoped(&root, &config, &[]).collect::<Vec<_>>();
+
+            assert_eq!(results.len(), 1);
+            assert!(results[0].is_err());
+        }
+    }
+
+    mod when_walk_errors_exhaust_the_entry_budget {
+        use super::*;
+
+        #[test]
+        fn it_counts_each_error_before_collecting_the_next_incident() {
+            let root = tempfile::tempdir().unwrap();
+            write_rust_entry_limit_config(root.path(), 1);
+            let config = load_config(root.path());
+            let mut visited_entries = 0;
+            let mut incidents = Vec::new();
+
+            let first = collect_walk_entry(
+                root.path(),
+                &config,
+                TraversalIncidentSeverity::Warning,
+                &mut visited_entries,
+                &mut incidents,
+                Err(ignore::Error::Io(io::Error::other("first failure"))),
+            )
+            .unwrap();
+            let second = collect_walk_entry(
+                root.path(),
+                &config,
+                TraversalIncidentSeverity::Warning,
+                &mut visited_entries,
+                &mut incidents,
+                Err(ignore::Error::Io(io::Error::other("second failure"))),
+            )
+            .unwrap_err();
+
+            assert!(first.is_none());
+            assert_eq!(incidents.len(), 1);
+            assert!(matches!(
+                second,
+                SprawlError::TraversalEntryLimitExceeded { limit: 1, .. }
+            ));
+        }
+    }
+}
+
+fn count_walk_entry(root: &Path, config: &Config, visited_entries: &mut u32) -> Result<()> {
     *visited_entries =
         visited_entries
             .checked_add(1)
@@ -109,38 +267,7 @@ pub(super) fn checked_walk_entry(
             limit: config.traversal.max_entries.get(),
         });
     }
-    Ok(entry)
-}
-
-/// Converts one walker result for discovery while collecting recoverable incidents.
-///
-/// The ignore walker can continue after many descendant errors. Discovery uses
-/// this path so `check` can report every recoverable traversal incident instead
-/// of failing on the first one.
-pub(super) fn collect_walk_entry(
-    root: &Path,
-    config: &Config,
-    severity: TraversalIncidentSeverity,
-    visited_entries: &mut u32,
-    incidents: &mut Vec<TraversalIncident>,
-    result: std::result::Result<DirEntry, ignore::Error>,
-) -> Result<Option<DirEntry>> {
-    let entry = match result {
-        Ok(entry) => entry,
-        Err(source) => {
-            incidents.extend(traversal_incidents_from_ignore_error(
-                root, severity, source,
-            ));
-            return Ok(None);
-        }
-    };
-    *visited_entries = visited_entries
-        .checked_add(1)
-        .ok_or_else(|| traversal_limit_error(root, config, severity))?;
-    if *visited_entries > config.traversal.max_entries.get() {
-        return Err(traversal_limit_error(root, config, severity));
-    }
-    Ok(Some(entry))
+    Ok(())
 }
 
 /// Converts a file-type read failure before classification into a traversal incident.
@@ -155,25 +282,6 @@ pub(super) fn file_type_incident(
         severity,
         path: normalize_under_root(root, path).ok(),
         detail,
-    }
-}
-
-fn traversal_limit_error(
-    root: &Path,
-    config: &Config,
-    severity: TraversalIncidentSeverity,
-) -> SprawlError {
-    SprawlError::TraversalFailed {
-        root: root.to_path_buf(),
-        incidents: vec![TraversalIncident {
-            kind: TraversalIncidentKind::EntryLimitExceeded,
-            severity,
-            path: None,
-            detail: DiagnosticDetail::new(format!(
-                "saw more than {} filesystem entries",
-                config.traversal.max_entries.get()
-            )),
-        }],
     }
 }
 
@@ -293,17 +401,9 @@ fn target_is_regular_file(path: &Path) -> Result<bool> {
     }
 }
 
-fn is_scope_relevant(path: &str, scopes: &[String]) -> bool {
-    path.is_empty()
+fn is_native_scope_relevant(path: &Path, root: &Path, scopes: &[PathBuf]) -> bool {
+    path == root
         || scopes
             .iter()
-            .any(|scope| path_is_at_or_under(path, scope) || path_is_at_or_under(scope, path))
-}
-
-fn path_is_at_or_under(path: &str, prefix: &str) -> bool {
-    prefix.is_empty()
-        || path == prefix
-        || path
-            .strip_prefix(prefix)
-            .is_some_and(|suffix| suffix.starts_with('/'))
+            .any(|scope| path.starts_with(scope) || scope.starts_with(path))
 }

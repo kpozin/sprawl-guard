@@ -6,10 +6,7 @@ import {
   type RuntimePackageName,
   type RuntimePackageSlug,
 } from "../sprawl-guard/src/lib/runtime-packages.ts";
-import {
-  PAYLOAD_CHECK_KIND,
-  type PayloadCheckKind,
-} from "./payload-check.ts";
+import { payloadFileRelativePath } from "./path-values.ts";
 import {
   loadPublicPackageVersion,
   trustedPublicPackageVersion,
@@ -17,58 +14,12 @@ import {
 } from "./package-version.ts";
 
 type PublicScopedPackageName = `@kpozin/${string}`;
-type RustTargetTriple =
-  | "aarch64-apple-darwin"
-  | "x86_64-apple-darwin"
-  | "aarch64-unknown-linux-gnu"
-  | "x86_64-unknown-linux-gnu"
-  | "x86_64-unknown-linux-musl"
-  | "wasm32-wasip1"
-  | "x86_64-pc-windows-msvc";
 type RepositoryUrl = `https://github.com/${string}.git`;
 type HomepageUrl = `https://github.com/${string}`;
 type IssuesUrl = `https://github.com/${string}/issues`;
 type LicenseExpression = "(MIT OR Apache-2.0)";
 type LinuxLibc = "glibc" | "musl";
 type NativePayloadPath = "bin/sprawl-guard" | "bin/sprawl-guard.exe";
-type WasiPayloadPath = "sprawl-guard.wasm";
-type NativeArtifactRelativePath = "sprawl-guard" | "sprawl-guard.exe";
-type WasiArtifactRelativePath = "sprawl-guard.wasm";
-
-interface NativeRuntimePackageBuildMetadata {
-  readonly rustTarget: Exclude<RustTargetTriple, "wasm32-wasip1">;
-  readonly artifactRelativePath: NativeArtifactRelativePath;
-  readonly payloadPath: NativePayloadPath;
-  readonly payloadCheckKind: PayloadCheckKind;
-}
-
-interface WasiRuntimePackageBuildMetadata {
-  readonly rustTarget: "wasm32-wasip1";
-  readonly artifactRelativePath: WasiArtifactRelativePath;
-  readonly payloadPath: WasiPayloadPath;
-  readonly payloadCheckKind: typeof PAYLOAD_CHECK_KIND.FILE;
-}
-
-type RuntimePackageBuildMetadataBySlug = {
-  readonly [TSlug in RuntimePackageSlug]:
-    TSlug extends "wasm32-wasip1"
-      ? WasiRuntimePackageBuildMetadata
-      : NativeRuntimePackageBuildMetadata;
-};
-
-type RuntimePackageDefinitionBySlug = {
-  readonly [TSlug in RuntimePackageSlug]: Extract<
-    SharedRuntimePackageDefinition,
-    { readonly slug: TSlug }
-  > & RuntimePackageBuildMetadataBySlug[TSlug];
-};
-
-export type RuntimePackageDefinition =
-  RuntimePackageDefinitionBySlug[RuntimePackageSlug];
-type NativeRuntimePackageDefinition = Extract<
-  RuntimePackageDefinition,
-  { readonly kind: "native" }
->;
 
 type PackageManifestPath =
   | "sprawl-guard/package.json"
@@ -165,6 +116,9 @@ interface PublishWorkspaceRootManifest {
   };
 }
 
+export type RuntimePackageDefinition = SharedRuntimePackageDefinition;
+type NativeRuntimePackageDefinition = SharedNativeRuntimePackageDefinition;
+
 export type RuntimePackageManifest =
   | NativeRuntimePackageManifest
   | WasiRuntimePackageManifest;
@@ -247,59 +201,20 @@ const PUBLISH_WORKSPACE_ROOT_MANIFEST: PublishWorkspaceRootManifest = {
   },
 };
 
-const RUNTIME_PACKAGE_BUILD_METADATA_BY_SLUG = {
-  "darwin-arm64": {
-    rustTarget: "aarch64-apple-darwin",
-    artifactRelativePath: "sprawl-guard",
-    payloadPath: "bin/sprawl-guard",
-    payloadCheckKind: PAYLOAD_CHECK_KIND.POSIX_EXECUTABLE,
-  },
-  "darwin-x64": {
-    rustTarget: "x86_64-apple-darwin",
-    artifactRelativePath: "sprawl-guard",
-    payloadPath: "bin/sprawl-guard",
-    payloadCheckKind: PAYLOAD_CHECK_KIND.POSIX_EXECUTABLE,
-  },
-  "linux-arm64-gnu": {
-    rustTarget: "aarch64-unknown-linux-gnu",
-    artifactRelativePath: "sprawl-guard",
-    payloadPath: "bin/sprawl-guard",
-    payloadCheckKind: PAYLOAD_CHECK_KIND.POSIX_EXECUTABLE,
-  },
-  "linux-x64-gnu": {
-    rustTarget: "x86_64-unknown-linux-gnu",
-    artifactRelativePath: "sprawl-guard",
-    payloadPath: "bin/sprawl-guard",
-    payloadCheckKind: PAYLOAD_CHECK_KIND.POSIX_EXECUTABLE,
-  },
-  "linux-x64-musl": {
-    rustTarget: "x86_64-unknown-linux-musl",
-    artifactRelativePath: "sprawl-guard",
-    payloadPath: "bin/sprawl-guard",
-    payloadCheckKind: PAYLOAD_CHECK_KIND.POSIX_EXECUTABLE,
-  },
-  "wasm32-wasip1": {
-    rustTarget: "wasm32-wasip1",
-    artifactRelativePath: "sprawl-guard.wasm",
-    payloadPath: "sprawl-guard.wasm",
-    payloadCheckKind: PAYLOAD_CHECK_KIND.FILE,
-  },
-  "win32-x64-msvc": {
-    rustTarget: "x86_64-pc-windows-msvc",
-    artifactRelativePath: "sprawl-guard.exe",
-    payloadPath: "bin/sprawl-guard.exe",
-    payloadCheckKind: PAYLOAD_CHECK_KIND.FILE,
-  },
-} as const satisfies RuntimePackageBuildMetadataBySlug;
-
 /** Runtime package metadata shared by manifest rendering and payload staging. */
-export const RUNTIME_PACKAGE_DEFINITIONS = SHARED_RUNTIME_PACKAGE_DEFINITIONS.map(
-  attachRuntimePackageBuildMetadata,
-) satisfies readonly RuntimePackageDefinition[];
+export const RUNTIME_PACKAGE_DEFINITIONS = SHARED_RUNTIME_PACKAGE_DEFINITIONS;
 
-/** Package-relative location of the distributed configuration schema. */
-export const PUBLISH_WRAPPER_CONFIG_SCHEMA_PATH =
-  "schema/sprawl-guard.schema.json" as const;
+/** Schema documents distributed with the user-facing npm wrapper. */
+export const PUBLISH_WRAPPER_SCHEMAS = [
+  {
+    fileName: "sprawl-guard.schema.json",
+    packagePath: payloadFileRelativePath("schema/sprawl-guard.schema.json"),
+  },
+  {
+    fileName: "sprawl-guard.ratchet.schema.json",
+    packagePath: payloadFileRelativePath("schema/sprawl-guard.ratchet.schema.json"),
+  },
+] as const;
 const PUBLISH_WRAPPER_FILES = [
   "README.md",
   ...PUBLISH_LICENSE_FILE_NAMES,
@@ -485,48 +400,6 @@ function runtimePackageLibc(
     return undefined;
   }
   return definition.libcFamily === "gnu" ? "glibc" : definition.libcFamily;
-}
-
-function attachRuntimePackageBuildMetadata(
-  definition: SharedRuntimePackageDefinition,
-): RuntimePackageDefinition {
-  switch (definition.slug) {
-    case "darwin-arm64":
-      return {
-        ...definition,
-        ...RUNTIME_PACKAGE_BUILD_METADATA_BY_SLUG[definition.slug],
-      };
-    case "darwin-x64":
-      return {
-        ...definition,
-        ...RUNTIME_PACKAGE_BUILD_METADATA_BY_SLUG[definition.slug],
-      };
-    case "linux-arm64-gnu":
-      return {
-        ...definition,
-        ...RUNTIME_PACKAGE_BUILD_METADATA_BY_SLUG[definition.slug],
-      };
-    case "linux-x64-gnu":
-      return {
-        ...definition,
-        ...RUNTIME_PACKAGE_BUILD_METADATA_BY_SLUG[definition.slug],
-      };
-    case "linux-x64-musl":
-      return {
-        ...definition,
-        ...RUNTIME_PACKAGE_BUILD_METADATA_BY_SLUG[definition.slug],
-      };
-    case "wasm32-wasip1":
-      return {
-        ...definition,
-        ...RUNTIME_PACKAGE_BUILD_METADATA_BY_SLUG[definition.slug],
-      };
-    case "win32-x64-msvc":
-      return {
-        ...definition,
-        ...RUNTIME_PACKAGE_BUILD_METADATA_BY_SLUG[definition.slug],
-      };
-  }
 }
 
 function packageManifestJson(

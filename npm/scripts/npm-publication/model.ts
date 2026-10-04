@@ -174,7 +174,7 @@ export type NpmPublicationRoute =
       readonly publicationDistTag: SelectedNpmDistTag;
     };
 
-/** Decides whether an immutable npm version is new, identical, or conflicting. */
+/** Decides whether an immutable npm version is absent, identical, or conflicting. */
 export function reconcileNpmPackageIntegrity(args: {
   readonly localIntegrity: NpmPackageIntegrity;
   readonly remoteIntegrity: RemotePackageIntegrity;

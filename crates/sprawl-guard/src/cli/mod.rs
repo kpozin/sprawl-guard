@@ -7,6 +7,7 @@ mod languages;
 mod machine;
 mod ratchet;
 mod reference;
+mod schema;
 
 use std::path::PathBuf;
 
@@ -31,10 +32,6 @@ pub struct Cli {
     #[arg(long, global = true)]
     config: Option<PathBuf>,
 
-    /// Color output mode.
-    #[arg(long, global = true)]
-    color: Option<ColorModeArg>,
-
     /// Suppress non-essential output.
     #[arg(long, global = true)]
     quiet: bool,
@@ -53,27 +50,25 @@ enum Command {
     Languages(LanguagesArgs),
     /// Run enforcement.
     Check(CheckArgs),
-    /// Create or replace ratchet ceilings from current violations.
-    ///
-    /// Unlike `ratchet`, this command can create entries and can replace or raise existing
-    /// ceilings when explicitly allowed.
-    Baseline(BaselineArgs),
-    /// Lower existing ratchet ceilings after violations improve.
-    ///
-    /// This command never creates or raises ceilings. Use `baseline` for those operations.
-    Ratchet(RatchetArgs),
+    /// Add ratchet ceilings for newly discovered violations.
+    Update(UpdateArgs),
+    /// Lower or remove existing ratchet ceilings after violations improve.
+    Tighten(TightenArgs),
     /// Inspect configuration.
     Config(ConfigCommand),
+    /// Print a JSON Schema for a Sprawl Guard TOML document.
+    Schema(SchemaArgs),
     /// Explain how one path is classified.
     Explain(ExplainArgs),
-    /// Machine-oriented integration commands.
+    /// Hidden build-time generators.
+    #[command(hide = true)]
     Machine(machine::MachineArgs),
 }
 
 /// Arguments for `init`.
 #[derive(Debug, Args)]
 struct InitArgs {
-    /// Print planned config and advisory output without creating files.
+    /// Print the planned configuration without creating files.
     #[arg(long)]
     dry_run: bool,
 }
@@ -113,34 +108,57 @@ struct LanguagesArgs {
     detected: bool,
 }
 
-/// Arguments for `baseline`.
+/// Arguments for `update`.
 #[derive(Debug, Args)]
-struct BaselineArgs {
-    /// Paths whose ratchet entries should be previewed or replaced.
+struct UpdateArgs {
+    /// Paths scanned for current violations.
     paths: Vec<PathBuf>,
 
     /// Write the ratchet changes instead of only previewing them.
     #[arg(long)]
     write: bool,
 
-    /// Replace the whole ratchet file.
+    /// Permit existing ratchet ceilings to increase to current measurements.
     #[arg(long)]
-    all: bool,
+    allow_increases: bool,
 
-    /// Permit existing ratchet ceilings to increase.
-    #[arg(long)]
-    allow_raises: bool,
+    /// Show changed ceilings or the complete resulting TOML document.
+    #[arg(long, default_value = "human")]
+    format: RatchetFormat,
 }
 
-/// Arguments for `ratchet`.
+impl UpdateArgs {
+    fn ceiling_update_policy(&self) -> ratchet::CeilingUpdatePolicy {
+        if self.allow_increases {
+            ratchet::CeilingUpdatePolicy::AllowIncreases
+        } else {
+            ratchet::CeilingUpdatePolicy::Preserve
+        }
+    }
+}
+
+/// Arguments for `tighten`.
 #[derive(Debug, Args)]
-struct RatchetArgs {
-    /// Paths whose ratchet entries should be evaluated.
+struct TightenArgs {
+    /// Paths whose ratchet entries are evaluated.
     paths: Vec<PathBuf>,
 
     /// Write the ratchet changes instead of only previewing them.
     #[arg(long)]
     write: bool,
+
+    /// Show changed ceilings or the complete resulting TOML document.
+    #[arg(long, default_value = "human")]
+    format: RatchetFormat,
+}
+
+/// Output choices for ratchet previews and writes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum RatchetFormat {
+    /// Describe only added, raised, lowered, or removed ceilings.
+    Human,
+    /// Print the complete resulting ratchet as parseable TOML.
+    Toml,
 }
 
 /// Human and JSON output formats shared by diagnostic commands.
@@ -150,17 +168,6 @@ enum HumanJsonFormat {
     Human,
     /// JSON output.
     Json,
-}
-
-/// CLI color mode.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum ColorModeArg {
-    /// Detect whether color should be emitted.
-    Auto,
-    /// Always emit color.
-    Always,
-    /// Never emit color.
-    Never,
 }
 
 /// Supported check output formats.
@@ -204,19 +211,36 @@ struct ConfigCommand {
 #[derive(Debug, Subcommand)]
 enum ConfigSubcommand {
     /// Print the fully resolved config used by checks.
-    Resolved(ConfigResolvedArgs),
+    Resolved,
     /// Print a full explicit config suitable for committing.
     Export,
-    /// Print the JSON Schema for authored config files.
-    Schema,
+    /// Upgrade an authored config to the current schema.
+    Upgrade(ConfigUpgradeArgs),
 }
 
-/// Arguments for `config resolved`.
+/// Arguments for `config upgrade`.
 #[derive(Debug, Args)]
-struct ConfigResolvedArgs {
-    /// Include only languages detected under the repository root.
+struct ConfigUpgradeArgs {
+    /// Report whether an upgrade is needed without changing the file.
     #[arg(long)]
-    detected: bool,
+    check: bool,
+}
+
+/// Arguments for `schema`.
+#[derive(Debug, Args)]
+struct SchemaArgs {
+    /// TOML document kind whose JSON Schema to print.
+    #[arg(value_enum, value_name = "DOCUMENT")]
+    format: SchemaDocumentKind,
+}
+
+/// Sprawl Guard TOML document kinds with published schemas.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SchemaDocumentKind {
+    /// Root configuration files.
+    Config,
+    /// Ratchet files.
+    Ratchet,
 }
 
 /// Arguments for `explain`.
@@ -235,14 +259,11 @@ pub fn run(cli: Cli) -> Result<i32> {
     let Cli {
         root,
         config,
-        color,
         quiet,
         command,
     } = cli;
     match command {
-        Command::Machine(args) => machine::run_machine(machine::MachineCliArgs::new(
-            root, config, color, quiet, args,
-        )),
+        Command::Machine(args) => machine::run_machine(args),
         command => {
             let default_root =
                 std::env::current_dir().map_err(|source| CliError::CurrentDirectory { source })?;
@@ -250,7 +271,6 @@ pub fn run(cli: Cli) -> Result<i32> {
                 Cli {
                     root,
                     config,
-                    color,
                     quiet,
                     command,
                 },

@@ -32,6 +32,12 @@ pub enum SprawlError {
         /// Invalid path.
         path: PathBuf,
     },
+    /// A repository path cannot be represented by the UTF-8 logical path model.
+    #[error("repository path is not valid UTF-8: {path:?}")]
+    NonUtf8Path {
+        /// Invalid native path.
+        path: PathBuf,
+    },
     /// A path was expected under a root.
     #[error("path {path} is not under root {root}")]
     PathOutsideRoot {
@@ -52,34 +58,16 @@ pub enum SprawlError {
         /// Missing config path.
         path: PathBuf,
     },
-    /// Both supported root config names exist.
-    #[error("ambiguous config files: {primary} and {alias} both exist")]
-    AmbiguousConfig {
-        /// Primary config path.
-        primary: PathBuf,
-        /// Alias config path.
-        alias: PathBuf,
+    /// A selected config path could not be represented in structured output.
+    #[error("config path is not valid UTF-8: {path:?}")]
+    NonUtf8ConfigPath {
+        /// Selected config path.
+        path: PathBuf,
     },
     /// A config file could not be read.
     #[error("failed to read {path}: {source}")]
     ReadConfig {
         /// Path that could not be read.
-        path: PathBuf,
-        /// Underlying I/O error.
-        source: std::io::Error,
-    },
-    /// A directory could not be read.
-    #[error("failed to read directory {path}: {source}")]
-    ReadDirectory {
-        /// Directory that could not be read.
-        path: PathBuf,
-        /// Underlying I/O error.
-        source: std::io::Error,
-    },
-    /// A directory entry could not be read.
-    #[error("failed to read entry under {path}: {source}")]
-    ReadDirectoryEntry {
-        /// Directory being enumerated.
         path: PathBuf,
         /// Underlying I/O error.
         source: std::io::Error,
@@ -124,11 +112,22 @@ pub enum SprawlError {
         /// TOML parser error.
         source: toml::de::Error,
     },
+    /// A validated root config could not be represented as an editable TOML document.
+    #[error("failed to parse editable TOML document {path}: {source}")]
+    ParseEditableToml {
+        /// TOML file path.
+        path: PathBuf,
+        /// Formatting-preserving TOML parser error.
+        source: toml_edit::TomlError,
+    },
     /// A root config file omitted its required schema version.
-    #[error("config file is missing required schema_version = 1")]
+    #[error("config file is missing required schema_version")]
     MissingConfigSchemaVersion,
-    /// A root config file used an unsupported numeric schema version.
-    #[error("unsupported config schema version {version}; expected version 1")]
+    /// A root config file used a non-integer schema version.
+    #[error("config schema_version must be an integer")]
+    InvalidConfigSchemaVersionType,
+    /// A root config file used a schema version this operation cannot accept.
+    #[error("unsupported config schema version {version}; expected current version 2")]
     UnsupportedConfigSchemaVersion {
         /// Version read from the root config file.
         version: i64,
@@ -170,20 +169,6 @@ pub enum SprawlError {
         group: LanguageGroupId,
         /// Duplicate directory path.
         path: RelativePath,
-    },
-    /// An included config fragment was not a TOML table.
-    #[error("included config {path} must be a TOML table")]
-    IncludeFragmentNotTable {
-        /// Included config path.
-        path: PathBuf,
-    },
-    /// An included config fragment had an unsupported table.
-    #[error("included config {path} may contain only [[overrides]], found [{table}]")]
-    IncludeFragmentUnsupportedTable {
-        /// Included config path.
-        path: PathBuf,
-        /// Unsupported table name.
-        table: String,
     },
     /// A config referenced an unknown language.
     #[error("unknown language: {language}")]

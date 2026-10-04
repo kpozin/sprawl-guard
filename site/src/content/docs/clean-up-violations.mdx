@@ -7,6 +7,11 @@ import { Steps } from "@astrojs/starlight/components";
 
 After reducing a violation, update the ratchet to preserve the improvement.
 
+If the repository uses the
+[preparation recipe](/sprawl-guard/run-in-ci/#prepare-improvements-locally), run
+`just sprawl-guard-prepare` to tighten all existing ceilings and verify the complete repository. The
+steps below provide a scoped manual alternative.
+
 The commands below use `sprawl-guard` directly. For a project-local Node dependency, run them
 through `npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
 
@@ -19,15 +24,15 @@ through `npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
 2. Preview the ratchet update.
 
    ```sh
-   sprawl-guard ratchet path/to/improved/source
+   sprawl-guard tighten path/to/improved/source
    ```
 
-   If the measurement is still above its configured limit, its ceiling should decrease to the new measurement. If it now satisfies the limit or is no longer measured, its entry should disappear.
+   If the measurement remains above its configured limit, the ceiling decreases to the new measurement. If the measurement satisfies the limit or is no longer collected, the entry disappears.
 
 3. Write the update and recheck the repository.
 
    ```sh
-   sprawl-guard ratchet path/to/improved/source --write
+   sprawl-guard tighten path/to/improved/source --write
    sprawl-guard check
    ```
 

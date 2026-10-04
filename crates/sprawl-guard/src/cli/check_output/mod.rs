@@ -8,7 +8,7 @@ use sprawl_guard_lib::check::{
     DirectoryViolationKind, FileLocViolation, FileViolationKind, RatchetViolation,
     RatchetViolationKind,
 };
-use sprawl_guard_lib::{TraversalIncident, TraversalIncidentKind};
+use sprawl_guard_lib::{ConfigSource, TraversalIncident, TraversalIncidentKind};
 
 use super::CheckFormat;
 use crate::error::{CliError, Result};
@@ -20,12 +20,12 @@ fn missing_directory_ratchet(
 ) -> CheckViolation {
     use sprawl_guard_lib::{
         DirectoryRatchetStaleMissingViolation, RatchetCount, RatchetStaleMissingViolation,
-        RatchetStaleViolation, RatchetStaleViolationKind,
+        RatchetStaleViolation,
     };
 
     CheckViolation::Ratchet(RatchetViolation::Stale(RatchetStaleViolation::Missing(
         RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
-            kind: RatchetStaleViolationKind::DirectoryFanoutStale,
+            kind: DirectoryViolationKind::DirectoryFanout,
             path: sprawl_guard_lib::RelativePath::new("src").unwrap(),
             group,
             ratchet: RatchetCount::new(ratchet),
@@ -51,11 +51,13 @@ pub(super) fn render_check_report(
 
 pub(super) fn traversal_failure_json_value(
     root: &Path,
+    config_source: &ConfigSource,
     incidents: &[TraversalIncident],
 ) -> serde_json::Value {
     serde_json::json!({
         "status": "error",
         "root": root.display().to_string(),
+        "config_source": config_source,
         "coverage": {
             "kind": "partial",
             "traversal_incidents": incidents,
@@ -74,22 +76,42 @@ pub(super) fn traversal_failure_json_value(
 
 pub(super) fn render_traversal_failure_json(
     root: &Path,
+    config_source: &ConfigSource,
     incidents: &[TraversalIncident],
 ) -> Result<String> {
-    serde_json::to_string_pretty(&traversal_failure_json_value(root, incidents))
-        .map(|output| format!("{output}\n"))
-        .map_err(|source| CliError::RenderJson { source })
+    serde_json::to_string_pretty(&traversal_failure_json_value(
+        root,
+        config_source,
+        incidents,
+    ))
+    .map(|output| format!("{output}\n"))
+    .map_err(|source| CliError::RenderJson { source })
 }
 
 pub(super) fn render_traversal_failure_human(
     root: &Path,
     incidents: &[TraversalIncident],
 ) -> String {
-    let mut output = format!(
+    traversal_failure_human(root, incidents)
+}
+
+pub(super) fn render_check_traversal_failure_human(
+    root: &Path,
+    config_source: &ConfigSource,
+    incidents: &[TraversalIncident],
+) -> String {
+    let mut output = config_source_notice(config_source, root);
+    output.push_str(&traversal_failure_human(root, incidents));
+    output
+}
+
+fn traversal_failure_human(root: &Path, incidents: &[TraversalIncident]) -> String {
+    let mut output = String::new();
+    output.push_str(&format!(
         "Traversal failed under {} with {} incident(s):\n\n",
         root.display(),
         incidents.len()
-    );
+    ));
     for incident in incidents {
         output.push_str("  ");
         output.push_str(&traversal_incident_message(incident));
@@ -100,11 +122,16 @@ pub(super) fn render_traversal_failure_human(
 
 fn human_check_report(report: &CheckReport, quiet: bool) -> String {
     let mut output = String::new();
+    write_config_source_notice(&mut output, report);
     if !quiet {
         write_warnings(&mut output, report);
     }
     if !report.has_violations() {
-        output.push_str("No sprawl-guard violations found.\n");
+        if report.scope().is_all() {
+            output.push_str("No sprawl-guard violations found.\n");
+        } else {
+            output.push_str("No sprawl-guard violations found in the requested scope.\n");
+        }
         if !quiet {
             write_scan_summary(&mut output, report);
             write_traversal_incidents(&mut output, report);
@@ -141,6 +168,28 @@ fn human_check_report(report: &CheckReport, quiet: bool) -> String {
         write_traversal_incidents(&mut output, report);
     }
     output
+}
+
+fn write_config_source_notice(output: &mut String, report: &CheckReport) {
+    output.push_str(&config_source_notice(
+        report.config_source(),
+        Path::new(report.root()),
+    ));
+}
+
+fn config_source_notice(config_source: &ConfigSource, root: &Path) -> String {
+    match config_source {
+        ConfigSource::BuiltIn => format!(
+            "Policy: built-in defaults (no authored config found under {}).\n\n",
+            root.display()
+        ),
+        ConfigSource::Authored { path } => {
+            format!(
+                "Policy: authored config at {}.\n\n",
+                path.as_path().display()
+            )
+        }
+    }
 }
 
 fn write_scan_summary(output: &mut String, report: &CheckReport) {
@@ -189,7 +238,7 @@ fn write_traversal_incidents(output: &mut String, report: &CheckReport) {
     if report.traversal_incidents().is_empty() {
         return;
     }
-    if !output.is_empty() {
+    if !output.is_empty() && !output.ends_with("\n\n") {
         output.push('\n');
     }
     output.push_str("Traversal warnings:\n\n");
@@ -221,7 +270,6 @@ fn traversal_incident_kind_message(kind: TraversalIncidentKind) -> &'static str 
         TraversalIncidentKind::SymlinkLoop => "symlink loop found",
         TraversalIncidentKind::BrokenSymlink => "broken symlink",
         TraversalIncidentKind::IgnoreParseFailed => "failed to parse ignore rule",
-        TraversalIncidentKind::EntryLimitExceeded => "traversal entry limit exceeded",
     }
 }
 
@@ -285,7 +333,7 @@ fn write_non_empty_violation_group<T>(
         return;
     }
 
-    if !output.is_empty() {
+    if !output.is_empty() && !output.ends_with("\n\n") {
         output.push('\n');
     }
     output.push_str(header);
@@ -308,7 +356,7 @@ fn write_ratchet_violation_group(output: &mut String, report: &CheckReport) {
         return;
     }
 
-    if !output.is_empty() {
+    if !output.is_empty() && !output.ends_with("\n\n") {
         output.push('\n');
     }
     output.push_str("Ratchet failures:\n\n");
@@ -422,6 +470,7 @@ mod tests {
     fn report_with(violations: Vec<FileLocViolation>) -> CheckReport {
         CheckReport::complete(
             report_root(),
+            ConfigSource::BuiltIn,
             counter_info(),
             scan_summary(),
             vec![],
@@ -478,6 +527,7 @@ mod tests {
     fn report_with_rust_cfg_warning() -> CheckReport {
         CheckReport::complete(
             report_root(),
+            ConfigSource::BuiltIn,
             counter_info(),
             scan_summary(),
             vec![rust_cfg_warning()],
@@ -510,6 +560,7 @@ mod tests {
         fn it_groups_production_and_test_directory_violations() {
             let report = CheckReport::complete(
                 report_root(),
+                ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![],
@@ -541,6 +592,7 @@ mod tests {
         fn it_distinguishes_missing_directory_ratchets_for_groups_at_the_same_path() {
             let report = CheckReport::complete(
                 report_root(),
+                ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![],
@@ -555,6 +607,8 @@ mod tests {
             assert_eq!(
                 output,
                 indoc! {"
+                    Policy: built-in defaults (no authored config found under /repo).
+
                     Ratchet failures:
 
                       src
@@ -579,6 +633,7 @@ mod tests {
         fn it_identifies_the_group_and_unlimited_limit_for_a_measured_directory_ratchet() {
             let report = CheckReport::complete(
                 report_root(),
+                ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![],
@@ -606,6 +661,7 @@ mod tests {
         fn it_reports_included_line_types_for_a_measured_file_ratchet() {
             let report = CheckReport::complete(
                 report_root(),
+                ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![],
@@ -641,6 +697,7 @@ mod tests {
             assert_eq!(
                 output,
                 concat!(
+                    "Policy: built-in defaults (no authored config found under /repo).\n\n",
                     "No sprawl-guard violations found.\n",
                     "Checked 3 source files in 2 directories across 1 language.\n",
                 )
@@ -656,6 +713,8 @@ mod tests {
             assert_eq!(
                 output,
                 indoc! {"
+                    Policy: built-in defaults (no authored config found under /repo).
+
                     Warnings:
 
                       Rust cfg(test) preprocessing failed for src/lib.rs; counted without cfg(test) exclusion: expected identifier
@@ -672,13 +731,20 @@ mod tests {
 
             let output = human_check_report(&report, true);
 
-            assert_eq!(output, "No sprawl-guard violations found.\n");
+            assert_eq!(
+                output,
+                concat!(
+                    "Policy: built-in defaults (no authored config found under /repo).\n\n",
+                    "No sprawl-guard violations found.\n",
+                )
+            );
         }
 
         #[test]
         fn it_reports_traversal_incidents_after_the_success_status() {
             let report = CheckReport::partial(
                 report_root(),
+                ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![],
@@ -697,6 +763,8 @@ mod tests {
             assert_eq!(
                 output,
                 indoc! {"
+                    Policy: built-in defaults (no authored config found under /repo).
+
                     No sprawl-guard violations found.
                     Checked 3 source files in 2 directories across 1 language.
 
@@ -722,6 +790,8 @@ mod tests {
                 json!({
                     "status": "failed",
                     "root": "/repo",
+                    "scope": { "kind": "all" },
+                    "config_source": { "kind": "built_in" },
                     "coverage": {
                         "kind": "complete"
                     },

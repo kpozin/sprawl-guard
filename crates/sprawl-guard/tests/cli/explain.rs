@@ -91,7 +91,7 @@ mod when_explaining_rust_cfg_test_preprocessing {
         assert_eq!(
             stdout(&output),
             indoc! {"
-                src/lib.rs: production source (Rust; group: source); file LOC limit: 400; included line types: code; directory leaf-file limit: 8; configured LOC: 1 (code: 1, comments: 0, blank lines: 1); rust cfg(test): parsed; excluded top-level items: 1
+                src/lib.rs: production source (Rust; group: source); file LOC limit: 400; included line types: code; directory leaf-file limit: 10; configured LOC: 1 (code: 1, comments: 0, blank lines: 1); rust cfg(test): parsed; excluded top-level items: 1
             "}
         );
         assert_eq!(stderr(&output), "");

@@ -1,22 +1,32 @@
 use crate::config::{
-    CommonLanguageConfig, Config, ConfigInclude, ConfigSchemaVersion, FilesConfig, IgnoreConfig,
-    LanguageConfig, LanguageGroupsConfig, LanguageLimits, LanguageMode, Limits,
-    MaxLeafFilesPerDirectoryLimits, MaxLinesPerFileLimits, OutputConfig, OutputFormat,
-    RatchetConfig, RustCfgTestExclusion, RustLanguageConfig, SourceFileByteLimit, SymlinkTraversal,
-    TestsConfig, TraversalConfig, TraversalDepth, TraversalEntryLimit, TraversalErrorPolicy,
+    CommonLanguageConfig, Config, ConfigSchemaVersion, FilesConfig, IgnoreConfig, LanguageConfig,
+    LanguageGroupsConfig, LanguageLimits, LanguageMode, Limits, MaxLeafFilesPerDirectoryLimits,
+    MaxLinesPerFileLimits, OutputConfig, OutputFormat, RatchetConfig, RustCfgTestExclusion,
+    RustLanguageConfig, SourceFileByteLimit, SymlinkTraversal, TestsConfig, TraversalConfig,
+    TraversalEntryLimit, TraversalErrorPolicy,
 };
 use crate::{
-    ColorMode, GlobPattern, IncludedLineTypes, LanguageId, LeafFileLimit, LeafFiles, LocLimit,
-    RatchetFilePath,
+    GlobPattern, IncludedLineTypes, LanguageId, LeafFileLimit, LeafFiles, LocLimit, RatchetFilePath,
 };
 use tokei::LanguageType;
 
 const DEFAULT_MAX_NON_TEST_CODE_LINES_PER_FILE: u32 = 400;
-const DEFAULT_MAX_LEAF_SOURCE_FILES_PER_DIRECTORY: u32 = 8;
+const DEFAULT_MAX_LEAF_FILES_PER_DIRECTORY: u32 = 10;
 const DEFAULT_MAX_CODE_LINES_PER_TEST_FILE: u32 = 800;
-const DEFAULT_MAX_TRAVERSAL_DEPTH: u32 = 128;
 const DEFAULT_MAX_TRAVERSAL_ENTRIES: u32 = 1_000_000;
 const DEFAULT_MAX_SOURCE_FILE_BYTES: u64 = 10 * 1024 * 1024;
+// GitHub's code-review exclusions provide the baseline `*.lock` and `go.sum` policy:
+// https://docs.github.com/en/copilot/reference/review-excluded-files
+// Exact names cover common lockfiles whose names do not end in `.lock`.
+const DEFAULT_DEPENDENCY_LOCKFILE_EXCLUDES: [&str; 7] = [
+    "**/*.lock",
+    "**/bun.lockb",
+    "**/go.sum",
+    "**/npm-shrinkwrap.json",
+    "**/package-lock.json",
+    "**/Package.resolved",
+    "**/pnpm-lock.yaml",
+];
 
 /// Returns the built-in resolved configuration.
 pub fn built_in_config() -> Config {
@@ -24,7 +34,6 @@ pub fn built_in_config() -> Config {
     let language_groups = LanguageGroupsConfig::automatic(languages.keys().copied());
     Config {
         schema_version: ConfigSchemaVersion::CURRENT,
-        config: ConfigInclude { include: vec![] },
         limits: Limits {
             max_lines_per_file: MaxLinesPerFileLimits {
                 included_line_types: IncludedLineTypes::Code,
@@ -33,9 +42,11 @@ pub fn built_in_config() -> Config {
             },
             max_leaf_files_per_directory: MaxLeafFilesPerDirectoryLimits {
                 production: LeafFileLimit::Finite(LeafFiles::trusted(
-                    DEFAULT_MAX_LEAF_SOURCE_FILES_PER_DIRECTORY,
+                    DEFAULT_MAX_LEAF_FILES_PER_DIRECTORY,
                 )),
-                test: LeafFileLimit::Unlimited,
+                test: LeafFileLimit::Finite(LeafFiles::trusted(
+                    DEFAULT_MAX_LEAF_FILES_PER_DIRECTORY,
+                )),
             },
         },
         ignore: IgnoreConfig {
@@ -48,12 +59,13 @@ pub fn built_in_config() -> Config {
         traversal: TraversalConfig {
             follow_symlinks: SymlinkTraversal::None,
             same_file_system: true,
-            max_depth: TraversalDepth::trusted(DEFAULT_MAX_TRAVERSAL_DEPTH),
             max_entries: TraversalEntryLimit::trusted(DEFAULT_MAX_TRAVERSAL_ENTRIES),
             max_file_bytes: SourceFileByteLimit::trusted(DEFAULT_MAX_SOURCE_FILE_BYTES),
             error_policy: TraversalErrorPolicy::Fail,
         },
-        files: FilesConfig { exclude: vec![] },
+        files: FilesConfig {
+            exclude: glob_patterns(DEFAULT_DEPENDENCY_LOCKFILE_EXCLUDES),
+        },
         tests: TestsConfig {
             check_path_tests: true,
             globs: glob_patterns([
@@ -82,7 +94,6 @@ pub fn built_in_config() -> Config {
         },
         output: OutputConfig {
             format: OutputFormat::Human,
-            color: ColorMode::Auto,
         },
     }
 }

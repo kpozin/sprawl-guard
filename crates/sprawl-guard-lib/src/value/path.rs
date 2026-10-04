@@ -12,7 +12,7 @@ use crate::{Result, SprawlError};
 pub struct RelativePath(#[schemars(pattern(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$)).*$"))] String);
 
 impl RelativePath {
-    /// Normalizes a path that must be relative and must not traverse upward.
+    /// Normalizes a UTF-8 path that must be relative and must not traverse upward.
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         if path.is_absolute() {
@@ -24,7 +24,14 @@ impl RelativePath {
         let mut parts = Vec::new();
         for component in path.components() {
             match component {
-                Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+                Component::Normal(part) => {
+                    let Some(part) = part.to_str() else {
+                        return Err(SprawlError::NonUtf8Path {
+                            path: path.to_path_buf(),
+                        });
+                    };
+                    parts.push(part.to_owned());
+                }
                 Component::CurDir => {}
                 Component::ParentDir => {
                     return Err(SprawlError::ParentPath {
@@ -259,6 +266,23 @@ mod tests {
                 let error = RelativePath::new("/tmp/main.rs").unwrap_err();
 
                 assert!(error.to_string().contains("must be relative"));
+            }
+        }
+
+        #[cfg(unix)]
+        mod when_path_is_not_utf8 {
+            use std::ffi::OsString;
+            use std::os::unix::ffi::OsStringExt;
+
+            use super::*;
+
+            #[test]
+            fn it_rejects_the_path_without_lossy_normalization() {
+                let path = PathBuf::from(OsString::from_vec(vec![b's', b'r', b'c', b'/', 0xff]));
+
+                let error = RelativePath::new(&path).unwrap_err();
+
+                assert!(matches!(error, SprawlError::NonUtf8Path { .. }));
             }
         }
 

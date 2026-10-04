@@ -1,6 +1,5 @@
 use assert_fs::TempDir;
 use indoc::indoc;
-use std::collections::BTreeSet;
 
 use super::common::*;
 
@@ -17,7 +16,7 @@ fn write_sample_config(root: &TempDir) {
     );
 }
 
-fn assert_config_command_outputs_full_config(root: &TempDir, command: &str) {
+fn full_config_output(root: &TempDir, command: &str) -> String {
     let output = sprawl_guard(root)
         .args(["config", command])
         .output()
@@ -26,7 +25,6 @@ fn assert_config_command_outputs_full_config(root: &TempDir, command: &str) {
     let config = parse_toml(&stdout);
 
     assert_exit_code(&output, exit_codes::SUCCESS);
-    assert!(stdout.starts_with("schema_version = 1\n"));
     assert_toml_contains(
         &config,
         toml::toml! {
@@ -40,6 +38,7 @@ fn assert_config_command_outputs_full_config(root: &TempDir, command: &str) {
         },
     );
     assert_eq!(stderr(&output), "");
+    stdout
 }
 
 mod resolved {
@@ -50,7 +49,23 @@ mod resolved {
         let root = TempDir::new().unwrap();
         write_sample_config(&root);
 
-        assert_config_command_outputs_full_config(&root, "resolved");
+        let stdout = full_config_output(&root, "resolved");
+
+        assert!(stdout.starts_with("schema_version = 2\n"));
+    }
+
+    #[test]
+    fn it_rejects_legacy_config_before_upgrade() {
+        let root = TempDir::new().unwrap();
+        write_file(&root, "sprawl-guard.toml", "schema_version = 1\n");
+
+        let output = sprawl_guard(&root)
+            .args(["config", "resolved"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+        assert!(stderr(&output).contains("expected current version 2"));
     }
 
     #[test]
@@ -83,7 +98,7 @@ mod resolved {
     }
 
     #[test]
-    fn it_preserves_a_caller_authored_files_table() {
+    fn it_adds_caller_authored_file_excludes_to_the_built_ins() {
         let root = TempDir::new().unwrap();
         write_config(
             &root,
@@ -100,36 +115,36 @@ mod resolved {
         let config = parse_toml(&stdout(&output));
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(
-            config["files"]["exclude"],
-            toml::Value::Array(vec![toml::Value::String("generated/**".to_owned())])
+        let excludes = config["files"]["exclude"].as_array().unwrap();
+        assert!(
+            excludes
+                .iter()
+                .any(|value| value.as_str() == Some("generated/**"))
+        );
+        assert!(
+            excludes
+                .iter()
+                .any(|value| value.as_str() == Some("**/pnpm-lock.yaml"))
         );
         assert_eq!(stderr(&output), "");
     }
 
-    #[test]
-    fn it_can_limit_language_details_to_languages_detected_under_the_root() {
-        let root = TempDir::new().unwrap();
-        write_sample_config(&root);
-        write_file(&root, "src/lib.rs", "fn main() {}\n");
-        write_file(&root, "web/app.ts", "export const answer = 42;\n");
+    mod when_the_removed_detected_option_is_passed {
+        use super::*;
 
-        let output = sprawl_guard(&root)
-            .args(["config", "resolved", "--detected"])
-            .output()
-            .unwrap();
-        let config = parse_toml(&stdout(&output));
-        let languages = config["languages"].as_table().unwrap();
+        #[test]
+        fn it_rejects_the_option() {
+            let root = TempDir::new().unwrap();
+            write_sample_config(&root);
 
-        assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(
-            languages
-                .keys()
-                .map(String::as_str)
-                .collect::<BTreeSet<_>>(),
-            BTreeSet::from(["Rust", "TypeScript"]),
-        );
-        assert_eq!(stderr(&output), "");
+            let output = sprawl_guard(&root)
+                .args(["config", "resolved", "--detected"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert!(stderr(&output).contains("unexpected argument '--detected'"));
+        }
     }
 }
 
@@ -141,53 +156,342 @@ mod export {
         let root = TempDir::new().unwrap();
         write_sample_config(&root);
 
-        assert_config_command_outputs_full_config(&root, "export");
+        let stdout = full_config_output(&root, "export");
+
+        assert!(stdout.starts_with(concat!(
+            "#:schema https://kpozin.github.io/sprawl-guard/schemas/v2/",
+            "sprawl-guard.schema.json\n",
+            "schema_version = 2\n"
+        )));
     }
 }
 
-mod schema {
+mod upgrade {
     use super::*;
 
-    #[test]
-    fn it_prints_a_draft_4_schema_for_authored_config() {
-        let output = sprawl_guard_no_root()
-            .args(["config", "schema"])
-            .output()
-            .unwrap();
-        let schema = json_stdout(&output);
+    const CURRENT_DIRECTIVE: &str = concat!(
+        "#:schema https://kpozin.github.io/sprawl-guard/schemas/v2/",
+        "sprawl-guard.schema.json\n"
+    );
 
-        assert_exit_code(&output, exit_codes::SUCCESS);
-        let contract = serde_json::json!({
-            "$schema": schema["$schema"],
-            "id": schema["id"],
-            "has_later_draft_id": schema.get("$id").is_some(),
-            "title": schema["title"],
-            "type": schema["type"],
-            "additional_properties": schema["additionalProperties"],
-            "required": schema["required"],
-            "schema_version": schema["properties"]["schema_version"]["enum"],
-            "rust_language_schema": schema["properties"]["languages"]["properties"]["rust"],
-            "python_language_schema": schema["properties"]["languages"]["properties"]["python"],
-            "other_language_schema": schema["properties"]["languages"]["additionalProperties"],
-            "override_required": schema["definitions"]["PathOverride"]["required"],
-        });
-        assert_eq!(
-            contract,
-            serde_json::json!({
-                "$schema": "http://json-schema.org/draft-04/schema#",
-                "id": "https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.schema.json",
-                "has_later_draft_id": false,
-                "title": "Sprawl Guard configuration",
-                "type": "object",
-                "additional_properties": false,
-                "required": ["schema_version"],
-                "schema_version": [1],
-                "rust_language_schema": {"$ref": "#/definitions/PartialLanguageConfig"},
-                "python_language_schema": {"$ref": "#/definitions/PartialCommonLanguageConfig"},
-                "other_language_schema": {"$ref": "#/definitions/PartialCommonLanguageConfig"},
-                "override_required": ["paths", "reason"],
-            })
-        );
-        assert_eq!(stderr(&output), "");
+    fn migrated_v1(source: &str) -> String {
+        format!(
+            "{CURRENT_DIRECTIVE}{}",
+            source.replacen("schema_version = 1", "schema_version = 2", 1)
+        )
+    }
+
+    mod when_migration_is_required {
+        use super::*;
+
+        #[test]
+        fn check_reports_a_v1_structural_migration_without_changing_the_file() {
+            let root = TempDir::new().unwrap();
+            let source = indoc! {r#"
+                #:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.schema.json
+                schema_version = 1
+
+                [output]
+                format = "json"
+                color = "always"
+            "#};
+            write_file(&root, "sprawl-guard.toml", source);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade", "--check"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+            assert!(stdout(&output).contains("Config requires an upgrade:"));
+            assert_eq!(read_config(&root), source);
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_migrates_v1_structure_and_preserves_unrelated_authored_content() {
+            let root = TempDir::new().unwrap();
+            let source = indoc! {r#"
+                #:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.schema.json
+                # Owned by the platform team.
+                schema_version = 1
+
+                [limits.max_lines_per_file]
+                production = 321
+
+                [output]
+                format = "json"
+                color = "never"
+
+                [traversal]
+                max_depth = 32
+                max_entries = 5000
+            "#};
+            write_file(&root, "sprawl-guard.toml", source);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert!(stdout(&output).contains("Upgraded config:"));
+            let migrated = read_config(&root);
+            assert!(migrated.starts_with(CURRENT_DIRECTIVE));
+            assert!(migrated.contains("# Owned by the platform team."));
+            assert!(migrated.contains("schema_version = 2"));
+            assert!(migrated.contains("production = 321"));
+            assert!(migrated.contains("format = \"json\""));
+            assert!(migrated.contains("max_entries = 5000"));
+            assert!(!migrated.contains("color ="));
+            assert!(!migrated.contains("max_depth"));
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_migrates_an_inline_output_table_without_losing_other_fields() {
+            let root = TempDir::new().unwrap();
+            let source = indoc! {r#"
+                schema_version = 1
+                output = { format = "json", color = "never" }
+                traversal = { max_depth = 32, max_entries = 5000 }
+            "#};
+            write_file(&root, "sprawl-guard.toml", source);
+
+            let check_output = sprawl_guard(&root)
+                .args(["config", "upgrade", "--check"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&check_output, exit_codes::CHECK_FAILURE);
+            assert_eq!(read_config(&root), source);
+
+            let upgrade_output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&upgrade_output, exit_codes::SUCCESS);
+            let migrated = read_config(&root);
+            let migrated_toml = parse_toml(&migrated);
+            assert!(migrated.contains("schema_version = 2"));
+            assert_eq!(migrated_toml["output"]["format"].as_str(), Some("json"));
+            assert!(migrated_toml["output"].get("color").is_none());
+            assert_eq!(
+                migrated_toml["traversal"]["max_entries"].as_integer(),
+                Some(5000)
+            );
+            assert!(migrated_toml["traversal"].get("max_depth").is_none());
+        }
+
+        #[test]
+        fn check_reports_a_missing_current_directive_without_changing_the_file() {
+            let root = TempDir::new().unwrap();
+            write_config(&root, "# Keep this comment.\n[limits]\n");
+            let original = read_config(&root);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade", "--check"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+            assert_eq!(read_config(&root), original);
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_adds_the_directive_without_reformatting_authored_toml() {
+            let root = TempDir::new().unwrap();
+            write_config(&root, "# Keep this comment.\n[limits]\n");
+            let original = read_config(&root);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(read_config(&root), format!("{CURRENT_DIRECTIVE}{original}"));
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_preserves_comments_before_the_first_config_key() {
+            let root = TempDir::new().unwrap();
+            let original = "# Owned by the platform team.\n\nschema_version = 1\n";
+            write_file(&root, "sprawl-guard.toml", original);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(read_config(&root), migrated_v1(original));
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_replaces_a_stale_directive() {
+            let root = TempDir::new().unwrap();
+            write_file(
+                &root,
+                "sprawl-guard.toml",
+                "#:schema https://example.com/old.json\nschema_version = 2\n",
+            );
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(
+                read_config(&root),
+                format!("{CURRENT_DIRECTIVE}schema_version = 2\n")
+            );
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_preserves_crlf_line_endings() {
+            let root = TempDir::new().unwrap();
+            write_file(
+                &root,
+                "sprawl-guard.toml",
+                "schema_version = 1\r\n# Authored comment.\r\n",
+            );
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(
+                read_config(&root),
+                format!(
+                    "{}\r\nschema_version = 2\r\n# Authored comment.\r\n",
+                    CURRENT_DIRECTIVE.trim_end()
+                )
+            );
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn invalid_config_is_rejected_without_changing_the_file() {
+            let root = TempDir::new().unwrap();
+            let source = "schema_version = 1\nunknown = true\n";
+            write_file(&root, "sprawl-guard.toml", source);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert_eq!(read_config(&root), source);
+            assert!(stderr(&output).contains("unknown field"));
+        }
+
+        #[test]
+        fn future_schema_versions_remain_typed_errors() {
+            let root = TempDir::new().unwrap();
+            let source = "schema_version = 3\n";
+            write_file(&root, "sprawl-guard.toml", source);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert_eq!(read_config(&root), source);
+            assert!(stderr(&output).contains("unsupported config schema version 3"));
+        }
+    }
+
+    mod when_the_config_is_current {
+        use super::*;
+
+        #[test]
+        fn check_succeeds_without_changing_the_file() {
+            let root = TempDir::new().unwrap();
+            let source = format!("{CURRENT_DIRECTIVE}schema_version = 2\n# Authored comment.\n");
+            write_file(&root, "sprawl-guard.toml", &source);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade", "--check"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert!(stdout(&output).contains("Config is current:"));
+            assert_eq!(read_config(&root), source);
+            assert_eq!(stderr(&output), "");
+        }
+    }
+
+    mod when_no_authored_config_exists {
+        use super::*;
+
+        #[test]
+        fn upgrade_reports_an_operational_error() {
+            let root = TempDir::new().unwrap();
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert!(stderr(&output).contains("no config file found to upgrade"));
+        }
+    }
+
+    mod when_the_config_path_is_explicit {
+        use super::*;
+
+        #[test]
+        fn upgrade_updates_only_the_selected_config() {
+            let root = TempDir::new().unwrap();
+            let default = "schema_version = 1\n# Default.\n";
+            let selected = "schema_version = 1\n# Selected.\n";
+            write_file(&root, "sprawl-guard.toml", default);
+            write_file(&root, "selected.toml", selected);
+
+            let output = sprawl_guard(&root)
+                .args(["--config", "selected.toml", "config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(read_config(&root), default);
+            assert_eq!(
+                std::fs::read_to_string(root.path().join("selected.toml")).unwrap(),
+                migrated_v1(selected)
+            );
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_accepts_the_old_alias_only_when_selected_explicitly() {
+            let root = TempDir::new().unwrap();
+            let selected = "schema_version = 1\n# Explicit alternative.\n";
+            write_file(&root, ".sprawlrc.toml", selected);
+
+            let output = sprawl_guard(&root)
+                .args(["--config", ".sprawlrc.toml", "config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(
+                std::fs::read_to_string(root.path().join(".sprawlrc.toml")).unwrap(),
+                migrated_v1(selected)
+            );
+            assert_eq!(stderr(&output), "");
+        }
     }
 }

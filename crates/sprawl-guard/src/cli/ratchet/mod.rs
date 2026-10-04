@@ -1,29 +1,27 @@
 mod edit;
+mod preview;
 mod scope;
 
 use std::path::{Path, PathBuf};
 
-use serde_json::json;
 use sprawl_guard_lib::check::check_without_ratchet;
 use sprawl_guard_lib::config::{LoadOptions, load_resolved_config};
 use sprawl_guard_lib::{
-    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileLocViolation, FileRatchet,
-    LocLimit, RatchetFile, RatchetSchemaVersion,
+    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileRatchet, LocLimit,
+    RatchetFile, RatchetSchemaVersion, TraversalErrorPolicy,
 };
 
-use super::{BaselineArgs, RatchetArgs};
+use super::{RatchetFormat, TightenArgs, UpdateArgs};
 use crate::error::{CliError, Result};
-use edit::{lower_ratchet_scope, ratchet_raise_count, replace_ratchet_scope};
-use scope::{BaselineScopeRequest, ratchet_update_scope, replacement_scope};
+use edit::{lower_ratchet_scope, update_ratchet};
+use scope::tighten_scope;
 
-pub(super) fn execute_baseline(
+pub(super) fn execute_update(
     root: Option<PathBuf>,
     config_path: Option<PathBuf>,
-    args: BaselineArgs,
-) -> Result<RatchetCommandExecution> {
-    if args.all && !args.paths.is_empty() {
-        return Err(CliError::AllWithPaths);
-    }
+    args: UpdateArgs,
+) -> Result<String> {
+    let ceiling_update_policy = args.ceiling_update_policy();
     let context = RatchetCommandContext::load(root, config_path)?;
     let ratchet_exists = context.ratchet_path.try_exists().map_err(|source| {
         sprawl_guard_lib::SprawlError::ReadFileType {
@@ -31,44 +29,47 @@ pub(super) fn execute_baseline(
             source,
         }
     })?;
-    if ratchet_exists && args.paths.is_empty() && !args.all {
-        return Err(CliError::AmbiguousRatchetReplacement);
-    }
-
     let report = current_violation_report(&context, args.paths.clone())?;
-    let file_measurements = file_measurements_from_report(&report);
     let new_entries = ratchet_from_report(&report)?;
-    let next = if ratchet_exists {
-        let previous = RatchetFile::read(&context.ratchet_path)?;
-        let scope_request = if args.all {
-            BaselineScopeRequest::All
-        } else {
-            BaselineScopeRequest::Paths
-        };
-        let scope = replacement_scope(&context.root, &args.paths, scope_request)?;
-        let raises = ratchet_raise_count(&previous, &new_entries)?;
-        if raises > 0 && !args.allow_raises {
-            return Err(CliError::RatchetRaises { count: raises });
-        }
-        replace_ratchet_scope(previous, new_entries, &scope)
+    let previous = if ratchet_exists {
+        let mut previous = RatchetFile::read(&context.ratchet_path)?;
+        previous.sort();
+        Some(previous)
     } else {
-        new_entries
+        None
     };
+    let next = update_ratchet(
+        previous.clone().unwrap_or_default(),
+        new_entries,
+        ceiling_update_policy,
+    );
 
     finish_ratchet_command(
-        RatchetCommandKind::Baseline,
         &context.ratchet_path,
+        previous.as_ref(),
         &next,
-        file_measurements,
         args.write,
+        args.format,
     )
 }
 
-pub(super) fn execute_ratchet(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CeilingUpdatePolicy {
+    Preserve,
+    AllowIncreases,
+}
+
+impl CeilingUpdatePolicy {
+    const fn allows_increases(self) -> bool {
+        matches!(self, Self::AllowIncreases)
+    }
+}
+
+pub(super) fn execute_tighten(
     root: Option<PathBuf>,
     config_path: Option<PathBuf>,
-    args: RatchetArgs,
-) -> Result<RatchetCommandExecution> {
+    args: TightenArgs,
+) -> Result<String> {
     let context = RatchetCommandContext::load(root, config_path)?;
     if !context.ratchet_path.try_exists().map_err(|source| {
         sprawl_guard_lib::SprawlError::ReadFileType {
@@ -81,88 +82,29 @@ pub(super) fn execute_ratchet(
         });
     }
 
-    let previous = RatchetFile::read(&context.ratchet_path)?;
-    let (scope, measured_paths) = ratchet_update_scope(&context.root, &args.paths, &previous)?;
-    let (current, file_measurements) = if args.paths.is_empty() || !measured_paths.is_empty() {
+    let mut previous = RatchetFile::read(&context.ratchet_path)?;
+    previous.sort();
+    let (scope, measured_paths) = tighten_scope(&context.root, &args.paths, &previous)?;
+    let current = if args.paths.is_empty() || !measured_paths.is_empty() {
         let report = current_violation_report(&context, measured_paths)?;
-        (
-            ratchet_from_report(&report)?,
-            file_measurements_from_report(&report),
-        )
+        ratchet_from_report(&report)?
     } else {
-        (RatchetFile::default(), Vec::new())
+        RatchetFile::default()
     };
-    let next = lower_ratchet_scope(previous, current, &scope)?;
+    let next = lower_ratchet_scope(previous.clone(), current, &scope)?;
 
     finish_ratchet_command(
-        RatchetCommandKind::Ratchet,
         &context.ratchet_path,
+        Some(&previous),
         &next,
-        file_measurements,
         args.write,
+        args.format,
     )
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum RatchetCommandKind {
-    Baseline,
-    Ratchet,
-}
-
-pub(super) struct RatchetCommandExecution {
-    kind: RatchetCommandKind,
-    path: PathBuf,
-    ratchet: RatchetFile,
-    file_measurements: Vec<FileLocViolation>,
-    wrote: bool,
-}
-
-pub(super) fn render_ratchet_stdout(
-    execution: &RatchetCommandExecution,
-    quiet: bool,
-) -> Result<String> {
-    if quiet {
-        return Ok(String::new());
-    }
-    if execution.wrote {
-        return Ok(format!("wrote {}\n", execution.path.display()));
-    }
-    let mut output = String::new();
-    for measurement in &execution.file_measurements {
-        let counts = measurement.measurement.line_counts();
-        output.push_str(&format!(
-            "# {}: configured LOC {}; included line types: {}; code: {}; comments: {}; blank lines: {}\n",
-            measurement.path,
-            measurement.measurement.actual().get(),
-            measurement.measurement.included_line_types(),
-            counts.code,
-            counts.comments,
-            counts.blank_lines
-        ));
-    }
-    output.push_str(
-        &toml::to_string_pretty(&execution.ratchet)
-            .map_err(|source| CliError::RenderConfig { source })?,
-    );
-    Ok(output)
-}
-
-pub(super) fn ratchet_payload(execution: &RatchetCommandExecution) -> serde_json::Value {
-    json!({
-        "kind": match execution.kind {
-            RatchetCommandKind::Baseline => "baseline",
-            RatchetCommandKind::Ratchet => "ratchet",
-        },
-        "path": execution.path,
-        "ratchet": execution.ratchet,
-        "file_measurements": execution.file_measurements,
-        "wrote": execution.wrote,
-    })
 }
 
 struct RatchetCommandContext {
     root: PathBuf,
-    config: sprawl_guard_lib::config::Config,
+    loaded: sprawl_guard_lib::config::LoadedConfig,
     ratchet_path: PathBuf,
 }
 
@@ -178,7 +120,7 @@ impl RatchetCommandContext {
         let ratchet_path = root.join(loaded.config.ratchet.file.as_str());
         Ok(Self {
             root,
-            config: loaded.config,
+            loaded,
             ratchet_path,
         })
     }
@@ -190,10 +132,10 @@ fn current_violation_report(
 ) -> Result<CheckReport> {
     Ok(check_without_ratchet(CheckOptions {
         root: context.root.clone(),
-        config: &context.config,
+        policy: context.loaded.resolved_policy(),
         paths,
         require_ratchet_current: Some(false),
-        traversal_error_policy: None,
+        traversal_error_policy: Some(TraversalErrorPolicy::Fail),
     })?)
 }
 
@@ -228,39 +170,38 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
     Ok(ratchet)
 }
 
-fn file_measurements_from_report(report: &CheckReport) -> Vec<FileLocViolation> {
-    report
-        .violations()
-        .iter()
-        .filter_map(|violation| match violation {
-            CheckViolation::FileLoc(violation) => Some(violation.clone()),
-            CheckViolation::DirectoryFanout(_) | CheckViolation::Ratchet(_) => None,
-        })
-        .collect()
-}
-
 fn finish_ratchet_command(
-    kind: RatchetCommandKind,
     path: &Path,
+    previous: Option<&RatchetFile>,
     ratchet: &RatchetFile,
-    file_measurements: Vec<FileLocViolation>,
     write: bool,
-) -> Result<RatchetCommandExecution> {
-    if write {
+    format: RatchetFormat,
+) -> Result<String> {
+    let stdout = match format {
+        RatchetFormat::Toml => ratchet.to_toml()?,
+        RatchetFormat::Human => {
+            let changes =
+                preview::render_changes(previous.unwrap_or(&RatchetFile::default()), ratchet)?;
+            if changes.is_empty() {
+                match (previous, write) {
+                    (None, true) => format!("Created empty ratchet at {path:?}.\n"),
+                    (None, false) => format!(
+                        "No ceiling changes; --write will create an empty ratchet at {path:?}.\n"
+                    ),
+                    (Some(_), _) => "No ratchet changes.\n".to_owned(),
+                }
+            } else {
+                let action = if write {
+                    format!("Wrote {path:?}.\n")
+                } else {
+                    "Preview only; use --write to apply.\n".to_owned()
+                };
+                format!("Ratchet changes:\n{changes}\n{action}")
+            }
+        }
+    };
+    if write && previous != Some(ratchet) {
         ratchet.write(path)?;
-        return Ok(RatchetCommandExecution {
-            kind,
-            path: path.to_path_buf(),
-            ratchet: ratchet.clone(),
-            file_measurements,
-            wrote: true,
-        });
     }
-    Ok(RatchetCommandExecution {
-        kind,
-        path: path.to_path_buf(),
-        ratchet: ratchet.clone(),
-        file_measurements,
-        wrote: false,
-    })
+    Ok(stdout)
 }

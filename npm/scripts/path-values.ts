@@ -11,7 +11,7 @@ declare const renderedWorkspaceRelativePathBrand: unique symbol;
 declare const sourcePayloadRelativePathBrand: unique symbol;
 declare const validationDetailBrand: unique symbol;
 
-/** Absolute filesystem path that should point at a directory. */
+/** Absolute filesystem path intended to identify a directory. */
 export type AbsoluteDirectoryPath = AbsolutePath & {
   readonly [absoluteDirectoryPathBrand]: "AbsoluteDirectoryPath";
 };
@@ -94,8 +94,8 @@ export function sourcePayloadRelativePath<const TValue extends string>(
 /**
  * Brands a payload path relative to the package-like directory being validated.
  *
- * This is intentionally neutral: release artifact directories and staged npm package directories
- * both validate one payload file under a local root, but they are not the same domain.
+ * This type covers payloads under release artifact directories and staged npm package directories.
+ * Those root directories remain distinct domains.
  */
 export function payloadFileRelativePath<const TValue extends string>(
   value: TValue,

@@ -1,9 +1,11 @@
 import { defineConfig, passthroughImageService } from "astro/config";
 import starlight from "@astrojs/starlight";
+import markdownOutputCheck from "./src/integrations/markdown-output-check.ts";
 
 export default defineConfig({
   site: "https://kpozin.github.io",
   base: "/sprawl-guard",
+  output: "static",
   image: {
     service: passthroughImageService(),
   },
@@ -15,6 +17,7 @@ export default defineConfig({
         alt: "",
       },
       customCss: ["./src/styles/theme.css"],
+      routeMiddleware: "./src/starlight-route-data.ts",
       components: {
         Footer: "./src/components/Footer.astro",
         SiteTitle: "./src/components/SiteTitle.astro",
@@ -61,5 +64,6 @@ export default defineConfig({
         },
       ],
     }),
+    markdownOutputCheck(),
   ],
 });

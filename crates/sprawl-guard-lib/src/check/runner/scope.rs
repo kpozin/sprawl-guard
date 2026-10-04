@@ -1,16 +1,44 @@
 use std::path::{Path, PathBuf};
 
-use nutype::nutype;
+use serde::Serialize;
 
 use crate::value::path::normalize_under_root;
 use crate::{RelativePath, Result, SprawlError};
 
-/// Normalized set of path prefixes that limit which files a check considers.
+/// Requested repository scope recorded in a check report.
 ///
-/// A scope is applied during traversal and before classification, so out-of-scope trees cannot
-/// cause unrelated traversal or classification errors. An empty list covers the whole repository.
-#[nutype(derive(AsRef))]
-pub(in crate::check) struct CheckScope(Vec<RelativePath>);
+/// Scope is applied during traversal and before classification, so out-of-scope trees cannot cause
+/// unrelated traversal or classification errors.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CheckScope {
+    /// Check every discovered source under the repository root.
+    All,
+    /// Check only the listed non-empty set of normalized path prefixes.
+    Paths {
+        /// Repository-relative path prefixes included in the check.
+        paths: NonEmptyCheckPaths,
+    },
+}
+
+/// Non-empty collection of normalized check paths.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct NonEmptyCheckPaths(Vec<RelativePath>);
+
+impl NonEmptyCheckPaths {
+    fn new(paths: Vec<RelativePath>) -> Option<Self> {
+        if paths.is_empty() {
+            return None;
+        }
+        Some(Self(paths))
+    }
+
+    /// Returns the normalized repository-relative path prefixes.
+    pub fn as_slice(&self) -> &[RelativePath] {
+        &self.0
+    }
+}
 
 impl CheckScope {
     /// Resolves CLI-supplied path scopes under the repository root.
@@ -21,17 +49,31 @@ impl CheckScope {
             .into_iter()
             .map(|path| scope_path(root, &path))
             .collect::<Result<Vec<_>>>()?;
-        Ok(Self::new(paths))
+        if paths.iter().any(|path| path.as_str().is_empty()) {
+            return Ok(Self::All);
+        }
+        Ok(match NonEmptyCheckPaths::new(paths) {
+            Some(paths) => Self::Paths { paths },
+            None => Self::All,
+        })
     }
 
     /// Returns normalized path scopes for traversal pruning.
     pub(super) fn paths(&self) -> &[RelativePath] {
-        self.as_ref().as_slice()
+        match self {
+            Self::All => &[],
+            Self::Paths { paths } => paths.as_slice(),
+        }
+    }
+
+    /// Returns whether the request covers the whole repository.
+    pub fn is_all(&self) -> bool {
+        matches!(self, Self::All)
     }
 
     /// Returns whether a repository-relative path falls within this scope.
     pub(in crate::check) fn contains(&self, path: &RelativePath) -> bool {
-        self.paths().is_empty() || self.paths().iter().any(|scope| path.is_at_or_under(scope))
+        self.is_all() || self.paths().iter().any(|scope| path.is_at_or_under(scope))
     }
 }
 

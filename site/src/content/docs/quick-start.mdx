@@ -43,24 +43,32 @@ project-local Node dependency, run it through `npm exec -- sprawl-guard` or
 
 <Steps>
 
-1. Inspect the detected languages.
+1. Preview the configuration, then write `sprawl-guard.toml`.
+
+   ```sh title="Initialize a Repository"
+   sprawl-guard init --dry-run
+   sprawl-guard init
+   ```
+
+   `init --dry-run` previews only the configuration that `init` would create. Neither command scans
+   repository sources; repository analysis is an explicit follow-up step.
+
+   The generated root configuration starts with its editor schema and required schema version:
+
+   ```toml title="sprawl-guard.toml"
+   #:schema https://kpozin.github.io/sprawl-guard/schemas/v2/sprawl-guard.schema.json
+   schema_version = 2
+   ```
+
+2. Inspect the detected languages.
 
    ```sh
    sprawl-guard languages --detected
    ```
 
-2. Preview the configuration and advisory scan, then write `sprawl-guard.toml`.
-
-   ```sh
-   sprawl-guard init --dry-run
-   sprawl-guard init
-   ```
-
-   The generated root configuration starts with the required schema version:
-
-   ```toml title="sprawl-guard.toml"
-   schema_version = 1
-   ```
+   This scans the repository using the built-in discovery rules and reports the languages and
+   source-file counts Sprawl Guard recognizes. The next step applies the authored policy from
+   `sprawl-guard.toml`.
 
 3. Run the first check.
 

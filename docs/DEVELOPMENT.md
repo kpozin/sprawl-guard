@@ -1,7 +1,7 @@
 # Development
 
 The public repository contains the Rust CLI, npm wrapper, documentation site, and release tooling.
-You need a current stable Rust toolchain, Node.js 24, and pnpm 11.7.0.
+Install a stable Rust toolchain, Node.js 24, and pnpm 11.7.0 before building the project.
 
 ## Rust CLI
 
@@ -34,6 +34,11 @@ binaries are compiled on their target platforms; the release workflow then assem
 into the runtime packages. Building the TypeScript wrapper does not cross-compile native binaries.
 
 ## Documentation site
+
+When changing or removing a command or option, regenerate the CLI reference and review the
+handwritten command reference, quick start, CI recipes, and coding-agent guidance. Generated option
+tables do not validate those instructions. Keep the executable examples covered by the documentation
+smoke tests, and run affected commands against both the native CLI and the npm/WASI wrapper.
 
 Install the frozen site dependencies and run its formatting, lint, type, and production-build
 checks:

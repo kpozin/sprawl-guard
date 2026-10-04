@@ -5,10 +5,11 @@ description: Match Sprawl Guard's source classification and limits to a reposito
 
 import { TabItem, Tabs } from "@astrojs/starlight/components";
 
-Every root configuration starts with the schema version:
+Every root configuration starts with its editor schema and schema version:
 
 ```toml title="sprawl-guard.toml"
-schema_version = 1
+#:schema https://kpozin.github.io/sprawl-guard/schemas/v2/sprawl-guard.schema.json
+schema_version = 2
 ```
 
 Add only the sections needed to customize the built-in policy.
@@ -42,8 +43,8 @@ production = 400
 test = 800
 
 [limits.max_leaf_files_per_directory]
-production = 8
-test = "unlimited"
+production = 10
+test = 10
 
 [tests]
 check_path_tests = true
@@ -55,7 +56,7 @@ limits; production files use `production`. File limits count the selected line t
 languages include comments automatically, so Markdown prose counts by default; a language-specific
 `included_line_types` value can replace that behavior. Setting `check_path_tests` to `false` omits
 path-classified tests. For production Rust files, Sprawl Guard can also exclude top-level
-`cfg(test)` items from configured LOC.
+`cfg(test)` items from the configured line count.
 
 ## Group related languages for directory limits
 

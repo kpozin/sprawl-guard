@@ -3,9 +3,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::report::{
-    DirectoryRatchetStaleMissingViolation, FileRatchetStaleMissingViolation,
-    RatchetStaleMissingViolation, RatchetStaleViolation, RatchetStaleViolationKind,
-    RatchetViolation,
+    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind,
+    FileRatchetStaleMissingViolation, FileViolationKind, RatchetStaleMissingViolation,
+    RatchetStaleViolation, RatchetViolation,
 };
 use crate::check::runner::CheckScope;
 use crate::classification::SourceKind;
@@ -21,7 +21,7 @@ pub(super) fn file_ratchets(
         .map(|(key, ceiling)| {
             RatchetViolation::Stale(RatchetStaleViolation::Missing(
                 RatchetStaleMissingViolation::File(FileRatchetStaleMissingViolation {
-                    kind: file_stale_kind(key.role()),
+                    kind: file_kind(key.role()),
                     path: key.path().clone(),
                     ratchet: RatchetCount::from_loc_limit(*ceiling),
                 }),
@@ -39,7 +39,7 @@ pub(super) fn directory_ratchets(
         .map(|(key, ceiling)| {
             RatchetViolation::Stale(RatchetStaleViolation::Missing(
                 RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
-                    kind: directory_stale_kind(key.role()),
+                    kind: directory_kind(key.role()),
                     path: key.path().clone(),
                     group: key.group().clone(),
                     ratchet: RatchetCount::from_leaf_files(*ceiling),
@@ -60,16 +60,16 @@ fn missing_entries<'a, Key: Ord, Ceiling>(
         .filter(move |(key, _)| scope.contains(path(key)) && !measured.contains(*key))
 }
 
-const fn file_stale_kind(role: SourceKind) -> RatchetStaleViolationKind {
+const fn file_kind(role: SourceKind) -> FileViolationKind {
     match role {
-        SourceKind::Production => RatchetStaleViolationKind::FileLocStale,
-        SourceKind::Test => RatchetStaleViolationKind::TestFileLocStale,
+        SourceKind::Production => FileViolationKind::FileLoc,
+        SourceKind::Test => FileViolationKind::TestFileLoc,
     }
 }
 
-const fn directory_stale_kind(role: SourceKind) -> RatchetStaleViolationKind {
+const fn directory_kind(role: SourceKind) -> DirectoryViolationKind {
     match role {
-        SourceKind::Production => RatchetStaleViolationKind::DirectoryFanoutStale,
-        SourceKind::Test => RatchetStaleViolationKind::TestDirectoryFanoutStale,
+        SourceKind::Production => DirectoryViolationKind::DirectoryFanout,
+        SourceKind::Test => DirectoryViolationKind::TestDirectoryFanout,
     }
 }

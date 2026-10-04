@@ -4,6 +4,21 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Versioned JSON Schemas and editor directives for both configuration and ratchet TOML files.
+
+### Changed
+
+- Production and test directory fan-out both default to 10 files.
+- Common dependency lockfiles are excluded from source discovery by default.
+- `update` replaces `baseline` and adds newly discovered ratchet entries without raising existing
+  ceilings by default. `tighten` replaces `ratchet` for lowering and removing entries.
+
+### Removed
+
+- Configuration include fragments; all `[[overrides]]` entries now live in the root configuration.
+
 ## [0.2.0] - 2026-08-11
 
 ### Added

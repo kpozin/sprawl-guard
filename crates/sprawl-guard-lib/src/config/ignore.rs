@@ -1,7 +1,10 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Ignore traversal settings.
+/// Ignore-file and hidden-path settings within the selected root.
+///
+/// Parent ignore files, global Git excludes, and `.git/info/exclude` do not
+/// participate in source selection.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IgnoreConfig {

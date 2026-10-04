@@ -11,10 +11,9 @@ use super::types::{ClassifiedSource, PathClassification, SourceExplanation, Sour
 
 /// Decision engine for files that are visible to ignore-aware traversal.
 ///
-/// The classifier answers whether a repository-relative path should become a
-/// checked source file. Included files are then tagged with a language and with
-/// either `SourceKind::Production` or `SourceKind::Test`. It deliberately does
-/// not read the filesystem; callers provide paths that traversal or `explain`
+/// The classifier decides whether a repository-relative path is a checked source file. Included
+/// files are tagged with a language and either `SourceKind::Production` or `SourceKind::Test`. It
+/// deliberately does not read the filesystem; callers provide paths that traversal or `explain`
 /// has already normalized under the repository root.
 pub(super) struct Classifier<'config> {
     config: &'config Config,
@@ -39,10 +38,9 @@ impl<'config> Classifier<'config> {
 
     /// Converts a diagnostic classification into discovery output.
     ///
-    /// `Some(ClassifiedSource)` means the path should be checked. `None` means
-    /// the path was intentionally left out by configured policy. Ambiguous
-    /// language matches become errors because later checks need one definitive
-    /// language-specific policy.
+    /// `Some(ClassifiedSource)` contains a path selected for checking. `None` means configured
+    /// policy excludes the path. Ambiguous language matches become errors because later checks
+    /// need one definitive language-specific policy.
     pub(super) fn included_source(&self, path: RelativePath) -> Result<Option<ClassifiedSource>> {
         match self.classify(path)? {
             PathClassification::Source(explanation) => Ok(Some(explanation.into_source())),

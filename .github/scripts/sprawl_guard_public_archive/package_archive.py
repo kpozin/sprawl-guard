@@ -137,10 +137,8 @@ CLI_PACKAGE = PackageSpec(
     ),
     allowed_content_directories=(
         PurePosixPath("src"),
-        PurePosixPath("templates"),
         PurePosixPath("tests"),
     ),
-    required_extra_files=(PurePosixPath("templates/machine-contract.ts.askama"),),
 )
 
 PACKAGE_SPECS = (LIBRARY_PACKAGE, CLI_PACKAGE)

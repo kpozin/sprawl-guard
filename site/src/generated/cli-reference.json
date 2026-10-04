@@ -24,27 +24,6 @@
           "possible_values": []
         },
         {
-          "id": "color",
-          "syntax": "--color <COLOR>",
-          "help": "Color output mode",
-          "conflicts_with": [],
-          "default_values": [],
-          "possible_values": [
-            {
-              "name": "auto",
-              "help": "Detect whether color should be emitted"
-            },
-            {
-              "name": "always",
-              "help": "Always emit color"
-            },
-            {
-              "name": "never",
-              "help": "Never emit color"
-            }
-          ]
-        },
-        {
           "id": "quiet",
           "syntax": "--quiet",
           "help": "Suppress non-essential output",
@@ -55,7 +34,7 @@
         {
           "id": "help",
           "syntax": "-h, --help",
-          "help": "Print help (see a summary with '-h')",
+          "help": "Print help",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -80,7 +59,7 @@
         {
           "id": "dry_run",
           "syntax": "--dry-run",
-          "help": "Print planned config and advisory output without creating files",
+          "help": "Print the planned configuration without creating files",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -88,7 +67,7 @@
         {
           "id": "help",
           "syntax": "-h, --help",
-          "help": "Print help (see a summary with '-h')",
+          "help": "Print help",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -223,9 +202,9 @@
     {
       "path": [
         "sprawl-guard",
-        "baseline"
+        "update"
       ],
-      "usage": "Usage: sprawl-guard baseline [OPTIONS] [PATHS]...",
+      "usage": "Usage: sprawl-guard update [OPTIONS] [PATHS]...",
       "arguments": [
         {
           "id": "write",
@@ -236,25 +215,36 @@
           "possible_values": []
         },
         {
-          "id": "all",
-          "syntax": "--all",
-          "help": "Replace the whole ratchet file",
+          "id": "allow_increases",
+          "syntax": "--allow-increases",
+          "help": "Permit existing ratchet ceilings to increase to current measurements",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
         },
         {
-          "id": "allow_raises",
-          "syntax": "--allow-raises",
-          "help": "Permit existing ratchet ceilings to increase",
+          "id": "format",
+          "syntax": "--format <FORMAT>",
+          "help": "Show changed ceilings or the complete resulting TOML document",
           "conflicts_with": [],
-          "default_values": [],
-          "possible_values": []
+          "default_values": [
+            "human"
+          ],
+          "possible_values": [
+            {
+              "name": "human",
+              "help": "Describe only added, raised, lowered, or removed ceilings"
+            },
+            {
+              "name": "toml",
+              "help": "Print the complete resulting ratchet as parseable TOML"
+            }
+          ]
         },
         {
           "id": "paths",
           "syntax": "[PATHS]...",
-          "help": "Paths whose ratchet entries should be previewed or replaced",
+          "help": "Paths scanned for current violations",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -272,9 +262,9 @@
     {
       "path": [
         "sprawl-guard",
-        "ratchet"
+        "tighten"
       ],
-      "usage": "Usage: sprawl-guard ratchet [OPTIONS] [PATHS]...",
+      "usage": "Usage: sprawl-guard tighten [OPTIONS] [PATHS]...",
       "arguments": [
         {
           "id": "write",
@@ -285,9 +275,28 @@
           "possible_values": []
         },
         {
+          "id": "format",
+          "syntax": "--format <FORMAT>",
+          "help": "Show changed ceilings or the complete resulting TOML document",
+          "conflicts_with": [],
+          "default_values": [
+            "human"
+          ],
+          "possible_values": [
+            {
+              "name": "human",
+              "help": "Describe only added, raised, lowered, or removed ceilings"
+            },
+            {
+              "name": "toml",
+              "help": "Print the complete resulting ratchet as parseable TOML"
+            }
+          ]
+        },
+        {
           "id": "paths",
           "syntax": "[PATHS]...",
-          "help": "Paths whose ratchet entries should be evaluated",
+          "help": "Paths whose ratchet entries are evaluated",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -312,7 +321,7 @@
         {
           "id": "help",
           "syntax": "-h, --help",
-          "help": "Print help (see a summary with '-h')",
+          "help": "Print help",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -328,17 +337,9 @@
       "usage": "Usage: sprawl-guard config resolved [OPTIONS]",
       "arguments": [
         {
-          "id": "detected",
-          "syntax": "--detected",
-          "help": "Include only languages detected under the repository root",
-          "conflicts_with": [],
-          "default_values": [],
-          "possible_values": []
-        },
-        {
           "id": "help",
           "syntax": "-h, --help",
-          "help": "Print help (see a summary with '-h')",
+          "help": "Print help",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -356,7 +357,7 @@
         {
           "id": "help",
           "syntax": "-h, --help",
-          "help": "Print help (see a summary with '-h')",
+          "help": "Print help",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -367,10 +368,52 @@
       "path": [
         "sprawl-guard",
         "config",
+        "upgrade"
+      ],
+      "usage": "Usage: sprawl-guard config upgrade [OPTIONS]",
+      "arguments": [
+        {
+          "id": "check",
+          "syntax": "--check",
+          "help": "Report whether an upgrade is needed without changing the file",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
         "schema"
       ],
-      "usage": "Usage: sprawl-guard config schema [OPTIONS]",
+      "usage": "Usage: sprawl-guard schema [OPTIONS] <DOCUMENT>",
       "arguments": [
+        {
+          "id": "format",
+          "syntax": "<DOCUMENT>",
+          "help": "TOML document kind whose JSON Schema to print",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": [
+            {
+              "name": "config",
+              "help": "Root configuration files"
+            },
+            {
+              "name": "ratchet",
+              "help": "Ratchet files"
+            }
+          ]
+        },
         {
           "id": "help",
           "syntax": "-h, --help",
@@ -413,41 +456,6 @@
           "default_values": [],
           "possible_values": []
         },
-        {
-          "id": "help",
-          "syntax": "-h, --help",
-          "help": "Print help (see a summary with '-h')",
-          "conflicts_with": [],
-          "default_values": [],
-          "possible_values": []
-        }
-      ]
-    },
-    {
-      "path": [
-        "sprawl-guard",
-        "machine"
-      ],
-      "usage": "Usage: sprawl-guard machine [OPTIONS] <COMMAND>",
-      "arguments": [
-        {
-          "id": "help",
-          "syntax": "-h, --help",
-          "help": "Print help (see a summary with '-h')",
-          "conflicts_with": [],
-          "default_values": [],
-          "possible_values": []
-        }
-      ]
-    },
-    {
-      "path": [
-        "sprawl-guard",
-        "machine",
-        "run"
-      ],
-      "usage": "Usage: sprawl-guard machine run [OPTIONS]",
-      "arguments": [
         {
           "id": "help",
           "syntax": "-h, --help",

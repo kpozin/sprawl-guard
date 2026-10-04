@@ -9,21 +9,16 @@ import type {
 } from "./resolve-package.js";
 
 /** CLI flags whose values are parsed by the Node wrapper before execution. */
-export type CliFlag = "--config" | "--root";
+export type CliFlag = "--root";
 
 /** Structured operation labels used in wrapper runtime failures. */
 export type RuntimeOperation =
-  | "build machine request"
-  | "create WASI stdio files"
   | "execute native binary"
-  | "execute machine request"
   | "forward child signal"
   | "instantiate WASM module"
   | "load WASI fallback runner"
-  | "parse machine response"
+  | "prepare WASI invocation"
   | "read WASM module"
-  | "read WASI stderr"
-  | "read WASI stdout"
   | "resolve package root"
   | "spawn native binary"
   | "start WASI module";

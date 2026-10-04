@@ -33,14 +33,25 @@ through `npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
    After setting the policy, preview the proposed ratchet before writing it:
 
    ```sh
-   sprawl-guard baseline --all
-   sprawl-guard baseline --all --write
+   sprawl-guard update
+   sprawl-guard update --write
    sprawl-guard check
    ```
 
-   A preview with one file ceiling and one directory ceiling looks like:
+   A preview lists only the proposed changes:
+
+   ```text
+   Ratchet changes:
+   + add file src/large.py [production] max_loc: none -> 430
+   + add directory src/flat [production, source] leaf_files: none -> 12
+
+   Preview only; use --write to apply.
+   ```
+
+   To inspect the complete TOML before writing, run `sprawl-guard update --format toml`. The resulting file looks like:
 
    ```toml title="sprawl-guard.ratchet.toml"
+   #:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.ratchet.schema.json
    schema_version = 1
 
    [[files]]
@@ -59,12 +70,27 @@ through `npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
 
 3. Review and commit both files.
 
-   The write creates the ratchet file selected by `[ratchet].file` in `sprawl-guard.toml`. Its default path is `sprawl-guard.ratchet.toml`. Review every entry. Each should cover maintained code that is expected to improve. Exclude generated or third-party code, and use a documented override for a deliberate long-term exception.
+   The write creates the ratchet file selected by `[ratchet].file` in `sprawl-guard.toml` and adds its editor schema directive. Its default path is `sprawl-guard.ratchet.toml`. Review every entry. Keep entries only for maintained code that is expected to improve. Exclude generated or third-party code, and use a documented override for a deliberate long-term exception.
 
-   If a ratchet file already exists, `--all` replaces it. A replacement that would raise a ceiling is refused unless you add `--allow-raises`; review any increase carefully. Use path arguments instead of `--all` to replace only selected files or directories.
+   If a ratchet file already exists, `update` adds newly discovered entries and preserves existing ceilings. Pass paths to limit discovery to selected files or directories. Raising an existing ceiling requires `--allow-increases`; review any increase carefully.
 
-   Commit `sprawl-guard.toml` and `sprawl-guard.ratchet.toml` together. Confirm that the unchanged tree passes. Then temporarily increase one baselined measurement to verify that the ratchet rejects growth.
+   Commit `sprawl-guard.toml` and `sprawl-guard.ratchet.toml` together. Confirm that the unchanged tree passes. Then temporarily increase one ratcheted measurement to verify that the ratchet rejects growth.
 
 </Steps>
+
+## Approve Later Exceptions
+
+After adoption, scope deliberate approvals to the affected file or directory. For new temporary
+debt, preview `sprawl-guard update PATH`, review the added ceilings, then repeat with `--write`. To
+permit an existing violation to grow, use `sprawl-guard update PATH --allow-increases` for both
+preview and write; raised ceilings are marked `! raise`.
+
+For a permanent policy exception, use a narrow
+[`[[overrides]]` entry](/sprawl-guard/configure-checks/) with a meaningful reason. Use [`tighten`](/sprawl-guard/clean-up-violations/) to record improvements; `update`
+never lowers or removes ceilings.
+
+Run the full repository check after an approval and commit the source and ratchet changes together.
+Unchanged entries are omitted from the human summary, but remain in the ratchet and in
+`--format toml` output.
 
 Next, [run an unscoped check in CI](/sprawl-guard/run-in-ci/).

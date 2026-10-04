@@ -1,5 +1,4 @@
-use std::io::Write;
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 
 use assert_fs::TempDir;
 use assert_fs::prelude::*;
@@ -27,21 +26,20 @@ pub(crate) fn sprawl_guard(root: &TempDir) -> Command {
 }
 
 pub(crate) fn sprawl_guard_no_root() -> Command {
-    Command::new(sprawl_guard_binary())
+    let binary = std::path::Path::new(sprawl_guard_binary());
+    let binary = if binary.is_absolute() {
+        binary.to_path_buf()
+    } else {
+        std::env::current_dir().unwrap().join(binary)
+    };
+    Command::new(binary)
 }
 
 pub(crate) fn write_config(root: &TempDir, contents: &str) {
     root.child("sprawl-guard.toml")
-        .write_str(&format!("schema_version = 1\n{contents}"))
+        .write_str(&format!("schema_version = 2\n{contents}"))
         .unwrap();
     ignore_fixture_file(root, "sprawl-guard.toml");
-}
-
-pub(crate) fn write_alias_config(root: &TempDir, contents: &str) {
-    root.child(".sprawlrc.toml")
-        .write_str(&format!("schema_version = 1\n{contents}"))
-        .unwrap();
-    ignore_fixture_file(root, ".sprawlrc.toml");
 }
 
 fn ignore_fixture_file(root: &TempDir, path: &str) {
@@ -257,6 +255,42 @@ pub(crate) fn write_ratchet(root: &TempDir, contents: &str) {
         .unwrap();
 }
 
+pub(crate) fn write_dependency_lockfile_ratchet_fixture(root: &TempDir) {
+    write_config(
+        root,
+        indoc! {r#"
+            [limits.max_leaf_files_per_directory]
+            production = 1
+
+            [languages.yaml]
+            enabled = true
+        "#},
+    );
+    write_file(root, "src/config.yaml", "setting: value\n");
+    write_file(
+        root,
+        "src/pnpm-lock.yaml",
+        "lockfileVersion: '9.0'\npackages:\n  dependency: {}\n",
+    );
+    write_ratchet(
+        root,
+        indoc! {r#"
+            schema_version = 1
+
+            [[files]]
+            path = "src/pnpm-lock.yaml"
+            role = "production"
+            max_loc = 3
+
+            [[directories]]
+            path = "src"
+            role = "production"
+            group = "source"
+            leaf_files = 2
+        "#},
+    );
+}
+
 pub(crate) fn read_ratchet(root: &TempDir) -> String {
     std::fs::read_to_string(root.child("sprawl-guard.ratchet.toml").path()).unwrap()
 }
@@ -319,28 +353,6 @@ pub(crate) fn json_stdout(output: &Output) -> serde_json::Value {
 
 pub(crate) fn run_json(root: &TempDir, args: &[&str]) -> (Output, serde_json::Value) {
     let output = sprawl_guard(root).args(args).output().unwrap();
-    let json = json_stdout(&output);
-    (output, json)
-}
-
-pub(crate) fn run_json_stdin(
-    args: &[&str],
-    stdin_json: &serde_json::Value,
-) -> (Output, serde_json::Value) {
-    let mut child = sprawl_guard_no_root()
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .as_mut()
-        .unwrap()
-        .write_all(serde_json::to_string(stdin_json).unwrap().as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
     let json = json_stdout(&output);
     (output, json)
 }

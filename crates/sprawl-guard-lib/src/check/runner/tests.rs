@@ -92,7 +92,7 @@ fn check_with_config(
 ) -> Result<CheckReport> {
     check(CheckOptions {
         root: root.to_path_buf(),
-        config,
+        policy: crate::config::ResolvedPolicy::built_in(config),
         paths,
         require_ratchet_current,
         traversal_error_policy,
@@ -242,7 +242,7 @@ mod when_an_injected_counter_reports_a_different_aggregate_policy {
         let report = check_with_counter(
             CheckOptions {
                 root: tempdir.path().to_path_buf(),
-                config: &config,
+                policy: crate::config::ResolvedPolicy::built_in(&config),
                 paths: vec![],
                 require_ratchet_current: None,
                 traversal_error_policy: None,

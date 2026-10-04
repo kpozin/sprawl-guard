@@ -16,7 +16,7 @@ use crate::config::{Config, RustCfgTestExclusion};
 
 /// Result of Rust `cfg(test)` preprocessing for one source string.
 pub(crate) struct RustCfgTestPreprocessResult<'source> {
-    /// Source that should be passed to the LOC counter.
+    /// Source passed to the LOC counter after any exclusions.
     pub(crate) source: Cow<'source, str>,
     /// Stable metadata for diagnostics and `explain`.
     pub(crate) info: RustCfgTestInfo,
@@ -90,9 +90,8 @@ impl ExcludedItemCount {
 
 /// Removes top-level Rust items that can compile only when `test` is enabled.
 ///
-/// Parse failures are intentionally non-fatal because the policy should still
-/// produce LOC results for files using syntax not yet accepted by the pinned
-/// parser.
+/// Parse failures retain the original source so unsupported syntax does not suppress LOC
+/// enforcement.
 pub(crate) fn preprocess_rust_cfg_test(source: &str) -> RustCfgTestPreprocessResult<'_> {
     if !looks_like_cfg_test(source) {
         return RustCfgTestPreprocessResult {
@@ -133,7 +132,7 @@ pub(crate) fn preprocess_rust_cfg_test(source: &str) -> RustCfgTestPreprocessRes
     }
 }
 
-/// Returns whether Rust `cfg(test)` preprocessing should run for a classified source.
+/// Returns preprocessing metadata for a classified Rust source, or `None` for another language.
 pub(crate) fn rust_cfg_test_policy_info(
     config: &Config,
     source: &ClassifiedSource,

@@ -71,6 +71,27 @@ mod discover_sources {
 
             assert!(sources.is_empty());
         }
+
+        #[test]
+        fn it_excludes_dependency_lockfiles_from_default_source_discovery() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_config(
+                tempdir.path(),
+                indoc! {r#"
+                    [languages.yaml]
+                    additional_globs = ["**/*.lock", "**/go.sum"]
+                "#},
+            );
+            write_source_file(tempdir.path(), "config.yaml");
+            write_source_file(tempdir.path(), "dependencies.lock");
+            write_source_file(tempdir.path(), "nested/go.sum");
+            write_source_file(tempdir.path(), "pnpm-lock.yaml");
+            write_source_file(tempdir.path(), "nested/package-lock.json");
+
+            let sources = discover_sources(tempdir.path(), &load_config(tempdir.path())).unwrap();
+
+            assert_eq!(source_paths(&sources), vec!["config.yaml"]);
+        }
     }
 
     mod when_language_paths_are_authored {

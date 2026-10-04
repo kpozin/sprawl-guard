@@ -12,10 +12,11 @@ pub use report::{
     DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
     DirectoryViolationKind, FileLocViolation, FileRatchetIncreasedViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
-    NonEmptyTraversalIncidents, RatchetIncreasedViolation, RatchetIncreasedViolationKind,
-    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
-    RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation, RatchetViolationKind,
-    ReportRoot, ReportRootError, ScanSummary,
+    NonEmptyTraversalIncidents, RatchetIncreasedViolation, RatchetLimit,
+    RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
+    RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError, ScanSummary,
 };
 pub(crate) use runner::measure_source;
-pub use runner::{CheckOptions, check, check_with_counter, check_without_ratchet};
+pub use runner::{
+    CheckOptions, CheckScope, NonEmptyCheckPaths, check, check_with_counter, check_without_ratchet,
+};

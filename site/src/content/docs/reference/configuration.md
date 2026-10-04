@@ -3,47 +3,38 @@ title: Configuration reference
 description: Fields, defaults, and precedence rules for sprawl-guard.toml.
 ---
 
-Sprawl Guard discovers `sprawl-guard.toml` or `.sprawlrc.toml` under the repository root. If both
-exist, discovery fails. `--config PATH` selects an explicit file. Unknown sections and fields are
-errors.
+Sprawl Guard implicitly discovers only `sprawl-guard.toml` under the repository root. `--config
+PATH` selects an explicit file, including alternative filenames such as `.sprawlrc.toml`. Unknown
+sections and fields are errors.
 
-Every root configuration must declare the schema version:
+Every root configuration starts with an editor schema directive and declares its schema version:
 
 ```toml title="sprawl-guard.toml"
-schema_version = 1
+#:schema https://kpozin.github.io/sprawl-guard/schemas/v2/sprawl-guard.schema.json
+schema_version = 2
 ```
 
-Run `sprawl-guard init` to create this minimal file, then add the sections below. Include fragments
-omit `schema_version` and may contain only `[[overrides]]`.
+Run `sprawl-guard init` to create this minimal file, then add the sections below.
 
 Use `sprawl-guard config resolved` to inspect the effective policy. Use
 `sprawl-guard config export` to print a complete configuration suitable for committing.
 
 ## Editor support
 
-Sprawl Guard publishes a JSON Schema for root configuration files. With a Taplo-based editor such as
-the Even Better TOML extension for VS Code, add this directive at the top of `sprawl-guard.toml`:
+Sprawl Guard publishes separate JSON Schemas for root configuration and ratchet files. `init`,
+`config export`, `update --write`, and `tighten --write` include the Taplo directive that selects
+the appropriate schema in editors such as the Even Better TOML extension for VS Code.
 
-```toml title="sprawl-guard.toml"
-#:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.schema.json
-schema_version = 1
-```
+Run `sprawl-guard schema config` or `sprawl-guard schema ratchet` to print either schema for local
+or offline use.
 
-Run `sprawl-guard config schema` to print the same schema for local or offline use. The schema
-applies to root configuration files; included override fragments use the narrower fragment format
-described below.
+After upgrading Sprawl Guard, run `sprawl-guard config upgrade` to update the authored root config.
+The command preserves authored formatting and comments and replaces the file atomically after the
+config validates. `sprawl-guard config upgrade --check` is read-only and exits with code `1` when
+an upgrade is needed, so CI can require committed configs to stay current. The V1→V2 migration
+removes the no-op `[output].color` field while preserving all other authored settings.
 
 ## Sections and defaults
-
-### `[config]`
-
-| Field     | Type and default     | Meaning                                                        |
-| --------- | -------------------- | -------------------------------------------------------------- |
-| `include` | array of globs, `[]` | Override-fragment files relative to the root config directory. |
-
-Included files may contain only `[[overrides]]`. Sprawl Guard loads them in normalized
-lexicographic path order and appends their entries after the root file's overrides. It does not
-follow symlinks while loading these files.
 
 ### `[limits.max_lines_per_file]`
 
@@ -58,22 +49,28 @@ automatically add `comments` unless their language-specific setting replaces the
 
 ### `[limits.max_leaf_files_per_directory]`
 
-| Field        | Type and default                                 | Meaning                                          |
-| ------------ | ------------------------------------------------ | ------------------------------------------------ |
-| `production` | positive integer or `"unlimited"`, `8`           | Direct production source files in one directory. |
-| `test`       | positive integer or `"unlimited"`, `"unlimited"` | Direct test source files in one directory.       |
+| Field        | Type and default                        | Meaning                                          |
+| ------------ | --------------------------------------- | ------------------------------------------------ |
+| `production` | positive integer or `"unlimited"`, `10` | Direct production source files in one directory. |
+| `test`       | positive integer or `"unlimited"`, `10` | Direct test source files in one directory.       |
 
 ### `[ignore]`
 
 All fields are booleans and default to `true`.
 
-| Field               | Meaning                                             |
-| ------------------- | --------------------------------------------------- |
-| `respect_gitignore` | Respect `.gitignore` files.                         |
-| `respect_ignore`    | Respect `.ignore` files.                            |
-| `respect_rgignore`  | Respect `.rgignore` files.                          |
-| `respect_fdignore`  | Respect `.fdignore` files.                          |
-| `skip_hidden`       | Skip hidden files and directories during traversal. |
+Only ignore files within the selected root affect ignore policy. Sprawl Guard ignores global Git
+excludes, `.git/info/exclude`, and ignore files above that root.
+
+Enabled ignore files must not be symlinks, including broken links. Sprawl Guard rejects such policy
+instead of reading rules from an external target.
+
+| Field               | Meaning                                                                                        |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| `respect_gitignore` | Respect `.gitignore` files.                                                                    |
+| `respect_ignore`    | Respect `.ignore` files.                                                                       |
+| `respect_rgignore`  | Respect `.rgignore` files.                                                                     |
+| `respect_fdignore`  | Respect `.fdignore` files.                                                                     |
+| `skip_hidden`       | Skip dot-prefixed file and directory names; Windows hidden attributes do not affect selection. |
 
 ### `[traversal]`
 
@@ -81,7 +78,6 @@ All fields are booleans and default to `true`.
 | ------------------ | ---------------------------- | ---------------------------------------------------------------- |
 | `follow_symlinks`  | enum, `"none"`               | `none`, `files`, `directories`, or `files-and-directories`.      |
 | `same_file_system` | boolean, `true`              | Stay on the root's filesystem.                                   |
-| `max_depth`        | positive integer, `128`      | Maximum depth below the root.                                    |
 | `max_entries`      | positive integer, `1000000`  | Maximum visited filesystem entries.                              |
 | `max_file_bytes`   | positive integer, `10485760` | Largest source file read for line counting.                      |
 | `error_policy`     | enum, `"fail"`               | `fail` or `warn` for recoverable descendant traversal incidents. |
@@ -92,8 +88,18 @@ root. `config resolved` reports the configured value, not this platform-specific
 
 ### `[files]`
 
-`exclude` is an array of repository-relative globs and defaults to `[]`. Matching paths are removed
-before language classification.
+`exclude` is an array of repository-relative globs. Matching paths are removed before language
+classification. Authored patterns extend the built-in list rather than replacing it.
+
+The built-in exclusions use the lockfile-related patterns from
+[GitHub's code-review exclusions](https://docs.github.com/en/copilot/reference/review-excluded-files)
+as a baseline. They match these patterns at any depth:
+
+```text
+**/*.lock              **/bun.lockb            **/go.sum
+**/npm-shrinkwrap.json **/package-lock.json    **/Package.resolved
+**/pnpm-lock.yaml
+```
 
 ### `[tests]`
 
@@ -191,10 +197,9 @@ format and creation workflow.
 
 ### `[output]`
 
-| Field    | Type and default | Meaning                                                                     |
-| -------- | ---------------- | --------------------------------------------------------------------------- |
-| `format` | enum, `"human"`  | `human`, `json`, or `sarif`.                                                |
-| `color`  | enum, `"auto"`   | Accepted values are `auto`, `always`, and `never`; currently has no effect. |
+| Field    | Type and default | Meaning                      |
+| -------- | ---------------- | ---------------------------- |
+| `format` | enum, `"human"`  | `human`, `json`, or `sarif`. |
 
 ## Precedence
 
@@ -202,14 +207,14 @@ Sprawl Guard applies configuration in this order:
 
 1. Built-in defaults provide the base policy. Fields in the root configuration replace the
    corresponding defaults.
-2. Arrays in the root configuration replace their default arrays. Root `[[overrides]]` replace the
-   empty default override list.
-3. Included fragments append overrides in lexicographic file order.
-4. Language-specific file thresholds and included line types replace their global values. Literate
+2. Arrays in the root configuration replace their default arrays unless their field documentation
+   says otherwise. In particular, `[files].exclude` extends the built-in lockfile exclusions. Root
+   `[[overrides]]` replace the empty default override list.
+3. Language-specific file thresholds and included line types replace their global values. Literate
    languages add comments automatically when no language-specific line-type selection is present.
-5. Custom-group directory limits replace their global values. Documentation directory limits start
+4. Custom-group directory limits replace their global values. Documentation directory limits start
    from their unlimited defaults.
-6. Matching path overrides apply in declaration order. Later entries replace only the fields they
+5. Matching path overrides apply in declaration order. Later entries replace only the fields they
    set.
-7. CLI options override the output format, ratchet-current requirement, traversal error policy,
+6. CLI options override the output format, ratchet-current requirement, traversal error policy,
    root, and configuration path for that run.

@@ -22,17 +22,15 @@ describe("renderPublishWorkspace", () => {
       path.join(tempPublicRoot, "site", "public", "schemas", "v1"),
       { recursive: true },
     );
-    fs.writeFileSync(
-      path.join(
-        tempPublicRoot,
-        "site",
-        "public",
-        "schemas",
-        "v1",
-        "sprawl-guard.schema.json",
-      ),
-      '{"$schema":"http://json-schema.org/draft-04/schema#"}\n',
-    );
+    for (const fileName of [
+      "sprawl-guard.schema.json",
+      "sprawl-guard.ratchet.schema.json",
+    ]) {
+      fs.writeFileSync(
+        path.join(tempPublicRoot, "site", "public", "schemas", "v1", fileName),
+        `{\"title\":\"${fileName}\"}\n`,
+      );
+    }
 
     fs.mkdirSync(path.join(tempWorkspaceRoot, "sprawl-guard", "dist", "bin"), {
       recursive: true,
@@ -89,19 +87,24 @@ describe("renderPublishWorkspace", () => {
         "dist/",
         "!dist/lib/*.test.js",
       ]);
-      assert.equal(
-        fs.readFileSync(
-          path.join(
-            tempWorkspaceRoot,
-            ".stage",
-            "sprawl-guard",
-            "schema",
-            "sprawl-guard.schema.json",
+      for (const fileName of [
+        "sprawl-guard.schema.json",
+        "sprawl-guard.ratchet.schema.json",
+      ]) {
+        assert.equal(
+          fs.readFileSync(
+            path.join(
+              tempWorkspaceRoot,
+              ".stage",
+              "sprawl-guard",
+              "schema",
+              fileName,
+            ),
+            "utf8",
           ),
-          "utf8",
-        ),
-        '{"$schema":"http://json-schema.org/draft-04/schema#"}\n',
-      );
+          `{\"title\":\"${fileName}\"}\n`,
+        );
+      }
       assert.equal(
         fs.readFileSync(
           path.join(tempWorkspaceRoot, ".stage", "sprawl-guard", "LICENSE-MIT"),

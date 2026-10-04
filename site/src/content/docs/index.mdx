@@ -1,12 +1,12 @@
 ---
 title: Sprawl Guard
-description: Keep source trees navigable with configurable LOC and directory fan-out limits.
+description: Keep source trees navigable with configurable file-length and directory fan-out limits.
 template: splash
 hero:
   image:
     file: ../../assets/sprawl-guard-shield-clamp.svg
     alt: ""
-  tagline: Enforce configurable LOC and directory fan-out limits. Record existing violations so they can shrink but not grow.
+  tagline: Enforce configurable file-length and directory fan-out limits. Record existing violations so they can shrink but not grow.
   actions:
     - text: Get started
       link: ./quick-start/
@@ -20,7 +20,8 @@ hero:
       icon: right-arrow
 ---
 
-Keep coding agents from adding oversized files and crowded directories.
+Keep coding agents from adding oversized files and crowded directories. File-length limits measure
+logical lines of code (LOC).
 
 Sprawl Guard supports every language bundled with
 [Tokei](https://github.com/xampprocky/tokei), including Rust, TypeScript, JavaScript, Python, Go,

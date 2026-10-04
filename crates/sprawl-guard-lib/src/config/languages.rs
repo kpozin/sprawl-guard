@@ -31,7 +31,7 @@ impl LanguageConfig {
         &mut self.common
     }
 
-    /// Returns true when the language should be checked.
+    /// Returns whether the language is enabled for checks.
     pub fn is_enabled(&self) -> bool {
         self.common().mode.is_enabled()
     }
@@ -103,18 +103,15 @@ impl Default for LanguageSpecificConfig {
 #[serde(deny_unknown_fields)]
 pub struct GenericLanguageConfig;
 
-/// Partial per-language configuration.
-///
-/// Root config files may specify only the fields they want to override. Serde flattens the common
-/// fields so users can write `[languages.rust] enabled = true` without nested common/specific
-/// tables.
+/// Optional settings for one language in a root configuration.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialLanguageConfig {
     /// Optional shared settings.
+    // Flattening keeps shared and Rust-only settings in one user-facing language table.
     #[serde(flatten)]
     common: PartialCommonLanguageConfig,
-    /// Optional Rust-only setting.
+    /// Whether to exclude top-level Rust `cfg(test)` items from production LOC.
     #[serde(rename = "exclude_cfg_test")]
     cfg_test_exclusion: Option<RustCfgTestExclusion>,
 }
@@ -211,10 +208,8 @@ pub struct RustLanguageConfig {
     pub cfg_test_exclusion: RustCfgTestExclusion,
 }
 
-/// Whether a language is enabled.
-///
-/// TOML still represents this as a boolean, but the resolved config uses an enum so callers cannot
-/// accidentally pass an unrelated bool where an enablement state is expected.
+/// Whether a language participates in checks.
+// TOML represents this value as a boolean; the enum keeps the internal state domain-specific.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(from = "bool", into = "bool")]
 pub enum LanguageMode {
@@ -248,10 +243,8 @@ impl LanguageMode {
     }
 }
 
-/// Whether Rust `cfg(test)` exclusion is enabled.
-///
-/// This is Rust-specific policy, not a generic language option. It is converted to and from a flat
-/// TOML boolean only at the serialization boundary.
+/// Whether top-level Rust `cfg(test)` items are excluded from production LOC.
+// TOML represents this value as a boolean; the enum keeps the internal state domain-specific.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(from = "bool", into = "bool")]
 pub enum RustCfgTestExclusion {
@@ -279,7 +272,7 @@ impl RustCfgTestExclusion {
         if value { Self::Enabled } else { Self::Disabled }
     }
 
-    /// Returns true when `cfg(test)` items should be excluded.
+    /// Returns whether `cfg(test)` items are excluded.
     pub fn is_enabled(self) -> bool {
         matches!(self, Self::Enabled)
     }

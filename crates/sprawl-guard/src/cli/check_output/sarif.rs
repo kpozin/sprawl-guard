@@ -291,7 +291,7 @@ mod tests {
         CounterInfo, DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation,
         FileRatchetStaleMissingViolation, FileViolationKind, RatchetIncreasedViolation,
         RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
-        RatchetStaleViolationKind, RatchetViolation,
+        RatchetViolation,
     };
     use sprawl_guard_lib::{
         CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
@@ -314,6 +314,7 @@ mod tests {
     fn report_with(violations: Vec<CheckViolation>) -> CheckReport {
         CheckReport::complete(
             sprawl_guard_lib::ReportRoot::trusted("/repo"),
+            sprawl_guard_lib::ConfigSource::BuiltIn,
             CounterInfo {
                 backend: "tokei",
                 version: "14.0.0",
@@ -457,6 +458,7 @@ mod tests {
         fn it_omits_non_fatal_check_warnings() {
             let report = CheckReport::complete(
                 sprawl_guard_lib::ReportRoot::trusted("/repo"),
+                sprawl_guard_lib::ConfigSource::BuiltIn,
                 CounterInfo {
                     backend: "tokei",
                     version: "14.0.0",
@@ -753,7 +755,7 @@ mod tests {
             let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
                 RatchetStaleViolation::Missing(RatchetStaleMissingViolation::File(
                     FileRatchetStaleMissingViolation {
-                        kind: RatchetStaleViolationKind::FileLocStale,
+                        kind: FileViolationKind::FileLoc,
                         path: RelativePath::new("src/deleted.rs").unwrap(),
                         ratchet: RatchetCount::new(4),
                     },

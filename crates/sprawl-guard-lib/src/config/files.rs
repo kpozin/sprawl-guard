@@ -13,12 +13,13 @@ pub struct FilesConfig {
 
 pub(super) fn merge_global_file_excludes(config: &mut FilesConfig, partial: PartialFilesConfig) {
     if let Some(value) = partial.exclude {
-        config.exclude = value;
+        config.exclude.extend(value);
     }
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialFilesConfig {
+    /// Additional glob patterns excluded before language classification.
     exclude: Option<Vec<GlobPattern>>,
 }

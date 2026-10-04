@@ -151,7 +151,7 @@ export function cargoPublicationRequests(args: {
   }));
 }
 
-/** Decides whether a crates.io version is new, safely resumed, or conflicting. */
+/** Decides whether a crates.io version is absent, safely resumable, or conflicting. */
 export function reconcileCargoArchiveChecksum(args: {
   readonly localChecksum: string;
   readonly remoteChecksum: RemoteArchiveChecksum;

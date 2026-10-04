@@ -35,17 +35,15 @@ describe("stagePublishPayloads", () => {
       path.join(tempPublicRoot, "site", "public", "schemas", "v1"),
       { recursive: true },
     );
-    fs.writeFileSync(
-      path.join(
-        tempPublicRoot,
-        "site",
-        "public",
-        "schemas",
-        "v1",
-        "sprawl-guard.schema.json",
-      ),
-      "{}\n",
-    );
+    for (const fileName of [
+      "sprawl-guard.schema.json",
+      "sprawl-guard.ratchet.schema.json",
+    ]) {
+      fs.writeFileSync(
+        path.join(tempPublicRoot, "site", "public", "schemas", "v1", fileName),
+        "{}\n",
+      );
+    }
     tempArtifactRoot = artifactRootDirectory(
       fs.mkdtempSync(
         path.join(os.tmpdir(), "sprawl-guard-public-stage-payloads-artifacts-"),

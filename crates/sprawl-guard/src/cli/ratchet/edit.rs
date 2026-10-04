@@ -1,26 +1,62 @@
+use std::collections::BTreeMap;
+
 use sprawl_guard_lib::{
     DirectoryRatchet, FileRatchet, RatchetFile, RatchetLookup, RatchetSchemaVersion,
 };
 
-use super::scope::RatchetScope;
+use super::{CeilingUpdatePolicy, scope::RatchetScope};
 
-/// Applies `baseline` semantics: replace every entry in scope with current violations.
+/// Adds newly discovered entries while preserving existing ceilings.
 ///
-/// Entries outside `scope` are preserved. Entries inside `scope` disappear when
-/// they are no longer current violations. New current violations are added.
-pub(super) fn replace_ratchet_scope(
+/// When increases are allowed, an existing ceiling can rise to its current measurement. This
+/// operation never lowers or removes an existing ceiling.
+pub(super) fn update_ratchet(
     previous: RatchetFile,
     current: RatchetFile,
-    scope: &RatchetScope,
+    ceiling_policy: CeilingUpdatePolicy,
 ) -> RatchetFile {
-    let mut next = preserve_out_of_scope(previous, scope);
-    next.files.extend(current.files);
-    next.directories.extend(current.directories);
+    let mut files = previous
+        .files
+        .into_iter()
+        .map(|entry| (entry.key(), entry))
+        .collect::<BTreeMap<_, _>>();
+    for current in current.files {
+        files
+            .entry(current.key())
+            .and_modify(|previous| {
+                if ceiling_policy.allows_increases() {
+                    previous.max_loc = std::cmp::max(previous.max_loc, current.max_loc);
+                }
+            })
+            .or_insert(current);
+    }
+
+    let mut directories = previous
+        .directories
+        .into_iter()
+        .map(|entry| (entry.key(), entry))
+        .collect::<BTreeMap<_, _>>();
+    for current in current.directories {
+        directories
+            .entry(current.key())
+            .and_modify(|previous| {
+                if ceiling_policy.allows_increases() {
+                    previous.leaf_files = std::cmp::max(previous.leaf_files, current.leaf_files);
+                }
+            })
+            .or_insert(current);
+    }
+
+    let mut next = RatchetFile {
+        schema_version: RatchetSchemaVersion::CURRENT,
+        files: files.into_values().collect(),
+        directories: directories.into_values().collect(),
+    };
     next.sort();
     next
 }
 
-/// Applies `ratchet` semantics: lower existing scoped entries and remove stale ones.
+/// Applies `tighten` semantics: lower existing scoped entries and remove stale ones.
 ///
 /// Entries outside `scope` are preserved. Entries inside `scope` are never
 /// raised and no new entries are created.
@@ -66,54 +102,6 @@ pub(super) fn lower_ratchet_scope(
     };
     next.sort();
     Ok(next)
-}
-
-/// Counts existing ratchet ceilings that `baseline` would raise.
-///
-/// New entries are not raises. Missing entries are handled by scoped/full
-/// replacement, not by this guard.
-pub(super) fn ratchet_raise_count(
-    previous: &RatchetFile,
-    current: &RatchetFile,
-) -> sprawl_guard_lib::Result<usize> {
-    let previous = RatchetLookup::try_from(previous.clone())?;
-    let current = RatchetLookup::try_from(current.clone())?;
-    Ok(current
-        .files()
-        .iter()
-        .filter(|entry| {
-            let (key, current) = *entry;
-            previous
-                .file_ceiling(key)
-                .is_some_and(|previous| *current > previous)
-        })
-        .count()
-        + current
-            .directories()
-            .iter()
-            .filter(|entry| {
-                let (key, current) = *entry;
-                previous
-                    .directory_ceiling(key)
-                    .is_some_and(|previous| *current > previous)
-            })
-            .count())
-}
-
-fn preserve_out_of_scope(previous: RatchetFile, scope: &RatchetScope) -> RatchetFile {
-    RatchetFile {
-        schema_version: RatchetSchemaVersion::CURRENT,
-        files: previous
-            .files
-            .into_iter()
-            .filter(|entry| !scope.contains(&entry.path))
-            .collect(),
-        directories: previous
-            .directories
-            .into_iter()
-            .filter(|entry| !scope.contains(&entry.path))
-            .collect(),
-    }
 }
 
 #[cfg(test)]
@@ -168,7 +156,7 @@ mod tests {
         }
 
         #[test]
-        fn raise_detection_compares_each_group_independently() {
+        fn updating_increases_only_the_changed_group_when_allowed() {
             let previous = parse_ratchet(indoc! {r#"
                 schema_version = 1
 
@@ -200,7 +188,12 @@ mod tests {
                 leaf_files = 3
             "#});
 
-            assert_eq!(ratchet_raise_count(&previous, &current).unwrap(), 1);
+            let next = update_ratchet(previous, current, CeilingUpdatePolicy::AllowIncreases);
+
+            assert_eq!(next.directories[0].group, LanguageGroupId::Source);
+            assert_eq!(next.directories[0].leaf_files.get(), 5);
+            assert_eq!(next.directories[1].group, LanguageGroupId::Documentation);
+            assert_eq!(next.directories[1].leaf_files.get(), 3);
         }
 
         #[test]
@@ -255,7 +248,7 @@ mod tests {
         use super::*;
 
         #[test]
-        fn raise_detection_compares_each_role_independently() {
+        fn updating_preserves_existing_roles_without_explicit_increases() {
             let previous = parse_ratchet(indoc! {r#"
                 schema_version = 1
 
@@ -287,7 +280,12 @@ mod tests {
                 leaf_files = 3
             "#});
 
-            assert_eq!(ratchet_raise_count(&previous, &current).unwrap(), 1);
+            let next = update_ratchet(previous, current, CeilingUpdatePolicy::Preserve);
+
+            assert_eq!(next.directories[0].role, SourceKind::Production);
+            assert_eq!(next.directories[0].leaf_files.get(), 5);
+            assert_eq!(next.directories[1].role, SourceKind::Test);
+            assert_eq!(next.directories[1].leaf_files.get(), 2);
         }
     }
 

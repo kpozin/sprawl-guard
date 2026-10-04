@@ -118,4 +118,8 @@ fn incident_severity(policy: TraversalErrorPolicy) -> TraversalIncidentSeverity 
 mod matcher_tests;
 
 #[cfg(test)]
+#[path = "non_utf8_discovery_tests.rs"]
+mod non_utf8_tests;
+
+#[cfg(test)]
 mod tests;

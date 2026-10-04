@@ -140,7 +140,7 @@ export function validateReleaseVersions(args: {
       };
 }
 
-/** Determines whether GitHub should mark a release as prerelease or latest. */
+/** Classifies a GitHub release from its SemVer version and npm channel. */
 export function classifyGitHubRelease(
   releaseVersion: ReleaseVersion,
   npmDistTag: NpmDistTag,

@@ -4,6 +4,8 @@ use serde_json::json;
 
 use super::common::*;
 
+mod ignore;
+
 mod when_a_check_succeeds {
     use super::*;
 
@@ -23,7 +25,9 @@ mod when_a_check_succeeds {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(
             stdout(&output),
-            concat!(
+            format!(
+                "Policy: authored config at {}.\n\n{}{}",
+                root.path().join("sprawl-guard.toml").display(),
                 "No sprawl-guard violations found.\n",
                 "Checked 2 source files in 2 directories across 2 languages.\n",
             ),
@@ -47,7 +51,163 @@ mod when_a_check_succeeds {
                 "languages_detected": 2,
             }),
         );
+        assert_eq!(
+            report["config_source"],
+            json!({
+                "kind": "authored",
+                "path": root.path().join("sprawl-guard.toml").display().to_string(),
+            })
+        );
         assert_eq!(stderr(&output), "");
+    }
+}
+
+mod when_the_working_directory_changes {
+    use super::*;
+
+    fn write_root_policy_fixture(root: &TempDir) {
+        write_rust_file_limit_config(root, 1);
+        write_rust_source_with_function_count(root, "src/lib.rs", 2);
+    }
+
+    #[test]
+    fn it_makes_built_in_fallback_visible_from_a_nested_directory() {
+        let root = TempDir::new().unwrap();
+        write_root_policy_fixture(&root);
+        let nested = root.path().join("src");
+
+        let output = sprawl_guard_no_root()
+            .current_dir(&nested)
+            .args(["check", "--format", "json"])
+            .output()
+            .unwrap();
+        let report = json_stdout(&output);
+        let human = sprawl_guard_no_root()
+            .current_dir(&nested)
+            .arg("check")
+            .output()
+            .unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            report["root"],
+            nested.canonicalize().unwrap().display().to_string()
+        );
+        assert_eq!(report["config_source"], json!({"kind": "built_in"}));
+        assert!(stdout(&human).contains("Policy: built-in defaults"));
+    }
+
+    #[test]
+    fn it_honors_an_explicit_root_and_config_from_a_nested_directory() {
+        let root = TempDir::new().unwrap();
+        write_root_policy_fixture(&root);
+        let nested = root.path().join("src");
+
+        let output = sprawl_guard_no_root()
+            .current_dir(&nested)
+            .arg("--root")
+            .arg(root.path())
+            .args(["--config", "sprawl-guard.toml", "check", "--format", "json"])
+            .output()
+            .unwrap();
+        let report = json_stdout(&output);
+
+        assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+        assert_eq!(
+            report["root"],
+            root.path().canonicalize().unwrap().display().to_string()
+        );
+        assert_eq!(
+            report["config_source"],
+            json!({
+                "kind": "authored",
+                "path": root.path().join("sprawl-guard.toml").display().to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn it_selects_an_intentional_nested_project_config() {
+        let root = TempDir::new().unwrap();
+        write_root_policy_fixture(&root);
+        let nested = root.path().join("src");
+        write_file(
+            &root,
+            "src/sprawl-guard.toml",
+            indoc! {r#"
+                schema_version = 2
+
+                [limits.max_lines_per_file]
+                production = 1
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+
+        let output = sprawl_guard_no_root()
+            .current_dir(&nested)
+            .args(["check", "--format", "json"])
+            .output()
+            .unwrap();
+        let report = json_stdout(&output);
+
+        assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+        assert_eq!(
+            report["config_source"],
+            json!({
+                "kind": "authored",
+                "path": nested.join("sprawl-guard.toml").display().to_string(),
+            })
+        );
+    }
+}
+
+mod when_a_check_is_scoped {
+    use super::*;
+
+    fn write_sibling_fanout_fixture(root: &TempDir) {
+        write_config(
+            root,
+            indoc! {r#"
+                [limits.max_leaf_files_per_directory]
+                production = 1
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_file(root, "safe/lib.rs", "fn safe() {}\n");
+        write_file(root, "crowded/a.rs", "fn a() {}\n");
+        write_file(root, "crowded/b.rs", "fn b() {}\n");
+    }
+
+    #[test]
+    fn it_distinguishes_scoped_success_from_a_failing_full_repository_check() {
+        let root = TempDir::new().unwrap();
+        write_sibling_fanout_fixture(&root);
+
+        let (scoped_output, scoped) =
+            run_json(&root, &["check", "safe/lib.rs", "--format", "json"]);
+        let (full_output, full) = run_check_json(&root);
+        let human = sprawl_guard(&root)
+            .args(["check", "safe/lib.rs"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&scoped_output, exit_codes::SUCCESS);
+        assert_eq!(
+            scoped["scope"],
+            json!({"kind": "paths", "paths": ["safe/lib.rs"]})
+        );
+        assert_exit_code(&full_output, exit_codes::CHECK_FAILURE);
+        assert_eq!(full["scope"], json!({"kind": "all"}));
+        assert_eq!(full["violations"][0]["kind"], "directory_fanout");
+        assert_exit_code(&human, exit_codes::SUCCESS);
+        assert!(stdout(&human).contains("Policy: authored config at"));
+        assert!(
+            stdout(&human).contains("No sprawl-guard violations found in the requested scope.\n")
+        );
     }
 }
 
@@ -166,6 +326,33 @@ mod when_a_measured_file_ratchet_is_reported_as_json {
     }
 }
 
+mod when_a_dependency_lockfile_has_existing_ratchet_entries {
+    use super::*;
+
+    #[test]
+    fn it_reports_the_file_as_absent_and_the_directory_with_its_reduced_measurement() {
+        let root = TempDir::new().unwrap();
+        write_dependency_lockfile_ratchet_fixture(&root);
+
+        let (output, report) = run_check_json(&root);
+
+        assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+        let violations = report["violations"].as_array().unwrap();
+        let file = violations
+            .iter()
+            .find(|violation| violation["kind"] == "file_loc_stale")
+            .unwrap();
+        assert_eq!(file["path"], "src/pnpm-lock.yaml");
+        assert_eq!(file["actual"], serde_json::Value::Null);
+        let directory = violations
+            .iter()
+            .find(|violation| violation["kind"] == "directory_fanout_stale")
+            .unwrap();
+        assert_eq!(directory["path"], "src");
+        assert_eq!(directory["actual"], 1);
+    }
+}
+
 mod when_rust_production_source_has_file_wide_cfg_test {
     use super::*;
 
@@ -198,7 +385,9 @@ mod when_rust_production_source_has_file_wide_cfg_test {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(
             stdout(&output),
-            concat!(
+            format!(
+                "Policy: authored config at {}.\n\n{}{}",
+                root.path().join("sprawl-guard.toml").display(),
                 "No sprawl-guard violations found.\n",
                 "Checked 1 source file in 1 directory across 1 language.\n",
             )
@@ -304,6 +493,10 @@ mod when_default_traversal_error_policy_fails {
             json!({
                 "status": "error",
                 "root": root.path().canonicalize().unwrap().display().to_string(),
+                "config_source": {
+                    "kind": "authored",
+                    "path": root.path().join("sprawl-guard.toml").display().to_string(),
+                },
                 "coverage": {
                     "kind": "partial",
                     "traversal_incidents": [{
@@ -334,6 +527,7 @@ mod when_default_traversal_error_policy_fails {
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
         assert_eq!(stdout(&output), "");
+        assert!(stderr.contains("Policy: authored config at"));
         assert!(stderr.contains("Traversal failed under"));
         assert!(stderr.contains("symlink loop found at real/cycle"));
     }

@@ -42,29 +42,29 @@ jobs:
       - name: Dry-run publish library crate
         run: cargo publish --locked --dry-run -p sprawl-guard-lib
 
+  runtime-targets:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Resolve native runtime matrix
+        id: matrix
+        run: node npm/scripts/runtime-target-matrix.ts ci
+
   runtime-smoke:
+    needs: runtime-targets
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - runner: macos-15
-            rust_target: aarch64-apple-darwin
-            built_binary_path: target/aarch64-apple-darwin/debug/sprawl-guard
-          - runner: macos-15-intel
-            rust_target: x86_64-apple-darwin
-            built_binary_path: target/x86_64-apple-darwin/debug/sprawl-guard
-          - runner: ubuntu-24.04-arm
-            rust_target: aarch64-unknown-linux-gnu
-            built_binary_path: target/aarch64-unknown-linux-gnu/debug/sprawl-guard
-          - runner: ubuntu-24.04
-            rust_target: x86_64-unknown-linux-gnu
-            built_binary_path: target/x86_64-unknown-linux-gnu/debug/sprawl-guard
-          - runner: ubuntu-24.04
-            rust_target: x86_64-unknown-linux-musl
-            built_binary_path: target/x86_64-unknown-linux-musl/debug/sprawl-guard
-          - runner: windows-2025
-            rust_target: x86_64-pc-windows-msvc
-            built_binary_path: target/x86_64-pc-windows-msvc/debug/sprawl-guard.exe
+        include: ${{ fromJSON(needs.runtime-targets.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out repository

@@ -10,12 +10,10 @@ use serde::{Deserialize, Deserializer, Serialize};
 pub struct TraversalConfig {
     /// Which symlinks may be followed during source discovery.
     pub follow_symlinks: SymlinkTraversal,
-    /// Whether native traversal should stay on the root's filesystem.
+    /// Whether native traversal stays on the root's filesystem.
     ///
     /// WASI accepts and reports this configured value but cannot enforce it.
     pub same_file_system: bool,
-    /// Maximum traversal depth from the repository root.
-    pub max_depth: TraversalDepth,
     /// Maximum number of filesystem entries yielded during source discovery.
     pub max_entries: TraversalEntryLimit,
     /// Maximum byte size for a source file before configured-LOC counting.
@@ -39,12 +37,12 @@ pub enum SymlinkTraversal {
 }
 
 impl SymlinkTraversal {
-    /// Returns whether symlinked files should be counted as source files.
+    /// Returns whether the policy counts symlinked files as source files.
     pub const fn follows_files(self) -> bool {
         matches!(self, Self::Files | Self::FilesAndDirectories)
     }
 
-    /// Returns whether traversal should descend through symlinked directories.
+    /// Returns whether the policy follows symlinked directories during traversal.
     pub const fn follows_directories(self) -> bool {
         matches!(self, Self::Directories | Self::FilesAndDirectories)
     }
@@ -62,57 +60,6 @@ pub enum TraversalErrorPolicy {
     Fail,
     /// Report recoverable traversal incidents as warnings and continue.
     Warn,
-}
-
-/// Error returned when a traversal depth limit is invalid.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum TraversalDepthError {
-    /// Traversal depth must include at least one path level.
-    #[error("traversal max_depth must be greater than zero")]
-    Zero,
-}
-
-/// Maximum filesystem traversal depth from the repository root.
-#[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
-#[serde(transparent)]
-pub struct TraversalDepth(NonZeroU32);
-
-impl TraversalDepth {
-    /// Creates a traversal depth limit.
-    pub fn new(value: u32) -> Result<Self, TraversalDepthError> {
-        let Some(value) = NonZeroU32::new(value) else {
-            return Err(TraversalDepthError::Zero);
-        };
-        Ok(Self(value))
-    }
-
-    /// Creates a traversal depth limit from a trusted built-in value.
-    pub(crate) const fn trusted(value: u32) -> Self {
-        let Some(value) = NonZeroU32::new(value) else {
-            panic!("trusted traversal depth must be greater than zero");
-        };
-        Self(value)
-    }
-
-    /// Returns the raw depth as a `usize` for traversal backends.
-    pub const fn get(self) -> usize {
-        self.0.get() as usize
-    }
-}
-
-impl fmt::Display for TraversalDepth {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.get().fmt(formatter)
-    }
-}
-
-impl<'de> Deserialize<'de> for TraversalDepth {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserialize_u32_limit(deserializer, Self::new)
-    }
 }
 
 /// Error returned when a traversal entry limit is invalid.
@@ -235,9 +182,6 @@ pub(super) fn merge_traversal(config: &mut TraversalConfig, partial: PartialTrav
     if let Some(value) = partial.same_file_system {
         config.same_file_system = value;
     }
-    if let Some(value) = partial.max_depth {
-        config.max_depth = value;
-    }
     if let Some(value) = partial.max_entries {
         config.max_entries = value;
     }
@@ -252,10 +196,9 @@ pub(super) fn merge_traversal(config: &mut TraversalConfig, partial: PartialTrav
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PartialTraversalConfig {
-    follow_symlinks: Option<SymlinkTraversal>,
-    same_file_system: Option<bool>,
-    max_depth: Option<TraversalDepth>,
-    max_entries: Option<TraversalEntryLimit>,
-    max_file_bytes: Option<SourceFileByteLimit>,
-    error_policy: Option<TraversalErrorPolicy>,
+    pub(super) follow_symlinks: Option<SymlinkTraversal>,
+    pub(super) same_file_system: Option<bool>,
+    pub(super) max_entries: Option<TraversalEntryLimit>,
+    pub(super) max_file_bytes: Option<SourceFileByteLimit>,
+    pub(super) error_policy: Option<TraversalErrorPolicy>,
 }

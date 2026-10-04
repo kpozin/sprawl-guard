@@ -9,7 +9,11 @@ use serde::{Serialize, Serializer};
 use crate::classification::{SourceKind, TraversalIncident};
 use crate::code_line_counter::LocMeasurement;
 use crate::rust_cfg::RustCfgTestWarning;
-use crate::{DiagnosticDetail, LanguageGroupId, LanguageId, LeafFiles, LocLimit, RelativePath};
+use crate::{
+    ConfigSource, DiagnosticDetail, LanguageGroupId, LanguageId, LeafFiles, LocLimit, RelativePath,
+};
+
+use super::runner::CheckScope;
 
 mod ratchet;
 mod summary;
@@ -18,9 +22,8 @@ pub use ratchet::{
     DirectoryRatchetIncreasedViolation, DirectoryRatchetStaleMeasuredViolation,
     DirectoryRatchetStaleMissingViolation, FileRatchetIncreasedViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, RatchetIncreasedViolation,
-    RatchetIncreasedViolationKind, RatchetLimit, RatchetStaleMeasuredViolation,
-    RatchetStaleMissingViolation, RatchetStaleViolation, RatchetStaleViolationKind,
-    RatchetViolation, RatchetViolationKind,
+    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
+    RatchetStaleViolation, RatchetViolation, RatchetViolationKind,
 };
 pub use summary::{CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount, ScanSummary};
 
@@ -32,6 +35,8 @@ pub use summary::{CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckReport {
     root: ReportRoot,
+    scope: CheckScope,
+    config_source: ConfigSource,
     counter: CounterInfo,
     coverage: AnalysisCoverage,
     summary: ScanSummary,
@@ -44,9 +49,11 @@ impl Serialize for CheckReport {
     where
         S: Serializer,
     {
-        let mut report = serializer.serialize_struct("CheckReport", 7)?;
+        let mut report = serializer.serialize_struct("CheckReport", 9)?;
         report.serialize_field("status", &self.status())?;
         report.serialize_field("root", &self.root)?;
+        report.serialize_field("scope", &self.scope)?;
+        report.serialize_field("config_source", &self.config_source)?;
         report.serialize_field("counter", &self.counter)?;
         report.serialize_field("coverage", &self.coverage)?;
         report.serialize_field("summary", &self.summary)?;
@@ -58,7 +65,7 @@ impl Serialize for CheckReport {
 
 impl CheckReport {
     pub(crate) fn new(
-        root: ReportRoot,
+        context: CheckContext,
         counter: CounterInfo,
         coverage: AnalysisCoverage,
         summary: ScanSummary,
@@ -66,7 +73,9 @@ impl CheckReport {
         violations: Vec<CheckViolation>,
     ) -> Self {
         Self {
-            root,
+            root: context.root,
+            scope: context.scope,
+            config_source: context.config_source,
             counter,
             coverage,
             summary,
@@ -78,13 +87,14 @@ impl CheckReport {
     /// Creates a complete check report.
     pub fn complete(
         root: ReportRoot,
+        config_source: ConfigSource,
         counter: CounterInfo,
         summary: ScanSummary,
         warnings: Vec<CheckWarning>,
         violations: Vec<CheckViolation>,
     ) -> Self {
         Self::new(
-            root,
+            CheckContext::new(root, CheckScope::All, config_source),
             counter,
             AnalysisCoverage::Complete,
             summary,
@@ -96,6 +106,7 @@ impl CheckReport {
     /// Creates a partial check report from non-empty traversal incidents.
     pub fn partial(
         root: ReportRoot,
+        config_source: ConfigSource,
         counter: CounterInfo,
         summary: ScanSummary,
         warnings: Vec<CheckWarning>,
@@ -103,7 +114,7 @@ impl CheckReport {
         violations: Vec<CheckViolation>,
     ) -> Self {
         Self::new(
-            root,
+            CheckContext::new(root, CheckScope::All, config_source),
             counter,
             AnalysisCoverage::Partial {
                 traversal_incidents,
@@ -128,12 +139,22 @@ impl CheckReport {
         self.root.as_str()
     }
 
+    /// Returns the normalized path scope requested by the caller.
+    pub fn scope(&self) -> &CheckScope {
+        &self.scope
+    }
+
+    /// Returns the source from which the resolved policy was assembled.
+    pub fn config_source(&self) -> &ConfigSource {
+        &self.config_source
+    }
+
     /// Returns LOC backend metadata used to produce measurements.
     pub fn counter(&self) -> &CounterInfo {
         &self.counter
     }
 
-    /// Returns whether discovery and measurement covered every path required by config.
+    /// Returns whether discovery and measurement covered every path required within the requested scope.
     pub fn analysis_complete(&self) -> bool {
         matches!(self.coverage, AnalysisCoverage::Complete)
     }
@@ -166,6 +187,23 @@ impl CheckReport {
     /// Returns whether the report contains at least one policy violation.
     pub fn has_violations(&self) -> bool {
         !self.violations.is_empty()
+    }
+}
+
+/// Repository selection and policy provenance for one completed check.
+pub(crate) struct CheckContext {
+    root: ReportRoot,
+    scope: CheckScope,
+    config_source: ConfigSource,
+}
+
+impl CheckContext {
+    pub(crate) fn new(root: ReportRoot, scope: CheckScope, config_source: ConfigSource) -> Self {
+        Self {
+            root,
+            scope,
+            config_source,
+        }
     }
 }
 
@@ -340,7 +378,7 @@ pub struct DirectoryFanoutViolation {
     pub limit: LeafFiles,
     /// Ratchet limit that covers this violation, when available.
     ///
-    /// `None` means no ratchet baseline was evaluated or no ratchet entry
+    /// `None` means no ratchet file was evaluated or no ratchet entry
     /// covered this directory.
     pub ratchet: Option<LeafFiles>,
     /// Direct child leaf files that contributed to `actual`.
@@ -383,7 +421,7 @@ pub struct FileLocViolation {
     pub limit: LocLimit,
     /// Ratchet limit that covers this violation, when available.
     ///
-    /// `None` means no ratchet baseline was evaluated or no ratchet entry
+    /// `None` means no ratchet file was evaluated or no ratchet entry
     /// covered this file.
     pub ratchet: Option<LocLimit>,
 }

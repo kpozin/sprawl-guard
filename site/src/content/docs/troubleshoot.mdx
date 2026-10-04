@@ -73,10 +73,10 @@ pnpm exec sprawl-guard --version
 
 ## Configuration is missing or invalid
 
-Sprawl Guard uses built-in defaults when neither `sprawl-guard.toml` nor `.sprawlrc.toml` exists.
-Run `sprawl-guard init --dry-run` to preview a configuration. If both files exist, remove one or
-select one with `--config PATH`. Parse errors reject unknown fields and identify the file and
-location.
+Sprawl Guard uses built-in defaults when `sprawl-guard.toml` does not exist under the repository
+root. Run `sprawl-guard init --dry-run` to preview a configuration. Alternative filenames are not
+discovered implicitly; select one explicitly with `--config PATH`. Parse errors reject unknown
+fields and identify the file and location.
 
 ## No files were checked, or the check passed unexpectedly
 
@@ -90,13 +90,13 @@ Use `sprawl-guard explain PATH`. It reports language ownership, production or te
 effective limits, matching overrides, and Rust `cfg(test)` handling. Overlapping language includes
 can make ownership ambiguous; later matching overrides win for fields they set.
 
-## A baseline entry is stale, missing, or conflicted
+## A ratchet entry is stale, missing, or conflicted
 
 A stale entry means that a measurement improved, disappeared, or no longer exceeds its configured
-limit. Preview `sprawl-guard ratchet PATH`, then write it with `sprawl-guard ratchet PATH --write`.
+limit. Preview `sprawl-guard tighten PATH`, then write it with `sprawl-guard tighten PATH --write`.
 
-If a current violation has no entry, preview `sprawl-guard baseline PATH`, then write it with
-`sprawl-guard baseline PATH --write`.
+If a current violation has no entry, preview `sprawl-guard update PATH`, then write it with
+`sprawl-guard update PATH --write`.
 
 After concurrent edits, update your checkout and regenerate the affected entries. Never resolve a
 ratchet conflict by keeping an unexplained higher ceiling.
@@ -104,9 +104,9 @@ ratchet conflict by keeping an unexplained higher ceiling.
 ## Local and CI results differ
 
 Compare the output of `sprawl-guard --version`, checkout contents, repository root, configuration
-path, resolved configuration, and command line. CI should run `sprawl-guard check` without path
-scopes or write flags. Ignore rules and filesystem traversal settings can also change which files
-are visible.
+path, resolved configuration, and command line. Run `sprawl-guard check` in CI without path scopes
+or write flags. Ignore rules and filesystem traversal settings can also change which files are
+visible.
 
 ## JSON or SARIF is rejected
 

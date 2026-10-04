@@ -1,9 +1,8 @@
 # sprawl-guard-lib
 
-`sprawl-guard-lib` is the implementation crate behind the `sprawl-guard` CLI.
-
-The library API is not stable. Prefer the CLI unless you can pin an exact library version and adapt
-to breaking changes.
+`sprawl-guard-lib` implements the `sprawl-guard` CLI. Its library API is unstable. For normal use,
+install the CLI instead. If you depend on the library directly, pin an exact version and expect
+breaking API changes.
 
 ## WASI
 

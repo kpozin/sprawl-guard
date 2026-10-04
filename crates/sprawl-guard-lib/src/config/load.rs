@@ -1,37 +1,38 @@
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use globset::{Glob, GlobSetBuilder};
-use schemars::generate::SchemaSettings;
-use schemars::transform::ReplaceConstValue;
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 
-use crate::GlobPattern;
 #[cfg(test)]
 use crate::LanguageId;
-use crate::value::path::normalize_under_root;
+use crate::value::schema::authored_toml_schema_generator;
 use crate::{Result, SprawlError};
 
 use super::defaults::built_in_config;
 use super::files::{PartialFilesConfig, merge_global_file_excludes};
 use super::ignore::{PartialIgnoreConfig, merge_ignore};
-use super::include::{IncludeFragment, PartialConfigInclude, merge_config_include};
 use super::language_groups::{PartialLanguageGroupsConfig, resolve_language_groups};
 use super::languages::{PartialLanguagesConfig, merge_language};
 use super::limits::{PartialLimits, merge_limits};
-use super::output::{PartialOutputConfig, merge_output};
+use super::output::{OutputFormat, PartialOutputConfig, merge_output};
 use super::ratchet::{PartialRatchetConfig, merge_ratchet};
 use super::tests::{PartialTestsConfig, merge_tests};
-use super::traversal::{PartialTraversalConfig, merge_traversal};
-use super::{Config, ConfigSchemaVersion, PathOverride};
+use super::traversal::{
+    PartialTraversalConfig, SourceFileByteLimit, SymlinkTraversal, TraversalEntryLimit,
+    TraversalErrorPolicy, merge_traversal,
+};
+use super::{
+    AuthoredConfigPath, Config, ConfigSchemaVersion, ConfigSource, PathOverride, ResolvedPolicy,
+};
 
 const PRIMARY_CONFIG_FILE: &str = "sprawl-guard.toml";
-const ALIAS_CONFIG_FILE: &str = ".sprawlrc.toml";
-const CONFIG_SCHEMA_ID: &str =
-    "https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.schema.json";
-const CONFIG_SCHEMA_META_SCHEMA: &str = "http://json-schema.org/draft-04/schema#";
+
+mod migration;
+
+pub use migration::{
+    ConfigUpgrade, MigratedAuthoredConfigDocument, PreparedConfigUpgrade, prepare_config_upgrade,
+};
 
 /// Options used while loading configuration.
 #[derive(Clone, Debug)]
@@ -42,67 +43,60 @@ pub struct LoadOptions {
     pub config: Option<PathBuf>,
 }
 
-/// Loaded resolved configuration and source metadata.
+/// Loaded resolved configuration and its provenance.
 #[derive(Clone, Debug)]
 pub struct LoadedConfig {
     /// Resolved configuration.
     pub config: Config,
-    /// Root config file path, if one was found.
-    pub source: Option<PathBuf>,
-    /// Included override fragment paths.
-    pub includes: Vec<PathBuf>,
+    source: ConfigSource,
 }
 
-/// Loads the resolved configuration.
+impl LoadedConfig {
+    /// Binds the resolved configuration to the source from which it was assembled.
+    pub fn resolved_policy(&self) -> ResolvedPolicy<'_> {
+        ResolvedPolicy::new(&self.config, self.source.clone())
+    }
+}
+
+/// Loads the resolved current configuration.
 pub fn load_resolved_config(options: &LoadOptions) -> Result<LoadedConfig> {
-    let root = options
+    let root = resolve_config_root(options)?;
+    let source_path = discover_config(&root, options.config.as_deref())?;
+    let mut config = built_in_config();
+
+    let source = if let Some(path) = source_path {
+        let path = AuthoredConfigPath::new(path)?;
+        let partial = read_current_root_config(path.as_path())?;
+        merge_root_config(&mut config, partial)?;
+        ConfigSource::Authored { path }
+    } else {
+        ConfigSource::BuiltIn
+    };
+
+    Ok(LoadedConfig { config, source })
+}
+
+fn resolve_config_root(options: &LoadOptions) -> Result<PathBuf> {
+    options
         .root
         .canonicalize()
         .map_err(|source| SprawlError::ResolveRoot {
             path: options.root.clone(),
             source,
-        })?;
-    let source = discover_config(&root, options.config.as_deref())?;
-    let mut config = built_in_config();
-    let mut includes = Vec::new();
-
-    if let Some(source) = &source {
-        let partial = read_root_config(source)?;
-        merge_root_config(&mut config, partial)?;
-        includes = load_includes(&root, source, &config.config.include)?;
-        for include in &includes {
-            let fragment = read_include_fragment(include)?;
-            config.overrides.extend(fragment.overrides);
-        }
-    }
-
-    Ok(LoadedConfig {
-        config,
-        source,
-        includes,
-    })
+        })
 }
 
 /// Generates the JSON Schema for user-authored root configuration files.
 pub fn authored_config_json_schema() -> Schema {
-    let generator = SchemaSettings::draft07()
-        .with(|settings| {
-            settings.meta_schema = Some(CONFIG_SCHEMA_META_SCHEMA.into());
-            settings
-                .transforms
-                .push(Box::new(ReplaceConstValue::default()));
-        })
-        .for_deserialize()
-        .into_generator();
-    let mut schema = generator.into_root_schema_for::<PartialConfig>();
-    schema.insert("id".to_owned(), CONFIG_SCHEMA_ID.into());
+    let mut schema = authored_toml_schema_generator().into_root_schema_for::<PartialConfig>();
+    schema.insert(
+        "id".to_owned(),
+        ConfigSchemaVersion::CURRENT.schema_url().as_str().into(),
+    );
     schema
 }
 
-/// Finds the root config file, honoring an explicit path before conventional names.
-///
-/// Ambiguous implicit config names are rejected so users do not accidentally run with a surprising
-/// mix of `.sprawlrc.toml` and `sprawl-guard.toml`.
+/// Finds the root config file, honoring an explicit path before the conventional name.
 fn discover_config(root: &Path, explicit: Option<&Path>) -> Result<Option<PathBuf>> {
     if let Some(explicit) = explicit {
         let path = if explicit.is_absolute() {
@@ -117,156 +111,55 @@ fn discover_config(root: &Path, explicit: Option<&Path>) -> Result<Option<PathBu
     }
 
     let primary = root.join(PRIMARY_CONFIG_FILE);
-    let alias = root.join(ALIAS_CONFIG_FILE);
-    match (primary.exists(), alias.exists()) {
-        (true, true) => Err(SprawlError::AmbiguousConfig { primary, alias }),
-        (true, false) => Ok(Some(primary)),
-        (false, true) => Ok(Some(alias)),
-        (false, false) => Ok(None),
+    Ok(primary.exists().then_some(primary))
+}
+
+fn read_current_root_config(path: &Path) -> Result<PartialConfig> {
+    let contents = read_config_text(path)?;
+    let value = parse_config_value(path, &contents)?;
+    let version = root_schema_version(&value)?;
+    if version != ConfigSchemaVersion::CURRENT {
+        return Err(SprawlError::UnsupportedConfigSchemaVersion {
+            version: version.into(),
+        });
     }
+    deserialize_config(path, value)
 }
 
-fn read_root_config(path: &Path) -> Result<PartialConfig> {
-    let contents = fs::read_to_string(path).map_err(|source| SprawlError::ReadConfig {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let document =
-        toml::from_str::<toml::Value>(&contents).map_err(|source| SprawlError::ParseToml {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    validate_root_schema_version(&document)?;
-    document
-        .try_into()
-        .map_err(|source| SprawlError::ParseToml {
-            path: path.to_path_buf(),
-            source,
-        })
-}
-
-fn validate_root_schema_version(document: &toml::Value) -> Result<()> {
-    let Some(version) = document.get("schema_version") else {
-        return Err(SprawlError::MissingConfigSchemaVersion);
-    };
-    if let Some(version) = version.as_integer() {
-        ConfigSchemaVersion::try_from(version)?;
-    }
-    Ok(())
-}
-
-/// Reads an included config fragment after enforcing the fragment-only schema.
-///
-/// Include files are intentionally restricted to overrides. Global settings must stay in the root
-/// config so resolved config precedence remains obvious.
-fn read_include_fragment(path: &Path) -> Result<IncludeFragment> {
-    let contents = fs::read_to_string(path).map_err(|source| SprawlError::ReadConfig {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let value =
-        toml::from_str::<toml::Value>(&contents).map_err(|source| SprawlError::ParseToml {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    reject_non_override_fragment_tables(path, &value)?;
-    toml::from_str(&contents).map_err(|source| SprawlError::ParseToml {
+fn read_config_text(path: &Path) -> Result<String> {
+    fs::read_to_string(path).map_err(|source| SprawlError::ReadConfig {
         path: path.to_path_buf(),
         source,
     })
 }
 
-/// Rejects include fragments that attempt to define root-only config tables.
-fn reject_non_override_fragment_tables(path: &Path, value: &toml::Value) -> Result<()> {
-    let Some(table) = value.as_table() else {
-        return Err(SprawlError::IncludeFragmentNotTable {
-            path: path.to_path_buf(),
-        });
-    };
-    for key in table.keys() {
-        if key != "overrides" {
-            return Err(SprawlError::IncludeFragmentUnsupportedTable {
-                path: path.to_path_buf(),
-                table: key.clone(),
-            });
-        }
-    }
-    Ok(())
-}
-
-/// Resolves include globs relative to the root config directory.
-///
-/// Returned paths are sorted by normalized repository-relative path to make merge order
-/// deterministic across platforms and filesystems.
-fn load_includes(root: &Path, source: &Path, patterns: &[GlobPattern]) -> Result<Vec<PathBuf>> {
-    let source_dir = source.parent().unwrap_or(root);
-    let candidates = files_under(source_dir)?;
-    let mut matched = BTreeSet::new();
-
-    for pattern in patterns {
-        let glob = Glob::new(pattern.as_str()).map_err(|source| SprawlError::InvalidGlob {
-            pattern: pattern.to_string(),
-            source,
-        })?;
-        let mut builder = GlobSetBuilder::new();
-        builder.add(glob);
-        let set = builder.build().map_err(|source| SprawlError::InvalidGlob {
-            pattern: pattern.to_string(),
-            source,
-        })?;
-
-        for candidate in &candidates {
-            let relative = normalize_under_root(source_dir, candidate)?;
-            if set.is_match(relative.as_str()) {
-                matched.insert(relative);
-            }
-        }
-    }
-
-    Ok(matched
-        .into_iter()
-        .map(|relative| source_dir.join(relative.to_path_buf()))
-        .collect())
-}
-
-/// Lists regular files below a directory in deterministic order.
-fn files_under(root: &Path) -> Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
-    collect_files(root, &mut files)?;
-    files.sort();
-    Ok(files)
-}
-
-/// Recursively collects regular files while refusing to descend through symlinks.
-///
-/// Config includes are a trusted input surface; skipping symlink traversal keeps include expansion
-/// bounded to the intended directory tree.
-fn collect_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(root).map_err(|source| SprawlError::ReadDirectory {
-        path: root.to_path_buf(),
+fn parse_config_value(path: &Path, contents: &str) -> Result<toml::Value> {
+    toml::from_str(contents).map_err(|source| SprawlError::ParseToml {
+        path: path.to_path_buf(),
         source,
-    })? {
-        let entry = entry.map_err(|source| SprawlError::ReadDirectoryEntry {
-            path: root.to_path_buf(),
-            source,
-        })?;
-        let path = entry.path();
-        let file_type = entry
-            .file_type()
-            .map_err(|source| SprawlError::ReadFileType {
-                path: path.clone(),
-                source,
-            })?;
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            collect_files(&path, files)?;
-        } else if file_type.is_file() {
-            files.push(path);
-        }
+    })
+}
+
+fn deserialize_config<T: for<'de> Deserialize<'de>>(path: &Path, value: toml::Value) -> Result<T> {
+    value.try_into().map_err(|source| SprawlError::ParseToml {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn root_schema_version(document: &toml::Value) -> Result<ConfigSchemaVersion> {
+    let Some(version) = document.get("schema_version") else {
+        return Err(SprawlError::MissingConfigSchemaVersion);
+    };
+    match version.as_integer() {
+        Some(version) => ConfigSchemaVersion::try_from(version),
+        None => Err(SprawlError::InvalidConfigSchemaVersionType),
     }
-    Ok(())
+}
+
+fn validate_partial_config(partial: PartialConfig) -> Result<()> {
+    let mut config = built_in_config();
+    merge_root_config(&mut config, partial)
 }
 
 /// Applies root config fields over built-in defaults in precedence order.
@@ -274,11 +167,8 @@ fn collect_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 /// This merge is deliberately not generic: each section has different replacement or append
 /// semantics, and spelling those out here keeps config precedence auditable.
 fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> {
-    // Keep this destructuring exhaustive so new root config fields fail compilation until their
-    // precedence and merge semantics are handled here.
     let PartialConfig {
         schema_version,
-        config: config_include,
         limits,
         ignore,
         traversal,
@@ -292,9 +182,6 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
     } = partial;
 
     config.schema_version = schema_version;
-    if let Some(value) = config_include {
-        merge_config_include(&mut config.config, value);
-    }
     if let Some(value) = limits {
         merge_limits(&mut config.limits, value);
     }
@@ -347,13 +234,12 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
     Ok(())
 }
 
-/// User-authored root configuration before defaults and includes are resolved.
+/// User-authored root configuration before defaults are resolved.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(title = "Sprawl Guard configuration")]
 struct PartialConfig {
     schema_version: ConfigSchemaVersion,
-    config: Option<PartialConfigInclude>,
     limits: Option<PartialLimits>,
     ignore: Option<PartialIgnoreConfig>,
     traversal: Option<PartialTraversalConfig>,

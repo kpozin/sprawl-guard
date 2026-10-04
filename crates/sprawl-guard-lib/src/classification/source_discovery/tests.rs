@@ -9,14 +9,30 @@ use super::{discover_sources, discover_sources_report};
 use crate::classification::{SourceKind, TraversalIncidentKind, TraversalIncidentSeverity};
 use crate::config::SymlinkTraversal;
 use crate::test_support::{
-    assert_symlink_loop_error, load_config, source_paths, write_config,
-    write_rust_depth_limit_config, write_rust_enabled_config, write_rust_entry_limit_config,
-    write_rust_symlink_traversal_config, write_rust_symlink_traversal_warn_config,
-    write_source_file,
+    assert_symlink_loop_error, load_config, source_paths, write_config, write_rust_enabled_config,
+    write_rust_entry_limit_config, write_rust_symlink_traversal_config,
+    write_rust_symlink_traversal_warn_config, write_source_file,
 };
 
 mod discover_sources {
     use super::*;
+
+    mod when_skipping_hidden_names {
+        use super::*;
+
+        #[test]
+        fn it_prunes_dot_names_but_keeps_regular_names() {
+            let root = tempfile::tempdir().unwrap();
+            write_rust_enabled_config(root.path());
+            write_source_file(root.path(), ".private/lib.rs");
+            write_source_file(root.path(), "src/.hidden.rs");
+            write_source_file(root.path(), "src/visible.rs");
+
+            let sources = discover_sources(root.path(), &load_config(root.path())).unwrap();
+
+            assert_eq!(source_paths(&sources), ["src/visible.rs"]);
+        }
+    }
 
     fn write_ignore_fixture(root: &Path, ignore_file_name: &str) {
         fs::write(root.join(ignore_file_name), "ignored.rs\n").unwrap();
@@ -346,22 +362,6 @@ mod discover_sources {
         }
     }
 
-    mod when_max_depth_is_reached {
-        use super::*;
-
-        #[test]
-        fn it_skips_sources_below_the_limit() {
-            let tempdir = tempfile::tempdir().unwrap();
-            write_rust_depth_limit_config(tempdir.path(), 1);
-            write_source_file(tempdir.path(), "root.rs");
-            write_source_file(tempdir.path(), "src/lib.rs");
-
-            let sources = discover_sources(tempdir.path(), &load_config(tempdir.path())).unwrap();
-
-            assert_eq!(source_paths(&sources), vec!["root.rs"]);
-        }
-    }
-
     mod when_max_entries_is_reached {
         use super::*;
 
@@ -373,11 +373,10 @@ mod discover_sources {
 
             let error = discover_sources(tempdir.path(), &load_config(tempdir.path())).unwrap_err();
 
-            let crate::SprawlError::TraversalFailed { incidents, .. } = error else {
-                panic!("expected traversal failure, got {error}");
-            };
-            assert_eq!(incidents.len(), 1);
-            assert_eq!(incidents[0].kind, TraversalIncidentKind::EntryLimitExceeded);
+            assert!(matches!(
+                error,
+                crate::SprawlError::TraversalEntryLimitExceeded { limit: 1, .. }
+            ));
         }
     }
 

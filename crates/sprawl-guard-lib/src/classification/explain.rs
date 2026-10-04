@@ -4,16 +4,12 @@ use std::path::Path;
 use crate::check::measure_source;
 use crate::config::Config;
 use crate::resolved_limits::LimitResolver;
-use crate::rust_cfg::{
-    RustCfgTestInfo, RustCfgTestStatus, preprocess_rust_cfg_test, rust_cfg_test_policy_info,
-};
-use crate::source_file::read_source_to_string;
 use crate::value::path::{normalize_under_root, resolve_root};
 use crate::{RelativePath, Result, SprawlError};
 
 use super::classifier::Classifier;
 use super::traversal::{is_source_file_candidate, is_walked_file};
-use super::types::{ClassifiedSource, PathClassification, SourceExplanation};
+use super::types::{PathClassification, SourceExplanation};
 
 /// Explains how source discovery classifies one path.
 ///
@@ -71,6 +67,10 @@ pub fn explain_path(root: &Path, path: &Path, config: &Config) -> Result<PathCla
     Classifier::new(config)?.classify(relative)
 }
 
+#[cfg(test)]
+#[path = "explain_scoped_tests.rs"]
+mod scoped_tests;
+
 fn explain_existing_source(
     absolute_path: &Path,
     config: &Config,
@@ -88,29 +88,12 @@ fn explain_existing_source(
         absolute_path,
         resolved_limits.file.included_line_types,
     )?;
-    let rust_cfg_test = rust_cfg_test_explanation(absolute_path, config, &source)?;
     Ok(PathClassification::Source(SourceExplanation::measured(
         source,
         resolved_limits,
-        measurement,
-        rust_cfg_test,
+        measurement.measurement,
+        measurement.rust_cfg_test,
     )))
-}
-
-fn rust_cfg_test_explanation(
-    absolute_path: &Path,
-    config: &Config,
-    source: &ClassifiedSource,
-) -> Result<Option<RustCfgTestInfo>> {
-    let Some(policy_info) = rust_cfg_test_policy_info(config, source) else {
-        return Ok(None);
-    };
-    if policy_info.status != RustCfgTestStatus::PrefilterSkipped {
-        return Ok(Some(policy_info));
-    }
-
-    let source_text = read_source_to_string(absolute_path, config.traversal.max_file_bytes)?;
-    Ok(Some(preprocess_rust_cfg_test(&source_text).info))
 }
 
 fn absolute_lexical_root(root: &Path) -> Result<std::path::PathBuf> {
@@ -144,6 +127,7 @@ mod tests {
     use super::*;
     use crate::classification::SourceExplanation;
     use crate::config::SymlinkTraversal;
+    use crate::rust_cfg::RustCfgTestStatus;
     use crate::test_support::{
         load_config, write_ambiguous_rust_go_config, write_config, write_rust_enabled_config,
         write_rust_entry_limit_config, write_rust_symlink_traversal_config, write_source_file,

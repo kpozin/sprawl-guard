@@ -1,13 +1,14 @@
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
-use crate::{CustomLanguageGroupId, LanguageGroupId, LanguageId};
+use crate::{CustomLanguageGroupId, LanguageGroupId, LanguageId, Result, SprawlError};
 
 use super::{
-    ConfigInclude, ConfigSchemaVersion, FilesConfig, IgnoreConfig, LanguageConfig,
-    LanguageGroupsConfig, LanguageMode, Limits, MaxLinesPerFileLimits, OutputConfig, PathOverride,
-    RatchetConfig, TestsConfig, TraversalConfig,
+    ConfigSchemaVersion, FilesConfig, IgnoreConfig, LanguageConfig, LanguageGroupsConfig,
+    LanguageMode, Limits, MaxLinesPerFileLimits, OutputConfig, PathOverride, RatchetConfig,
+    TestsConfig, TraversalConfig,
 };
 
 /// Fully resolved `sprawl-guard` configuration.
@@ -16,8 +17,6 @@ use super::{
 pub struct Config {
     /// Root configuration schema version.
     pub schema_version: ConfigSchemaVersion,
-    /// Config include settings.
-    pub config: ConfigInclude,
     /// Production source limits.
     pub limits: Limits,
     /// Ignore traversal settings.
@@ -37,6 +36,85 @@ pub struct Config {
     pub ratchet: RatchetConfig,
     /// Output settings.
     pub output: OutputConfig,
+}
+
+/// Source from which a check's resolved policy was assembled.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ConfigSource {
+    /// Built-in policy was used because no authored config was selected.
+    BuiltIn,
+    /// An authored root config was merged over built-in policy.
+    Authored {
+        /// Selected authored config path.
+        path: AuthoredConfigPath,
+    },
+}
+
+/// Absolute path of a selected authored config.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AuthoredConfigPath(PathBuf);
+
+impl AuthoredConfigPath {
+    pub(crate) fn new(path: PathBuf) -> Result<Self> {
+        debug_assert!(path.is_absolute(), "selected config path must be absolute");
+        if path.to_str().is_none() {
+            return Err(SprawlError::NonUtf8ConfigPath { path });
+        }
+        Ok(Self(path))
+    }
+
+    /// Returns the selected config path.
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+
+    /// Returns the selected config path as an owned path.
+    pub fn into_path_buf(self) -> PathBuf {
+        self.0
+    }
+}
+
+impl Serialize for AuthoredConfigPath {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(
+            self.0
+                .to_str()
+                .expect("authored config paths are validated as UTF-8"),
+        )
+    }
+}
+
+/// A resolved configuration coupled to its provenance.
+#[derive(Clone, Debug)]
+pub struct ResolvedPolicy<'config> {
+    config: &'config Config,
+    source: ConfigSource,
+}
+
+impl<'config> ResolvedPolicy<'config> {
+    /// Couples a resolved configuration with its selected source.
+    pub(crate) fn new(config: &'config Config, source: ConfigSource) -> Self {
+        Self { config, source }
+    }
+
+    /// Creates a policy backed only by the built-in configuration.
+    pub fn built_in(config: &'config Config) -> Self {
+        Self::new(config, ConfigSource::BuiltIn)
+    }
+
+    /// Returns the resolved configuration.
+    pub fn config(&self) -> &'config Config {
+        self.config
+    }
+
+    /// Returns the source from which the policy was assembled.
+    pub fn source(&self) -> &ConfigSource {
+        &self.source
+    }
 }
 
 impl Config {

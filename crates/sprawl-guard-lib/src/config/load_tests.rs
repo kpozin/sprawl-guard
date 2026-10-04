@@ -8,7 +8,7 @@ use tokei::LanguageType;
 
 use super::*;
 use crate::config::{
-    ConfigSchemaVersion, LanguageConfig, SourceFileByteLimit, SymlinkTraversal, TraversalDepth,
+    ConfigSchemaVersion, LanguageConfig, SourceFileByteLimit, SymlinkTraversal,
     TraversalEntryLimit, TraversalErrorPolicy,
 };
 use crate::{
@@ -20,7 +20,7 @@ fn load_config_fixture(root: &Path) -> Result<LoadedConfig> {
     let config_path = root.join(PRIMARY_CONFIG_FILE);
     if config_path.exists() {
         let contents = fs::read_to_string(&config_path).unwrap();
-        fs::write(config_path, format!("schema_version = 1\n{contents}")).unwrap();
+        fs::write(config_path, format!("schema_version = 2\n{contents}")).unwrap();
     }
     load_raw_config(root)
 }
@@ -57,7 +57,7 @@ mod when_config_schema_version_is_read {
     }
 
     #[test]
-    fn it_accepts_version_one() {
+    fn it_rejects_version_one_until_upgraded() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
@@ -65,13 +65,16 @@ mod when_config_schema_version_is_read {
         )
         .unwrap();
 
-        let loaded = load_raw_config(tempdir.path()).unwrap();
+        let error = load_raw_config(tempdir.path()).unwrap_err();
 
-        assert_eq!(loaded.config.schema_version, ConfigSchemaVersion::V1);
+        assert!(matches!(
+            error,
+            SprawlError::UnsupportedConfigSchemaVersion { version: 1 }
+        ));
     }
 
     #[test]
-    fn it_rejects_an_unsupported_numeric_version_with_a_typed_error() {
+    fn it_accepts_version_two() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
@@ -79,26 +82,40 @@ mod when_config_schema_version_is_read {
         )
         .unwrap();
 
-        let error = load_raw_config(tempdir.path()).unwrap_err();
+        let loaded = load_raw_config(tempdir.path()).unwrap();
 
-        assert!(matches!(
-            error,
-            SprawlError::UnsupportedConfigSchemaVersion { version: 2 }
-        ));
+        assert_eq!(loaded.config.schema_version, ConfigSchemaVersion::V2);
     }
 
     #[test]
-    fn it_rejects_a_nonnumeric_version_as_invalid_toml_schema() {
+    fn it_rejects_an_unsupported_numeric_version_with_a_typed_error() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
-            "schema_version = \"1\"\n",
+            "schema_version = 3\n",
         )
         .unwrap();
 
         let error = load_raw_config(tempdir.path()).unwrap_err();
 
-        assert!(matches!(error, SprawlError::ParseToml { .. }));
+        assert!(matches!(
+            error,
+            SprawlError::UnsupportedConfigSchemaVersion { version: 3 }
+        ));
+    }
+
+    #[test]
+    fn it_rejects_a_nonnumeric_version_with_a_typed_error() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            "schema_version = \"2\"\n",
+        )
+        .unwrap();
+
+        let error = load_raw_config(tempdir.path()).unwrap_err();
+
+        assert!(matches!(error, SprawlError::InvalidConfigSchemaVersionType));
     }
 
     #[test]
@@ -114,12 +131,91 @@ mod when_config_schema_version_is_read {
     fn it_serializes_the_version_before_root_tables() {
         let serialized = toml::to_string_pretty(&built_in_config()).unwrap();
 
-        assert!(serialized.starts_with("schema_version = 1\n"));
+        assert!(serialized.starts_with("schema_version = 2\n"));
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod non_utf8_authored_config_path {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt as _;
+    use std::path::PathBuf;
+
+    use super::*;
+
+    fn non_utf8_config_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tempdir = tempfile::tempdir().unwrap();
+        let relative_path = PathBuf::from(OsString::from_vec(b"config-\xff.toml".to_vec()));
+        let absolute_path = tempdir.path().join(&relative_path);
+        fs::write(&absolute_path, "schema_version = 2\n").unwrap();
+        (tempdir, relative_path, absolute_path)
+    }
+
+    mod when_loading_resolved_config {
+        use super::*;
+
+        #[test]
+        fn it_rejects_the_path_before_structured_provenance_can_be_lossy() {
+            let (tempdir, relative_path, absolute_path) = non_utf8_config_fixture();
+
+            let error = load_resolved_config(&LoadOptions {
+                root: tempdir.path().to_path_buf(),
+                config: Some(relative_path),
+            })
+            .unwrap_err();
+
+            assert!(matches!(
+                error,
+                SprawlError::NonUtf8ConfigPath { path } if path == absolute_path
+            ));
+        }
+    }
+
+    mod when_preparing_a_config_upgrade {
+        use super::*;
+
+        #[test]
+        fn it_rejects_the_path_before_migration_output_can_be_lossy() {
+            let (tempdir, relative_path, absolute_path) = non_utf8_config_fixture();
+
+            let error = prepare_config_upgrade(&LoadOptions {
+                root: tempdir.path().to_path_buf(),
+                config: Some(relative_path),
+            })
+            .unwrap_err();
+
+            assert!(matches!(
+                error,
+                SprawlError::NonUtf8ConfigPath { path } if path == absolute_path
+            ));
+        }
     }
 }
 
 mod when_config_is_minimal {
     use super::*;
+
+    #[test]
+    fn it_uses_the_default_directory_fanout_limits() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            "schema_version = 2\n",
+        )
+        .unwrap();
+
+        let loaded = load_raw_config(tempdir.path()).unwrap();
+
+        let expected = LeafFileLimit::Finite(LeafFiles::new(10).unwrap());
+        assert_eq!(
+            loaded.config.limits.max_leaf_files_per_directory.production,
+            expected
+        );
+        assert_eq!(
+            loaded.config.limits.max_leaf_files_per_directory.test,
+            expected
+        );
+    }
 
     #[test]
     fn it_merges_language_defaults() {
@@ -206,6 +302,31 @@ mod when_config_is_minimal {
             .unwrap();
 
         assert!(!rust.contains_key("include"));
+    }
+}
+
+mod when_a_ratchet_document_is_used_as_config {
+    use super::*;
+
+    #[test]
+    fn it_rejects_ratchet_entries_as_unknown_config_fields() {
+        let tempdir = tempfile::tempdir().unwrap();
+        fs::write(
+            tempdir.path().join(PRIMARY_CONFIG_FILE),
+            indoc! {r#"
+                schema_version = 2
+
+                [[files]]
+                path = "src/lib.rs"
+                role = "production"
+                max_loc = 2
+            "#},
+        )
+        .unwrap();
+
+        let error = load_raw_config(tempdir.path()).unwrap_err();
+
+        assert!(matches!(error, SprawlError::ParseToml { .. }));
     }
 }
 
@@ -351,20 +472,6 @@ mod when_config_has_unknown_keys {
     }
 }
 
-mod when_config_include_table_is_sparse {
-    use super::*;
-
-    #[test]
-    fn it_keeps_default_include_settings() {
-        let tempdir = tempfile::tempdir().unwrap();
-        fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "[config]\n").unwrap();
-
-        let loaded = load_config_fixture(tempdir.path()).unwrap();
-
-        assert!(loaded.config.config.include.is_empty());
-    }
-}
-
 mod when_tests_config_is_partial {
     use super::*;
 
@@ -394,7 +501,7 @@ mod when_traversal_config_is_partial {
     use super::*;
 
     #[test]
-    fn it_merges_symlink_and_depth_policy() {
+    fn it_merges_traversal_policy() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
@@ -402,7 +509,6 @@ mod when_traversal_config_is_partial {
                 [traversal]
                 follow_symlinks = "files-and-directories"
                 same_file_system = false
-                max_depth = 32
                 max_entries = 1234
                 max_file_bytes = 4096
                 error_policy = "warn"
@@ -417,10 +523,6 @@ mod when_traversal_config_is_partial {
             SymlinkTraversal::FilesAndDirectories
         );
         assert!(!loaded.config.traversal.same_file_system);
-        assert_eq!(
-            loaded.config.traversal.max_depth,
-            TraversalDepth::new(32).unwrap()
-        );
         assert_eq!(
             loaded.config.traversal.max_entries,
             TraversalEntryLimit::new(1234).unwrap()
@@ -751,17 +853,6 @@ mod when_config_values_are_invalid {
     }
 
     #[test]
-    fn it_rejects_zero_traversal_depth() {
-        assert_config_error_contains(
-            indoc! {r#"
-                [traversal]
-                max_depth = 0
-            "#},
-            "traversal max_depth must be greater than zero",
-        );
-    }
-
-    #[test]
     fn it_rejects_zero_traversal_entry_limit() {
         assert_config_error_contains(
             indoc! {r#"
@@ -891,20 +982,20 @@ mod when_config_values_are_invalid {
     }
 
     #[test]
-    fn it_rejects_unknown_color_modes() {
+    fn it_rejects_legacy_color_in_current_config() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [output]
-                color = "sometimes"
+                color = "always"
             "#},
         )
         .unwrap();
 
         let error = load_config_fixture(tempdir.path()).unwrap_err();
 
-        assert!(error.to_string().contains("unsupported color mode"));
+        assert!(error.to_string().contains("unknown field `color`"));
     }
 
     #[test]
@@ -1137,155 +1228,5 @@ mod when_config_values_are_invalid {
             "#},
             "language TypeScript belongs to both browser and frontend",
         );
-    }
-}
-
-mod when_both_config_names_exist {
-    use super::*;
-
-    #[test]
-    fn it_reports_ambiguity() {
-        let tempdir = tempfile::tempdir().unwrap();
-        fs::write(tempdir.path().join(PRIMARY_CONFIG_FILE), "").unwrap();
-        fs::write(tempdir.path().join(ALIAS_CONFIG_FILE), "").unwrap();
-
-        let error = load_config_fixture(tempdir.path()).unwrap_err();
-
-        assert!(error.to_string().contains("ambiguous config files"));
-    }
-}
-
-mod when_include_fragment_contains_non_override_tables {
-    use super::*;
-
-    fn fragment_error(contents: &str) -> SprawlError {
-        let tempdir = tempfile::tempdir().unwrap();
-        fs::create_dir(tempdir.path().join("sprawl-guard.d")).unwrap();
-        fs::write(
-            tempdir.path().join(PRIMARY_CONFIG_FILE),
-            indoc! {r#"
-                [config]
-                include = ["sprawl-guard.d/*.toml"]
-            "#},
-        )
-        .unwrap();
-        fs::write(tempdir.path().join("sprawl-guard.d/bad.toml"), contents).unwrap();
-
-        load_config_fixture(tempdir.path()).unwrap_err()
-    }
-
-    #[test]
-    fn it_rejects_the_fragment() {
-        let error = fragment_error(indoc! {r#"
-            [limits.max_lines_per_file]
-            production = 900
-        "#});
-
-        assert!(error.to_string().contains("may contain only [[overrides]]"));
-    }
-
-    #[test]
-    fn it_rejects_a_schema_version_in_the_fragment() {
-        let error = fragment_error("schema_version = 1\n");
-
-        assert!(matches!(
-            error,
-            SprawlError::IncludeFragmentUnsupportedTable { table, .. }
-                if table == "schema_version"
-        ));
-    }
-}
-
-mod when_include_fragments_match {
-    use super::*;
-
-    #[test]
-    fn it_appends_overrides_in_lexicographic_order() {
-        let tempdir = tempfile::tempdir().unwrap();
-        fs::create_dir(tempdir.path().join("sprawl-guard.d")).unwrap();
-        fs::write(
-            tempdir.path().join(PRIMARY_CONFIG_FILE),
-            indoc! {r#"
-                [config]
-                include = ["sprawl-guard.d/*.toml"]
-
-                [[overrides]]
-                paths = ["root/**"]
-                max_leaf_files_per_directory = { production = 7, test = "unlimited" }
-                reason = "root"
-            "#},
-        )
-        .unwrap();
-        fs::write(
-            tempdir.path().join("sprawl-guard.d/b.toml"),
-            indoc! {r#"
-                [[overrides]]
-                paths = ["b/**"]
-                max_lines_per_file = { production = 900, test = 1200 }
-                reason = "b"
-            "#},
-        )
-        .unwrap();
-        fs::write(
-            tempdir.path().join("sprawl-guard.d/a.toml"),
-            indoc! {r#"
-                [[overrides]]
-                paths = ["a/**"]
-                max_lines_per_file = { production = 800 }
-                reason = "a"
-            "#},
-        )
-        .unwrap();
-
-        let loaded = load_config_fixture(tempdir.path()).unwrap();
-        let reasons = loaded
-            .config
-            .overrides
-            .iter()
-            .map(|override_config| override_config.reason.as_str())
-            .collect::<Vec<_>>();
-
-        assert_eq!(reasons, vec!["root", "a", "b"]);
-    }
-}
-
-#[cfg(unix)]
-mod when_include_globs_match_symlink_directories {
-    use std::os::unix::fs::symlink;
-
-    use super::*;
-
-    #[test]
-    fn it_does_not_descend_into_the_symlink() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let external = tempfile::tempdir().unwrap();
-        fs::create_dir(tempdir.path().join("sprawl-guard.d")).unwrap();
-        fs::write(
-            tempdir.path().join(PRIMARY_CONFIG_FILE),
-            indoc! {r#"
-                [config]
-                include = ["sprawl-guard.d/**/*.toml"]
-            "#},
-        )
-        .unwrap();
-        fs::write(
-            external.path().join("external.toml"),
-            indoc! {r#"
-                [[overrides]]
-                paths = ["external/**"]
-                reason = "external"
-            "#},
-        )
-        .unwrap();
-        symlink(
-            external.path(),
-            tempdir.path().join("sprawl-guard.d/external"),
-        )
-        .unwrap();
-
-        let loaded = load_config_fixture(tempdir.path()).unwrap();
-
-        assert!(loaded.includes.is_empty());
-        assert!(loaded.config.overrides.is_empty());
     }
 }

@@ -35,6 +35,13 @@ mod when_the_hidden_cli_reference_generator_is_requested {
         let document = json_stdout(&output);
 
         assert_eq!(document["schema_version"], 2);
+        assert!(
+            command(&document, &["sprawl-guard"])["arguments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|argument| argument["id"] != "color")
+        );
         assert_eq!(
             argument(command(&document, &["sprawl-guard"]), "version")["syntax"],
             "-V, --version",

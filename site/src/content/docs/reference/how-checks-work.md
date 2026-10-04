@@ -27,9 +27,9 @@ path-classified Rust test is not preprocessed.
 
 ## Measurements and violations
 
-Sprawl Guard uses Tokei to count configured logical line types. `code` always counts; `comments`
-and `blank_lines` are optional. Literate languages include comments automatically unless their
-language configuration replaces that selection. Sprawl Guard evaluates four measurements:
+Sprawl Guard uses Tokei to count configured logical lines of code (LOC). `code` always counts;
+`comments` and `blank_lines` are optional. Literate languages include comments automatically unless
+their language configuration replaces that selection. Sprawl Guard evaluates four measurements:
 
 - configured LOC in each production file;
 - configured LOC in each path-classified test file;
@@ -83,37 +83,37 @@ Ignored files, global or language-level exclusions, files in disabled languages,
 files do not count. A path-classified test counts only toward test fan-out;
 when `[tests].check_path_tests = false`, it is omitted entirely.
 
-## Baselines and ratchets
+## Ratchet ceilings
 
-A baseline is the set of current violations written to the ratchet file. Each entry records a
-ceiling: the maximum permitted measurement for a path that already violates the policy. It does not
-record Git history, ownership, reasons, languages, or configured limits.
+The ratchet file records ceilings for current violations: the maximum permitted measurement for a
+path that already violates the policy. It stores only the allowed `max_loc` or `leaf_files` value,
+not Git history, ownership, reasons, languages, or configured limits.
 
 File ceilings are keyed by path and production/test role. Directory ceilings are keyed by path,
-role, and language group. The file stores only the allowed `max_loc` or `leaf_files` ceiling for
-each key.
+role, and language group.
 
 Checks compare each measurement with both its configured limit and any ceiling:
 
 - Without a ratchet entry, a measurement at or below its configured limit passes.
-- A baselined measurement passes only while it remains equal to its ceiling.
+- A ratcheted measurement passes only while it remains equal to its ceiling.
 - Above the ceiling, the ratchet fails because the violation grew.
 - An entry becomes stale when its measurement falls below the ceiling, no longer exceeds the
-  configured limit, or disappears. Stale entries fail by default so an explicit `ratchet --write`
+  configured limit, or disappears. Stale entries fail by default so an explicit `tighten --write`
   preserves the improvement.
 
 For an exploratory local check, `check --no-require-ratchet-current` allows stale entries. Setting
 `[ratchet].require_current = false` makes that behavior the default. Neither option permits growth
 above a ceiling.
 
-`baseline` can create or replace ceilings and may raise them only with `--allow-raises`. `ratchet`
-only lowers ceilings or removes stale entries.
+`update` adds ceilings for newly discovered violations while preserving existing ceilings. It may
+raise existing ceilings only with `--allow-increases`. `tighten` only lowers ceilings or removes
+stale entries.
 
 ## Scopes
 
-Paths passed to `check`, `baseline`, or `ratchet` form repository-relative scopes; absolute paths
+Paths passed to `check`, `update`, or `tighten` form repository-relative scopes; absolute paths
 must still resolve under the repository root. A directory scope covers that directory and its
-descendants. A file scope covers the file, but does not create a baseline for its containing
+descendants. A file scope covers the file, but does not create a ratchet entry for its containing
 directory's fan-out.
 
 Scoped checks intentionally ignore measurements and stale entries outside their scopes. Use an
@@ -123,12 +123,12 @@ unscoped `check` to enforce the complete repository, especially in CI.
 
 | Term              | Meaning                                                                            |
 | ----------------- | ---------------------------------------------------------------------------------- |
-| Baseline          | Ratchet entries generated from current violations.                                 |
 | Ceiling           | Recorded maximum for one existing violation.                                       |
 | Current violation | Measurement above its effective configured limit.                                  |
 | Directory fan-out | Direct source files in one directory, counted separately for production and tests. |
 | Production source | Source file not classified as a path-based test.                                   |
 | Ratchet           | Checked-in ceilings that allow existing violations but reject growth.              |
-| Stale entry       | Ceiling whose measurement improved, disappeared, or now satisfies policy.          |
+| Stale entry       | Ceiling for a measurement that improved, disappeared, or satisfies policy.         |
 | Test source       | Source file matched by a global or language-specific test glob.                    |
 | Unscoped check    | `sprawl-guard check` with no path arguments.                                       |
+| Update            | Add entries for newly discovered violations without lowering existing ceilings.    |

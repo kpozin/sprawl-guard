@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { parse } from "yaml";
 import { z } from "zod";
 import { RUNTIME_PACKAGE_DEFINITIONS } from "./package-manifests.ts";
+import { ciRuntimeTargets } from "./runtime-target-matrix.ts";
 
 const CI_WORKFLOW_URL = new URL("../../.github/workflows/ci.yml", import.meta.url);
 const RELEASE_WORKFLOW_URL = new URL(
@@ -25,11 +26,7 @@ const CI_WORKFLOW_SCHEMA = z.object({
     "runtime-smoke": z.object({
       strategy: z.object({
         matrix: z.object({
-          include: z.array(
-            z.object({
-              rust_target: z.string().min(1),
-            }),
-          ),
+          include: z.string().includes("fromJSON(needs.runtime-targets.outputs.matrix)"),
         }),
       }),
     }),
@@ -248,15 +245,13 @@ function stepWithName<TStep extends { readonly name: string }>(
 describe("native runtime workflow coverage", () => {
   describe("when comparing CI with the release artifact matrix", () => {
     it("smoke-tests every native release target", () => {
-      const ciWorkflow = parseWorkflow(CI_WORKFLOW_URL, CI_WORKFLOW_SCHEMA);
+      parseWorkflow(CI_WORKFLOW_URL, CI_WORKFLOW_SCHEMA);
       const releaseWorkflow = parseWorkflow(
         RELEASE_WORKFLOW_URL,
         RELEASE_WORKFLOW_SCHEMA,
       );
 
-      const ciTargets = ciWorkflow.jobs["runtime-smoke"].strategy.matrix.include.map(
-        ({ rust_target: rustTarget }) => rustTarget,
-      );
+      const ciTargets = ciRuntimeTargets().map(({ rust_target: rustTarget }) => rustTarget);
       const releaseNativeTargets = releaseWorkflow.jobs[
         "artifact-build"
       ].strategy.matrix.include

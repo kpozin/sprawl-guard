@@ -31,7 +31,7 @@ pub(crate) fn load_config(root: &Path) -> Config {
 pub(crate) fn write_config(root: &Path, contents: &str) {
     fs::write(
         root.join("sprawl-guard.toml"),
-        format!("schema_version = 1\n{contents}"),
+        format!("schema_version = 2\n{contents}"),
     )
     .unwrap();
 }
@@ -82,19 +82,6 @@ pub(crate) fn write_rust_entry_limit_config(root: &Path, max_entries: u32) {
         &formatdoc! {r#"
             [traversal]
             max_entries = {max_entries}
-
-            [languages.rust]
-            enabled = true
-        "#},
-    );
-}
-
-pub(crate) fn write_rust_depth_limit_config(root: &Path, max_depth: u32) {
-    write_config(
-        root,
-        &formatdoc! {r#"
-            [traversal]
-            max_depth = {max_depth}
 
             [languages.rust]
             enabled = true

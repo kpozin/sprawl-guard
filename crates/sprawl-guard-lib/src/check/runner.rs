@@ -6,9 +6,11 @@ use rayon::prelude::*;
 
 use crate::classification::{ClassifiedSource, SourceKind, discover_sources_report};
 use crate::code_line_counter::{CodeLineCounter, LocMeasurement, TokeiCodeLineCounter};
-use crate::config::{Config, TraversalErrorPolicy};
+use crate::config::{Config, ResolvedPolicy, TraversalErrorPolicy};
 use crate::resolved_limits::LimitResolver;
-use crate::rust_cfg::{RustCfgTestStatus, preprocess_rust_cfg_test, rust_cfg_test_policy_info};
+use crate::rust_cfg::{
+    RustCfgTestInfo, RustCfgTestStatus, preprocess_rust_cfg_test, rust_cfg_test_policy_info,
+};
 use crate::source_file::{ensure_source_file_size, read_source_to_string};
 use crate::value::path::resolve_root;
 use crate::{CountedLoc, IncludedLineTypes, LocLimit, RelativePath, Result, SprawlError};
@@ -20,7 +22,7 @@ use super::ratchet::{
 };
 use super::report::RatchetViolationKind;
 use super::report::{
-    AnalysisCoverage, CheckReport, CheckViolation, CheckWarning, CounterInfo,
+    AnalysisCoverage, CheckContext, CheckReport, CheckViolation, CheckWarning, CounterInfo,
     DirectoryViolationKind, FileLocViolation, FileViolationKind, NonEmptyTraversalIncidents,
     ReportRoot,
 };
@@ -28,20 +30,20 @@ use super::report::{
 mod scope;
 mod summary;
 
-pub(super) use scope::CheckScope;
+pub use scope::{CheckScope, NonEmptyCheckPaths};
 use summary::summarize_scan;
 
 /// Inputs for running `sprawl-guard check`.
 pub struct CheckOptions<'config> {
     /// Repository root to resolve configuration-relative and CLI-supplied paths.
     pub root: PathBuf,
-    /// Resolved configuration used for discovery, classification, and limits.
-    pub config: &'config Config,
+    /// Resolved configuration and the source from which it was assembled.
+    pub policy: ResolvedPolicy<'config>,
     /// Optional repository-relative or absolute path scopes.
     ///
-    /// When empty, every discovered source file is checked. When non-empty,
-    /// each scope must exist under `root`, and only files at or below at least
-    /// one scope are classified and checked.
+    /// When empty, or when a path resolves to `root`, every discovered source file is checked.
+    /// Otherwise, each scope must exist under `root`, and only files at or below at least one scope
+    /// are classified and checked.
     pub paths: Vec<PathBuf>,
     /// Override `[ratchet].require_current` for this check.
     ///
@@ -50,9 +52,8 @@ pub struct CheckOptions<'config> {
     pub require_ratchet_current: Option<bool>,
     /// Override `[traversal].error_policy` for this check.
     ///
-    /// `None` uses config. `Some(Warn)` is intended for exploratory local
-    /// checks where descendant traversal incidents should make analysis
-    /// partial without failing the run by themselves.
+    /// `None` uses config. `Some(Warn)` permits exploratory local checks to return partial analysis
+    /// without failing solely because of descendant traversal incidents.
     pub traversal_error_policy: Option<TraversalErrorPolicy>,
 }
 
@@ -63,17 +64,18 @@ pub fn check(options: CheckOptions<'_>) -> Result<CheckReport> {
 
 /// Runs policy checks without reading or applying the ratchet file.
 ///
-/// Baseline and ratchet-update workflows use this to measure current policy
-/// violations before deciding how the ratchet file should change.
+/// The `update` and `tighten` workflows use this to measure current policy violations before
+/// editing the ratchet file.
 pub fn check_without_ratchet(options: CheckOptions<'_>) -> Result<CheckReport> {
     check_with_counter_mode(options, &TokeiCodeLineCounter, RatchetApplication::Skip)
 }
 
 /// Runs policy checks with an injected LOC counter.
 ///
-/// Tests use this entry point to make LOC measurements deterministic without
-/// changing discovery and classification behavior. Production callers should
-/// use [`check`] unless they are deliberately swapping the counting backend.
+/// Tests use this entry point to make LOC measurements deterministic without changing discovery
+/// and classification behavior. Production callers use [`check`] unless they deliberately replace
+/// the counting backend.
+///
 /// The counter's backend ID and version are copied verbatim into
 /// [`CheckReport::counter`] for machine-readable output provenance.
 pub fn check_with_counter(
@@ -94,26 +96,24 @@ fn check_with_counter_mode(
     counter: &(impl CodeLineCounter + Sync),
     ratchet_application: RatchetApplication,
 ) -> Result<CheckReport> {
+    let config = options.policy.config();
+    let config_source = options.policy.source().clone();
     let root = resolve_root(&options.root)?;
     let scope = CheckScope::resolve(&root, options.paths)?;
     let ratchet = match ratchet_application {
-        RatchetApplication::Apply => RatchetState::load_if_present(&root, options.config)?,
+        RatchetApplication::Apply => RatchetState::load_if_present(&root, config)?,
         RatchetApplication::Skip => None,
     };
     let ratchet_current_policy = match options
         .require_ratchet_current
-        .unwrap_or(options.config.ratchet.require_current)
+        .unwrap_or(config.ratchet.require_current)
     {
         true => RatchetCurrentPolicy::RequireCurrent,
         false => RatchetCurrentPolicy::AllowStale,
     };
-    let limit_resolver = LimitResolver::new(options.config)?;
-    let discovery = discover_sources_report(
-        &root,
-        options.config,
-        scope.paths(),
-        options.traversal_error_policy,
-    )?;
+    let limit_resolver = LimitResolver::new(config)?;
+    let discovery =
+        discover_sources_report(&root, config, scope.paths(), options.traversal_error_policy)?;
     let coverage = match NonEmptyTraversalIncidents::new(discovery.traversal_incidents) {
         Some(traversal_incidents) => AnalysisCoverage::Partial {
             traversal_incidents,
@@ -122,13 +122,7 @@ fn check_with_counter_mode(
     };
     let directory_checks = directory_fanout_checks(&limit_resolver, &discovery.sources)?;
     let summary = summarize_scan(&discovery.sources, &directory_checks);
-    let source_checks = check_sources(
-        &root,
-        options.config,
-        &limit_resolver,
-        counter,
-        discovery.sources,
-    )?;
+    let source_checks = check_sources(&root, config, &limit_resolver, counter, discovery.sources)?;
     let mut violations = Vec::new();
     let mut warnings = Vec::new();
     let mut measured_ratchets = MeasuredRatchets::default();
@@ -156,7 +150,7 @@ fn check_with_counter_mode(
 
     violations.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
     Ok(CheckReport::new(
-        ReportRoot::from_resolved_path(&root),
+        CheckContext::new(ReportRoot::from_resolved_path(&root), scope, config_source),
         CounterInfo {
             backend: counter.backend_id(),
             version: counter.backend_version(),
@@ -312,6 +306,7 @@ fn check_source(
     let CountedSource {
         measurement: loc,
         warnings,
+        ..
     } = count_source(
         config,
         counter,
@@ -354,6 +349,7 @@ fn check_source(
 
 struct CountedSource {
     measurement: LocMeasurement,
+    rust_cfg_test: Option<RustCfgTestInfo>,
     warnings: Vec<CheckWarning>,
 }
 
@@ -372,6 +368,7 @@ fn count_source(
                 counter.count_path(absolute_path, source.language(), included_line_types)?,
                 included_line_types,
             )?,
+            rust_cfg_test: None,
             warnings: vec![],
         });
     };
@@ -384,6 +381,7 @@ fn count_source(
                 counter.count_path(absolute_path, source.language(), included_line_types)?,
                 included_line_types,
             )?,
+            rust_cfg_test: Some(preprocess_info),
             warnings: vec![],
         });
     }
@@ -395,6 +393,7 @@ fn count_source(
         counter.count_source(&result.source, source.language(), included_line_types)?,
         included_line_types,
     )?;
+    let rust_cfg_test = Some(result.info);
     let warnings = result
         .warning
         .into_iter()
@@ -402,8 +401,17 @@ fn count_source(
         .collect();
     Ok(CountedSource {
         measurement,
+        rust_cfg_test,
         warnings,
     })
+}
+
+/// Source measurement plus preprocessing metadata from the same read.
+pub(crate) struct SourceMeasurement {
+    /// LOC measurement produced for the source.
+    pub(crate) measurement: LocMeasurement,
+    /// Rust `cfg(test)` preprocessing metadata when the policy applies.
+    pub(crate) rust_cfg_test: Option<RustCfgTestInfo>,
 }
 
 /// Measures one classified source with the production counter and check semantics.
@@ -412,15 +420,18 @@ pub(crate) fn measure_source(
     source: &ClassifiedSource,
     absolute_path: &Path,
     included_line_types: IncludedLineTypes,
-) -> Result<LocMeasurement> {
-    Ok(count_source(
+) -> Result<SourceMeasurement> {
+    let counted = count_source(
         config,
         &TokeiCodeLineCounter,
         source,
         absolute_path,
         included_line_types,
-    )?
-    .measurement)
+    )?;
+    Ok(SourceMeasurement {
+        measurement: counted.measurement,
+        rust_cfg_test: counted.rust_cfg_test,
+    })
 }
 
 fn normalize_measurement(

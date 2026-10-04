@@ -1,20 +1,16 @@
-mod advisory;
-
 use std::fmt::Write as _;
-use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use serde_json::json;
 use sprawl_guard_lib::SprawlError;
-use sprawl_guard_lib::config::{ConfigSchemaVersion, built_in_config};
+use sprawl_guard_lib::config::ConfigSchemaVersion;
+use sprawl_guard_lib::file_io::create_text_new;
 
 use crate::error::{CliError, Result};
 
 use super::InitArgs;
-use advisory::{InitAdvisory, advisory_json, run_advisory_scan, write_advisory_summary};
 
 const PRIMARY_CONFIG_FILE: &str = "sprawl-guard.toml";
-const ALIAS_CONFIG_FILE: &str = ".sprawlrc.toml";
 
 pub(super) enum InitExecutionMode {
     DryRun { overwrite_warning: Option<PathBuf> },
@@ -22,7 +18,6 @@ pub(super) enum InitExecutionMode {
 }
 
 pub(super) struct InitExecution {
-    advisory: InitAdvisory,
     config_text: String,
     mode: InitExecutionMode,
     target: PathBuf,
@@ -35,22 +30,28 @@ pub(super) fn execute_init(
 ) -> Result<InitExecution> {
     let root = resolve_cli_root(root)?;
     let target = resolve_target_config_path(&root, config_path.as_deref());
-    reject_existing_config_for_write(&root, &target, config_path.as_deref(), args.dry_run)?;
+    reject_existing_config_for_write(&target, args.dry_run)?;
     let config_text = render_minimal_config()?;
-    let advisory = run_advisory_scan(&root, &target, &built_in_config())?;
-    let overwrite_warning = existing_config_for_write(&root, &target, config_path.as_deref());
+    let overwrite_warning = existing_config_for_write(&target);
     let mode = if args.dry_run {
         InitExecutionMode::DryRun { overwrite_warning }
     } else {
-        fs::write(&target, &config_text).map_err(|source| CliError::WriteConfig {
-            path: target.clone(),
-            source,
+        create_text_new(&target, &config_text).map_err(|source| {
+            if source.kind() == ErrorKind::AlreadyExists {
+                CliError::ExistingConfig {
+                    path: target.clone(),
+                }
+            } else {
+                CliError::WriteConfig {
+                    path: target.clone(),
+                    source,
+                }
+            }
         })?;
         InitExecutionMode::Written
     };
 
     Ok(InitExecution {
-        advisory,
         config_text,
         mode,
         target,
@@ -76,34 +77,12 @@ pub(super) fn render_init_stdout(execution: &InitExecution, quiet: bool) -> Stri
             }
             output.push('\n');
             write!(&mut output, "{}", execution.config_text).unwrap();
-            output.push('\n');
         }
         InitExecutionMode::Written => {
             writeln!(&mut output, "Wrote {}", execution.target.display()).unwrap();
-            output.push('\n');
         }
     }
-    write_advisory_summary(&mut output, &execution.advisory);
     output
-}
-
-pub(super) fn init_payload(execution: &InitExecution) -> serde_json::Value {
-    json!({
-        "kind": "init",
-        "target": execution.target,
-        "config": toml::from_str::<toml::Value>(&execution.config_text)
-            .expect("generated init config must stay valid TOML"),
-        "mode": match &execution.mode {
-            InitExecutionMode::DryRun { overwrite_warning } => json!({
-                "kind": "dry_run",
-                "overwrite_warning": overwrite_warning,
-            }),
-            InitExecutionMode::Written => json!({
-                "kind": "written",
-            }),
-        },
-        "advisory": advisory_json(&execution.advisory),
-    })
 }
 
 pub(super) fn resolve_cli_root(root: Option<PathBuf>) -> Result<PathBuf> {
@@ -122,32 +101,18 @@ fn resolve_target_config_path(root: &Path, config_path: Option<&Path>) -> PathBu
     }
 }
 
-fn reject_existing_config_for_write(
-    root: &Path,
-    target: &Path,
-    explicit_config_path: Option<&Path>,
-    dry_run: bool,
-) -> Result<()> {
+fn reject_existing_config_for_write(target: &Path, dry_run: bool) -> Result<()> {
     if dry_run {
         return Ok(());
     }
-    if let Some(path) = existing_config_for_write(root, target, explicit_config_path) {
+    if let Some(path) = existing_config_for_write(target) {
         return Err(CliError::ExistingConfig { path });
     }
     Ok(())
 }
 
-fn existing_config_for_write(
-    root: &Path,
-    target: &Path,
-    explicit_config_path: Option<&Path>,
-) -> Option<PathBuf> {
-    if explicit_config_path.is_some() {
-        return target.exists().then(|| target.to_path_buf());
-    }
-    [root.join(PRIMARY_CONFIG_FILE), root.join(ALIAS_CONFIG_FILE)]
-        .into_iter()
-        .find(|path| path.exists())
+fn existing_config_for_write(target: &Path) -> Option<PathBuf> {
+    target.exists().then(|| target.to_path_buf())
 }
 
 fn render_minimal_config() -> Result<String> {
@@ -156,7 +121,11 @@ fn render_minimal_config() -> Result<String> {
         toml::Value::Integer(ConfigSchemaVersion::CURRENT.into()),
     )]);
     let toml = toml::to_string_pretty(&root).map_err(|source| CliError::RenderConfig { source })?;
-    Ok(format!("{}{toml}", minimal_config_header()))
+    Ok(format!(
+        "{}\n{}{toml}",
+        ConfigSchemaVersion::CURRENT.schema_directive(),
+        minimal_config_header()
+    ))
 }
 
 fn minimal_config_header() -> &'static str {

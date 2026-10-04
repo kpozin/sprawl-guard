@@ -5,6 +5,7 @@ pub mod classification;
 pub mod code_line_counter;
 pub mod config;
 pub mod error;
+pub mod file_io;
 pub mod ratchet;
 mod resolved_limits;
 mod rust_cfg;
@@ -14,26 +15,26 @@ mod test_support;
 mod value;
 
 pub use check::{
-    AnalysisCoverage, CheckErrorKind, CheckOptions, CheckReport, CheckStatus, CheckViolation,
-    CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount,
-    DirectoryFanoutViolation, DirectoryRatchetIncreasedViolation,
+    AnalysisCoverage, CheckErrorKind, CheckOptions, CheckReport, CheckScope, CheckStatus,
+    CheckViolation, CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
+    DetectedLanguageCount, DirectoryFanoutViolation, DirectoryRatchetIncreasedViolation,
     DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
     DirectoryViolationKind, FileLocViolation, FileRatchetIncreasedViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
-    NonEmptyTraversalIncidents, RatchetIncreasedViolation, RatchetIncreasedViolationKind,
-    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
-    RatchetStaleViolation, RatchetStaleViolationKind, RatchetViolation, RatchetViolationKind,
-    ReportRoot, ReportRootError, ScanSummary, check_without_ratchet,
+    NonEmptyCheckPaths, NonEmptyTraversalIncidents, RatchetIncreasedViolation, RatchetLimit,
+    RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
+    RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError, ScanSummary,
+    check_without_ratchet,
 };
 pub use classification::{TraversalIncident, TraversalIncidentKind, TraversalIncidentSeverity};
 pub use config::{
-    ColorMode, OverrideLimits, OverridePaths, OverridePathsError, OverrideReason,
-    OverrideReasonError, TraversalErrorPolicy,
+    AuthoredConfigPath, ConfigSource, OverrideLimits, OverridePaths, OverridePathsError,
+    OverrideReason, OverrideReasonError, ResolvedPolicy, TraversalErrorPolicy,
 };
 pub use error::{Result, SprawlError};
 pub use ratchet::{
     DirectoryRatchet, DirectoryRatchetKey, FileRatchet, FileRatchetKey, RatchetCount, RatchetFile,
-    RatchetLookup, RatchetSchemaVersion,
+    RatchetLookup, RatchetSchemaVersion, authored_ratchet_json_schema,
 };
 pub use resolved_limits::{
     MatchedOverride, OverrideOrdinal, ResolvedFileLocLimit, ResolvedLeafFileLimit,
@@ -51,4 +52,5 @@ pub use value::line_types::{
     LineCountOverflow, LineCounts,
 };
 pub use value::path::{RatchetFilePath, RatchetFilePathError, RelativePath};
+pub use value::schema::{TomlSchemaDirective, TomlSchemaUrl};
 pub use value::text::DiagnosticDetail;

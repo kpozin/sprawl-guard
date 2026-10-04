@@ -104,6 +104,20 @@ function runCompiledWrapper(args: string[], overrides: NodeJS.ProcessEnv) {
 
 describe("compiled wrapper entrypoint", () => {
   describe("when a native carrier is selected", () => {
+    for (const code of [0, 1, 2]) {
+      describe(`and the CLI exits ${code}`, () => {
+        test("it forwards the exit code", () => {
+          const result = runCompiledWrapper(["-e", `process.exit(${code})`], {
+            SPRAWL_GUARD_BINARY: process.execPath,
+          });
+
+          assert.equal(result.error, undefined);
+          assert.equal(result.signal, null);
+          assert.equal(result.status, code);
+        });
+      });
+    }
+
     test("it does not load WASI or write its experimental warning", () => {
       const result = runCompiledWrapper(["--version"], {
         SPRAWL_GUARD_BINARY: process.execPath,
