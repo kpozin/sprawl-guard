@@ -64,7 +64,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
         with:
-          toolchain: 1.97.1
+          toolchain: 1.100.0
 
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -155,7 +155,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
         with:
-          toolchain: 1.97.1
+          toolchain: 1.100.0
           targets: ${{ matrix.rust_target }}
 
       - name: Restore Rust build cache
@@ -344,7 +344,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
         with:
-          toolchain: 1.97.1
+          toolchain: 1.100.0
 
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -779,7 +779,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
         with:
-          toolchain: 1.97.1
+          toolchain: 1.100.0
 
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -888,7 +888,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
         with:
-          toolchain: 1.97.1
+          toolchain: 1.100.0
 
       - name: Install the published CLI into an absent root
         shell: bash
