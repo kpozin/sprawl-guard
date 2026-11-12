@@ -26,7 +26,7 @@ export type RuntimeOperation =
 export class MissingFlagValueError extends TaggedError("MissingFlagValueError")<{
   flag: CliFlag;
   message: string;
-}>() {
+}> {
   constructor(flag: CliFlag) {
     super({
       flag,
@@ -40,7 +40,7 @@ export class OverrideBinaryNotUsableError extends TaggedError(
 )<{
   binaryPath: AbsolutePath;
   message: string;
-}>() {
+}> {
   constructor(binaryPath: AbsolutePath) {
     super({
       binaryPath,
@@ -53,7 +53,7 @@ export class NativeBinaryMissingError extends TaggedError("NativeBinaryMissingEr
   packageName: NativePackageName;
   binaryPath: ExecutablePath;
   message: string;
-}>() {
+}> {
   constructor(packageName: NativePackageName, binaryPath: ExecutablePath) {
     super({
       packageName,
@@ -71,7 +71,7 @@ export class MissingFallbackPackageError extends TaggedError(
   platform: NodeJS.Platform;
   arch: NodeJS.Architecture;
   message: string;
-}>() {
+}> {
   constructor(args: {
     packageName: WasmPackageName;
     nativePackageName: NativePackageName | null;
@@ -93,7 +93,7 @@ export class RuntimeFailureError extends TaggedError("RuntimeFailureError")<{
   operation: RuntimeOperation;
   message: string;
   cause: unknown;
-}>() {
+}> {
   constructor(operation: RuntimeOperation, message: string, cause: unknown) {
     super({
       operation,

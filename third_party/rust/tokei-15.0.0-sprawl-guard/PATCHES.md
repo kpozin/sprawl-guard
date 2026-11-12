@@ -1,6 +1,6 @@
-# tokei 14.0.0 local copy
+# tokei 15.0.0 local copy
 
-This directory vendors the published `tokei 14.0.0` crate from crates.io.
+This directory vendors the published `tokei 15.0.0` crate from crates.io.
 
 The initial vendored copy is intentionally unmodified except for omitting Cargo's local registry
 marker file. Local changes must be documented in this file with:
@@ -11,7 +11,7 @@ marker file. Local changes must be documented in this file with:
 
 ## etcetera 0.11
 
-`tokei 14.0.0` depends on `etcetera 0.8`, which depends on `home`. The `home` crate does not
+`tokei 15.0.0` depends on `etcetera 0.8`, which depends on `home`. The `home` crate does not
 build for the WASI target used by the sprawl-guard npm fallback binary.
 
 This local patch changes `tokei`'s `etcetera` dependency to `0.11.0`, matching upstream work in

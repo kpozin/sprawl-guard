@@ -1,4 +1,6 @@
+use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use sprawl_guard_lib::check::check as run_policy_check;
 use sprawl_guard_lib::config::{LoadOptions, OutputFormat, load_resolved_config};
@@ -9,6 +11,8 @@ use super::{
     check_output, config as config_cli, explain_output, init, languages, ratchet, schema,
 };
 use crate::error::{CliError, Result};
+
+const WASI_STDOUT_RETRY_DELAY: Duration = Duration::from_millis(1);
 
 pub(in crate::cli) struct CommandOutcome {
     pub(super) exit_code: i32,
@@ -86,9 +90,36 @@ fn ratchet_command_outcome(execution: Result<String>, quiet: bool) -> Result<Com
     }
 }
 
-pub(super) fn print_command_outcome(outcome: &CommandOutcome) {
-    print!("{}", outcome.stdout);
+pub(super) fn print_command_outcome(outcome: &CommandOutcome) -> Result<()> {
+    write_stdout(&outcome.stdout)?;
     eprint!("{}", outcome.stderr);
+    Ok(())
+}
+
+/// Writes command output through WASI hosts that expose stdout as a nonblocking pipe.
+pub(super) fn write_stdout(output: &str) -> Result<()> {
+    let mut stdout = io::stdout().lock();
+    let mut remaining = output.as_bytes();
+    while !remaining.is_empty() {
+        let written = retry_stdout(|| stdout.write(remaining)).map_err(CliError::WriteStdout)?;
+        if written == 0 {
+            return Err(CliError::WriteStdout(io::ErrorKind::WriteZero.into()));
+        }
+        remaining = &remaining[written..];
+    }
+    retry_stdout(|| stdout.flush()).map_err(CliError::WriteStdout)
+}
+
+fn retry_stdout<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match operation() {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if cfg!(target_os = "wasi") && error.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::sleep(WASI_STDOUT_RETRY_DELAY);
+            }
+            result => return result,
+        }
+    }
 }
 
 fn execute_check(

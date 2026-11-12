@@ -25,7 +25,7 @@ describe("validatePnpmVersion", () => {
     it("rejects the package manager before packing", () => {
       assert.match(
         invalidDetail(validatePnpmVersion("11.8.0")),
-        /11\.7\.0 is required/u,
+        /11\.28\.11 is required/u,
       );
     });
   });

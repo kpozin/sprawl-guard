@@ -276,7 +276,7 @@ pub fn run(cli: Cli) -> Result<i32> {
                 },
                 default_root,
             )?;
-            execution::print_command_outcome(&outcome);
+            execution::print_command_outcome(&outcome)?;
             Ok(outcome.exit_code)
         }
     }

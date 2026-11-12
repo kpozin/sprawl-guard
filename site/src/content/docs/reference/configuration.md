@@ -109,10 +109,20 @@ are omitted. `globs` replaces the default array of test globs:
 ```toml title="sprawl-guard.toml"
 [tests]
 globs = [
-  "tests/**", "**/tests/**", "test/**", "**/test/**",
-  "spec/**", "**/spec/**", "__tests__/**", "**/__tests__/**",
-  "__mocks__/**", "**/__mocks__/**", "**/*.test.*", "**/*.spec.*",
-  "**/*_test.*", "**/*_spec.*",
+  "tests/**",
+  "**/tests/**",
+  "test/**",
+  "**/test/**",
+  "spec/**",
+  "**/spec/**",
+  "__tests__/**",
+  "**/__tests__/**",
+  "__mocks__/**",
+  "**/__mocks__/**",
+  "**/*.test.*",
+  "**/*.spec.*",
+  "**/*_test.*",
+  "**/*_spec.*",
 ]
 ```
 

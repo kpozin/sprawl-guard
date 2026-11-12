@@ -4,7 +4,7 @@ use std::path::Path;
 
 use tokei::LanguageType;
 
-use super::bundled_filenames::BUNDLED_FILENAMES;
+use super::bundled_filenames::{BUNDLED_FILENAMES, BUNDLED_PATH_SUFFIXES};
 use crate::LanguageId;
 
 /// Returns the extensions canonically owned by a bundled language.
@@ -33,6 +33,24 @@ pub fn bundled_filenames(language: LanguageId) -> &'static [&'static str] {
         .unwrap_or_default()
 }
 
+/// A dot-prefixed ASCII suffix from the Tokei filename registry.
+pub(super) struct FilenameSuffix(&'static str);
+
+impl FilenameSuffix {
+    /// Constructs a registry suffix, checking generated constants at compile time.
+    pub(super) const fn new(suffix: &'static str) -> Self {
+        assert!(
+            suffix.len() > 1 && suffix.as_bytes()[0] == b'.' && suffix.is_ascii(),
+            "expected a dot-prefixed ASCII filename suffix"
+        );
+        Self(suffix)
+    }
+
+    fn matches(&self, normalized_filename: &str) -> bool {
+        normalized_filename.ends_with(self.0)
+    }
+}
+
 /// A path owner and metadata view backed by the pinned `tokei` registry.
 ///
 /// Extension classification asks `tokei` for ownership so collisions keep the
@@ -50,6 +68,15 @@ impl BundledLanguage {
         }
 
         let normalized_filename = filename.to_ascii_lowercase();
+        for (language, suffixes) in BUNDLED_PATH_SUFFIXES {
+            if suffixes
+                .iter()
+                .any(|suffix| suffix.matches(&normalized_filename))
+            {
+                return Some(Self(*language));
+            }
+        }
+
         for (separator_index, _) in normalized_filename.match_indices('.') {
             if separator_index == 0 {
                 continue;
@@ -100,6 +127,9 @@ fn bundled_language_resolves_canonical_owners_for_ascii_case_insensitive_paths()
         ("Justfile", LanguageType::Just),
         ("Makefile", LanguageType::Makefile),
         ("fixture.cs.st", LanguageType::Smalltalk),
+        ("fixture.BLADE.PHP", LanguageType::Blade),
+        ("fixture.xblade.php", LanguageType::Php),
+        ("fixture.PHP", LanguageType::Php),
         ("fixture.e", LanguageType::Phix),
     ];
 

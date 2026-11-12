@@ -6,6 +6,9 @@ pub enum CliError {
     /// A reusable library operation failed.
     #[error(transparent)]
     Library(#[from] sprawl_guard_lib::SprawlError),
+    /// Standard output could not accept the command result.
+    #[error("failed to write stdout: {0}")]
+    WriteStdout(#[source] std::io::Error),
     /// The current directory could not be resolved.
     #[error("failed to determine current directory: {source}")]
     CurrentDirectory {

@@ -707,7 +707,7 @@ describe("npm publication candidate", () => {
         fs.mkdirSync(workspaceRootDirectory, { recursive: true });
         fs.writeFileSync(
           path.join(workspaceRootDirectory, "package.json"),
-          '{"private":true,"packageManager":"pnpm@11.7.0"}\n',
+          '{"private":true,"packageManager":"pnpm@11.28.11"}\n',
         );
         const requests = npmPublicationRequests({ workspaceRootDirectory });
         for (const request of requests) {

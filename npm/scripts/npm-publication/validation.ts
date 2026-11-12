@@ -7,7 +7,7 @@ import {
   type NpmPackageIntegrity,
 } from "./values.ts";
 
-const EXPECTED_PNPM_VERSION = "11.7.0";
+const EXPECTED_PNPM_VERSION = "11.28.11";
 
 /** Computes the SHA-512 SRI value for an immutable npm package archive. */
 export function archiveIntegrity(

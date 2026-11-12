@@ -11,7 +11,7 @@ use crate::{
 };
 
 const TOKEI_BACKEND_ID: &str = "tokei";
-const TOKEI_BACKEND_VERSION: &str = "14.0.0";
+const TOKEI_BACKEND_VERSION: &str = "15.0.0";
 
 /// Counts configured LOC with a specific backend.
 pub trait CodeLineCounter {

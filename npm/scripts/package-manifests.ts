@@ -53,7 +53,7 @@ interface SharedPackageManifestFields<TName extends PublicScopedPackageName> {
 interface SharedWrapperPackageManifestFields
   extends SharedPackageManifestFields<typeof WRAPPER_PACKAGE_NAME> {
   readonly type: "module";
-  readonly packageManager: "pnpm@11.7.0";
+  readonly packageManager: "pnpm@11.28.11";
   readonly homepage: HomepageUrl;
   readonly bugs: {
     readonly url: IssuesUrl;
@@ -65,8 +65,8 @@ interface SharedWrapperPackageManifestFields
     readonly node: ">=22";
   };
   readonly dependencies: {
-    readonly "better-result": "2.9.2";
-    readonly zod: "4.4.3";
+    readonly "better-result": "3.0.1";
+    readonly zod: "4.6.7";
   };
 }
 
@@ -110,7 +110,7 @@ interface WasiRuntimePackageManifest
 interface PublishWorkspaceRootManifest {
   readonly name: "@kpozin/sprawl-guard-publish-workspace";
   readonly private: true;
-  readonly packageManager: "pnpm@11.7.0";
+  readonly packageManager: "pnpm@11.28.11";
   readonly engines: {
     readonly node: ">=22";
   };
@@ -147,8 +147,8 @@ const SOURCE_WRAPPER_MANIFEST_PATH = "sprawl-guard/package.json" as const;
 export const PACKAGE_VERSION = loadPublicPackageVersion(
   fileURLToPath(new URL("../package-version.json", import.meta.url)),
 );
-const BETTER_RESULT_VERSION = trustedPublicPackageVersion("2.9.2");
-const ZOD_VERSION = trustedPublicPackageVersion("4.4.3");
+const BETTER_RESULT_VERSION = trustedPublicPackageVersion("3.0.1");
+const ZOD_VERSION = trustedPublicPackageVersion("4.6.7");
 /** License files copied into each publishable npm package. */
 export const PUBLISH_LICENSE_FILE_NAMES = ["LICENSE-MIT", "LICENSE-APACHE"] as const;
 const LICENSE_EXPRESSION = "(MIT OR Apache-2.0)" as const satisfies LicenseExpression;
@@ -174,7 +174,7 @@ const SHARED_WRAPPER_PACKAGE_MANIFEST_FIELDS: SharedWrapperPackageManifestFields
   description: "Node.js wrapper for the sprawl-guard CLI.",
   license: LICENSE_EXPRESSION,
   type: "module",
-  packageManager: "pnpm@11.7.0",
+  packageManager: "pnpm@11.28.11",
   repository: REPOSITORY_METADATA,
   homepage: HOMEPAGE_URL,
   bugs: {
@@ -195,7 +195,7 @@ const SHARED_WRAPPER_PACKAGE_MANIFEST_FIELDS: SharedWrapperPackageManifestFields
 const PUBLISH_WORKSPACE_ROOT_MANIFEST: PublishWorkspaceRootManifest = {
   name: "@kpozin/sprawl-guard-publish-workspace",
   private: true,
-  packageManager: "pnpm@11.7.0",
+  packageManager: "pnpm@11.28.11",
   engines: {
     node: ">=22",
   },

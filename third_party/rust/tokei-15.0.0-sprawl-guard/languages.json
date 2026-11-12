@@ -190,6 +190,13 @@
       "quotes": [["\\\"", "\\\""], ["'", "'"]],
       "extensions": ["bb", "bbclass", "bbappend", "inc"]
     },
+    "Blade": {
+      "name": "Blade",
+      "multi_line_comments": [["{{--", "--}}"], ["<!--", "-->"]],
+      "quotes": [["\\\"", "\\\""], ["'", "'"]],
+      "extensions": ["blade"],
+      "path_suffixes": [".blade.php"]
+    },
     "Bqn": {
       "name": "BQN",
       "line_comment": ["#"],
@@ -206,6 +213,12 @@
       "multi_line_comments": [["/*", "*/"]],
       "quotes": [["\\\"", "\\\""]],
       "extensions": ["c", "ec", "pgc"]
+    },
+    "C3": {
+      "line_comment": ["//"],
+      "multi_line_comments": [["/*", "*/"]],
+      "quotes": [["\\\"", "\\\""]],
+      "extensions": ["c3"]
     },
     "Cabal": {
       "nested": true,
@@ -446,6 +459,11 @@
       "multi_line_comments": [["{-", "-}"]],
       "quotes": [["\\\"", "\\\""], ["''", "''"]],
       "extensions": ["dhall"]
+    },
+    "Djot": {
+      "literate": true,
+      "important_syntax": ["```"],
+      "extensions": ["dj", "djot"]
     },
     "Dockerfile": {
       "line_comment": ["#"],
@@ -2096,6 +2114,11 @@
       "line_comment": ["//"],
       "multi_line_comments": [["/*", "*/"]],
       "extensions": ["gdshader"]
+    },
+    "GodotTextScene": {
+        "name": "Godot TextScene",
+        "line_comment": [";"],
+        "extensions": ["tscn"]
     }
   }
 }

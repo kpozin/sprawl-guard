@@ -2,7 +2,7 @@
   "name": "@kpozin/sprawl-guard-workspace",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.7.0",
+  "packageManager": "pnpm@11.28.11",
   "engines": {
     "node": ">=24"
   },
@@ -29,12 +29,12 @@
     "verify:staged-payload-packs": "node ./scripts/verify-staged-payload-packs.ts"
   },
   "devDependencies": {
-    "@decimalturn/toml-patch": "2.0.0",
-    "@types/node": "24.6.1",
-    "@types/semver": "7.7.1",
-    "semver": "7.8.5",
+    "@decimalturn/toml-patch": "3.3.2",
+    "@types/node": "24.19.2",
+    "@types/semver": "7.8.0",
+    "semver": "7.8.6",
     "typescript": "6.0.3",
-    "yaml": "2.9.0",
-    "zod": "4.4.3"
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
   }
 }

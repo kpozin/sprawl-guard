@@ -1,7 +1,7 @@
 # Development
 
 The public repository contains the Rust CLI, npm wrapper, documentation site, and release tooling.
-Install a stable Rust toolchain, Node.js 24, and pnpm 11.7.0 before building the project.
+Install a stable Rust toolchain, Node.js 24, and pnpm 11.28.11 before building the project.
 
 ## Rust CLI
 

@@ -114,7 +114,7 @@ LIBRARY_PACKAGE = PackageSpec(
     ),
     dependency=FixedDependencyExpectation(
         name=CargoDependencyName.TOKEI,
-        version=CargoVersion(14, 0, 0),
+        version=CargoVersion(15, 0, 0),
         default_features=DefaultFeaturesExpectation.DISABLED,
     ),
     allowed_content_directories=(PurePosixPath("src"),),

@@ -3,6 +3,8 @@
 
 use tokei::LanguageType;
 
+use super::bundled_languages::FilenameSuffix;
+
 /// Exact filenames grouped by their canonical Tokei owner.
 #[rustfmt::skip]
 pub(super) const BUNDLED_FILENAMES: &[(LanguageType, &[&str])] = &[
@@ -17,4 +19,11 @@ pub(super) const BUNDLED_FILENAMES: &[(LanguageType, &[&str])] = &[
     (LanguageType::Rakefile, &["rakefile"]),
     (LanguageType::Scons, &["sconstruct", "sconscript"]),
     (LanguageType::Snakemake, &["snakefile"]),
+];
+
+
+/// Filename suffixes grouped by their canonical Tokei owner.
+#[rustfmt::skip]
+pub(super) const BUNDLED_PATH_SUFFIXES: &[(LanguageType, &[FilenameSuffix])] = &[
+    (LanguageType::Blade, &[FilenameSuffix::new(".blade.php")]),
 ];
