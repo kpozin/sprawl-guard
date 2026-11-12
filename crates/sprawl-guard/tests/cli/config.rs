@@ -379,10 +379,8 @@ mod upgrade {
             assert_eq!(stderr(&output), "");
         }
 
-        #[test]
-        fn invalid_config_is_rejected_without_changing_the_file() {
+        fn assert_upgrade_rejects_config(source: &str, expected_error: &str) {
             let root = TempDir::new().unwrap();
-            let source = "schema_version = 1\nunknown = true\n";
             write_file(&root, "sprawl-guard.toml", source);
 
             let output = sprawl_guard(&root)
@@ -392,23 +390,20 @@ mod upgrade {
 
             assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
             assert_eq!(read_config(&root), source);
-            assert!(stderr(&output).contains("unknown field"));
+            assert!(stderr(&output).contains(expected_error));
+        }
+
+        #[test]
+        fn invalid_config_is_rejected_without_changing_the_file() {
+            assert_upgrade_rejects_config("schema_version = 1\nunknown = true\n", "unknown field");
         }
 
         #[test]
         fn future_schema_versions_remain_typed_errors() {
-            let root = TempDir::new().unwrap();
-            let source = "schema_version = 3\n";
-            write_file(&root, "sprawl-guard.toml", source);
-
-            let output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
-                .output()
-                .unwrap();
-
-            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
-            assert_eq!(read_config(&root), source);
-            assert!(stderr(&output).contains("unsupported config schema version 3"));
+            assert_upgrade_rejects_config(
+                "schema_version = 3\n",
+                "unsupported config schema version 3",
+            );
         }
     }
 

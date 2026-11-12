@@ -114,11 +114,7 @@ mod when_writing_the_initial_update {
             "lockfileVersion: '9.0'\npackages:\n  dependency: {}\n",
         );
 
-        let output = sprawl_guard(&root)
-            .args(["update", "--write"])
-            .output()
-            .unwrap();
-        let ratchet = read_ratchet_file(&root);
+        let (output, ratchet) = run_ratchet_file_write(&root, "update");
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 1);
@@ -203,11 +199,7 @@ mod when_the_ratchet_file_already_exists {
         );
         write_file(&root, "src/now-small.rs", "fn small() {}\n");
 
-        let output = sprawl_guard(&root)
-            .args(["update", "--write"])
-            .output()
-            .unwrap();
-        let ratchet = read_ratchet_file(&root);
+        let (output, ratchet) = run_ratchet_file_write(&root, "update");
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 1);
@@ -264,54 +256,32 @@ mod when_the_ratchet_file_already_exists {
         assert_eq!(new_file.max_loc.get(), 2);
     }
 
-    #[test]
-    fn it_preserves_existing_ceilings_without_allow_increases() {
+    fn assert_scoped_update_ceiling(flags: &[&str], expected_ceiling: u32) {
         let root = TempDir::new().unwrap();
         write_rust_file_limit_config_and_file_ratchet(&root, 1, "src/lib.rs", 2);
-        write_file(
-            &root,
-            "src/lib.rs",
-            indoc! {r#"
-                fn a() {}
-                fn b() {}
-                fn c() {}
-            "#},
-        );
+        write_rust_source_with_function_count(&root, "src/lib.rs", 3);
 
         let output = sprawl_guard(&root)
-            .args(["update", "src", "--write"])
+            .args(["update", "src"])
+            .args(flags)
+            .arg("--write")
             .output()
             .unwrap();
         let ratchet = read_ratchet_file(&root);
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(ratchet.files[0].max_loc.get(), 2);
+        assert_eq!(ratchet.files[0].max_loc.get(), expected_ceiling);
         assert_eq!(stderr(&output), "");
     }
 
     #[test]
+    fn it_preserves_existing_ceilings_without_allow_increases() {
+        assert_scoped_update_ceiling(&[], 2);
+    }
+
+    #[test]
     fn it_raises_existing_ceilings_when_explicitly_allowed() {
-        let root = TempDir::new().unwrap();
-        write_rust_file_limit_config_and_file_ratchet(&root, 1, "src/lib.rs", 2);
-        write_file(
-            &root,
-            "src/lib.rs",
-            indoc! {r#"
-                fn a() {}
-                fn b() {}
-                fn c() {}
-            "#},
-        );
-
-        let output = sprawl_guard(&root)
-            .args(["update", "src", "--allow-increases", "--write"])
-            .output()
-            .unwrap();
-        let ratchet = read_ratchet_file(&root);
-
-        assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(ratchet.files[0].max_loc.get(), 3);
-        assert_eq!(stderr(&output), "");
+        assert_scoped_update_ceiling(&["--allow-increases"], 3);
     }
 }
 
