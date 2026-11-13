@@ -267,40 +267,38 @@ mod when_file_lines_is_reported_as_json {
 mod when_a_measured_file_ratchet_is_reported_as_json {
     use super::*;
 
-    fn ratchet_violation(root: &TempDir, ceiling: u32) -> serde_json::Value {
+    fn violations(root: &TempDir, ceiling: u32) -> Vec<serde_json::Value> {
         write_rust_file_limit_config_and_file_ratchet(root, 1, "src/lib.rs", ceiling);
-        write_file(root, "src/lib.rs", "// comment\nfn one() {}\nfn two() {}\n");
+        write_file(
+            root,
+            "src/lib.rs",
+            "// comment\nfn one() {}\nfn two() {}\nfn three() {}\n",
+        );
         let (_, json) = run_check_json(root);
-        json["violations"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|violation| {
-                let kind = violation["kind"].as_str().unwrap();
-                kind.ends_with("_increased") || kind.ends_with("_stale")
-            })
-            .unwrap()
-            .clone()
+        json["violations"].as_array().unwrap().clone()
     }
 
     #[test]
-    fn it_includes_the_measurement_when_the_ceiling_increased() {
+    fn it_reports_one_limit_violation_with_the_ceiling_when_the_file_grew() {
         let root = TempDir::new().unwrap();
 
-        let violation = ratchet_violation(&root, 1);
+        let violations = violations(&root, 2);
 
+        let [violation] = violations.as_slice() else {
+            panic!("expected one violation, got {violations:?}");
+        };
         assert_eq!(
             json!({
                 "kind": violation["kind"],
-                "count_lines": violation["count_lines"],
-                "line_counts": violation["line_counts"],
                 "actual": violation["actual"],
+                "limit": violation["limit"],
+                "ratchet": violation["ratchet"],
             }),
             json!({
-                "kind": "file_lines_increased",
-                "count_lines": [],
-                "line_counts": {"code": 2, "comments": 1, "blank_lines": 0},
-                "actual": 2,
+                "kind": "file_lines",
+                "actual": 3,
+                "limit": 1,
+                "ratchet": 2,
             })
         );
     }
@@ -309,7 +307,11 @@ mod when_a_measured_file_ratchet_is_reported_as_json {
     fn it_includes_the_measurement_when_the_ceiling_is_stale() {
         let root = TempDir::new().unwrap();
 
-        let violation = ratchet_violation(&root, 3);
+        let violations = violations(&root, 4);
+        let violation = violations
+            .iter()
+            .find(|violation| violation["kind"] == "file_lines_stale")
+            .unwrap();
 
         assert_eq!(
             json!({
@@ -321,8 +323,8 @@ mod when_a_measured_file_ratchet_is_reported_as_json {
             json!({
                 "kind": "file_lines_stale",
                 "count_lines": [],
-                "line_counts": {"code": 2, "comments": 1, "blank_lines": 0},
-                "actual": 2,
+                "line_counts": {"code": 3, "comments": 1, "blank_lines": 0},
+                "actual": 3,
             })
         );
     }

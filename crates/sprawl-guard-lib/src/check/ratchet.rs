@@ -10,9 +10,8 @@ use crate::{DirectFiles, LanguageGroupId, LineLimit, RelativePath, Result};
 use super::directory_direct_files::{DirectoryDirectFilesCheck, DirectoryDirectFilesMeasurement};
 use super::report::{CheckViolation, DirectoryViolationKind, FileViolationKind, RatchetEntryCount};
 use super::report::{
-    DirectoryRatchetIncreasedViolation, DirectoryRatchetStaleMeasuredViolation,
-    FileRatchetIncreasedViolation, FileRatchetStaleMeasuredViolation, RatchetIncreasedViolation,
-    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetViolation,
+    DirectoryRatchetStaleMeasuredViolation, FileRatchetStaleMeasuredViolation, RatchetLimit,
+    RatchetStaleMeasuredViolation, RatchetViolation,
 };
 use super::runner::{FileMeasurement, SelectedPaths, SourceCheck};
 
@@ -53,12 +52,10 @@ fn apply_file_ratchet(
         if let Some(violation) = source_check.violation_mut() {
             violation.ratchet = Some(ceiling);
         }
-        let ratchet_violation = increased_file_ratchet_violation(&measurement, ceiling);
         return source_check
             .into_violation()
             .map(CheckViolation::FileLines)
             .into_iter()
-            .chain(std::iter::once(CheckViolation::Ratchet(ratchet_violation)))
             .collect();
     }
     if current_policy.requires_current()
@@ -72,33 +69,18 @@ fn apply_file_ratchet(
     Vec::new()
 }
 
-fn increased_file_ratchet_violation(
+fn stale_file_ratchet_violation(
     measurement: &FileMeasurement,
     ceiling: LineLimit,
 ) -> RatchetViolation {
-    RatchetViolation::Increased(RatchetIncreasedViolation::File(
-        FileRatchetIncreasedViolation {
+    RatchetViolation::Measured(RatchetStaleMeasuredViolation::File(
+        FileRatchetStaleMeasuredViolation {
             kind: measurement.kind,
             path: measurement.path.clone(),
             measurement: measurement.lines,
             limit: RatchetCount::from_loc_limit(measurement.limit),
             ratchet: RatchetCount::from_loc_limit(ceiling),
         },
-    ))
-}
-
-fn stale_file_ratchet_violation(
-    measurement: &FileMeasurement,
-    ceiling: LineLimit,
-) -> RatchetViolation {
-    RatchetViolation::Stale(RatchetStaleViolation::Measured(
-        RatchetStaleMeasuredViolation::File(FileRatchetStaleMeasuredViolation {
-            kind: measurement.kind,
-            path: measurement.path.clone(),
-            measurement: measurement.lines,
-            limit: RatchetCount::from_loc_limit(measurement.limit),
-            ratchet: RatchetCount::from_loc_limit(ceiling),
-        }),
     ))
 }
 
@@ -138,12 +120,10 @@ fn apply_directory_ratchet(
         if let Some(violation) = directory_check.violation_mut() {
             violation.ratchet = Some(ceiling);
         }
-        let ratchet_violation = increased_directory_ratchet_violation(&measurement, ceiling);
         return directory_check
             .into_violation()
             .map(CheckViolation::DirectoryDirectFiles)
             .into_iter()
-            .chain(std::iter::once(CheckViolation::Ratchet(ratchet_violation)))
             .collect();
     }
     if current_policy.requires_current()
@@ -157,40 +137,19 @@ fn apply_directory_ratchet(
     Vec::new()
 }
 
-fn increased_directory_ratchet_violation(
-    measurement: &DirectoryDirectFilesMeasurement,
-    ceiling: DirectFiles,
-) -> RatchetViolation {
-    RatchetViolation::Increased(RatchetIncreasedViolation::Directory(
-        DirectoryRatchetIncreasedViolation {
-            kind: measurement.kind,
-            path: measurement.path.clone(),
-            group: measurement.group.clone(),
-            actual: RatchetCount::from_direct_files(measurement.actual),
-            limit: RatchetCount::from_direct_files(
-                measurement
-                    .limit
-                    .finite()
-                    .expect("increased directory ratchet must have a finite configured limit"),
-            ),
-            ratchet: RatchetCount::from_direct_files(ceiling),
-        },
-    ))
-}
-
 fn stale_directory_ratchet_violation(
     measurement: &DirectoryDirectFilesMeasurement,
     ceiling: DirectFiles,
 ) -> RatchetViolation {
-    RatchetViolation::Stale(RatchetStaleViolation::Measured(
-        RatchetStaleMeasuredViolation::Directory(DirectoryRatchetStaleMeasuredViolation {
+    RatchetViolation::Measured(RatchetStaleMeasuredViolation::Directory(
+        DirectoryRatchetStaleMeasuredViolation {
             kind: measurement.kind,
             path: measurement.path.clone(),
             group: measurement.group.clone(),
             actual: RatchetCount::from_direct_files(measurement.actual),
             limit: RatchetLimit::from(measurement.limit),
             ratchet: RatchetCount::from_direct_files(ceiling),
-        }),
+        },
     ))
 }
 

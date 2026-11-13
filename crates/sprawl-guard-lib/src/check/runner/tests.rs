@@ -1475,15 +1475,10 @@ mod when_checking_with_a_ratchet_file {
         let report = check_root(tempdir.path()).unwrap();
 
         let file_violations = file_violations(&report);
-        let ratchet_violations = ratchet_violations(&report);
         assert_eq!(report.status(), CheckStatus::Failed);
         assert_eq!(file_violations.len(), 1);
         assert_eq!(file_violations[0].ratchet.unwrap().get(), 2);
-        assert_eq!(ratchet_violations.len(), 1);
-        assert_eq!(
-            ratchet_violations[0].kind(),
-            RatchetViolationKind::FileLinesIncreased
-        );
+        assert!(ratchet_violations(&report).is_empty());
     }
 
     #[test]
@@ -1640,27 +1635,20 @@ mod when_checking_with_a_ratchet_file {
         use super::*;
 
         #[test]
-        fn it_carries_the_source_group_through_the_diagnostic() {
+        fn it_reports_one_directory_violation_with_the_ceiling() {
             let tempdir = tempfile::tempdir().unwrap();
             write_rust_directory_ratchet_fixture(tempdir.path(), 1);
 
             let report = check_root(tempdir.path()).unwrap();
 
-            let ratchets = ratchet_violations(&report);
-            let [ratchet] = ratchets.as_slice() else {
-                panic!("expected one ratchet violation");
-            };
-            let RatchetViolation::Increased(crate::RatchetIncreasedViolation::Directory(violation)) =
-                ratchet
-            else {
-                panic!("expected an increased directory ratchet");
+            let directories = directory_violations(&report);
+            let [violation] = directories.as_slice() else {
+                panic!("expected one directory violation");
             };
             assert_eq!(violation.group, crate::LanguageGroupId::Source);
             assert_eq!(violation.actual.get(), 2);
-            assert_eq!(
-                serde_json::to_value(ratchet).unwrap()["group"],
-                serde_json::json!("source")
-            );
+            assert_eq!(violation.ratchet.unwrap().get(), 1);
+            assert!(ratchet_violations(&report).is_empty());
         }
     }
 
@@ -1698,8 +1686,8 @@ mod when_checking_with_a_ratchet_file {
             let [ratchet] = ratchets.as_slice() else {
                 panic!("expected one ratchet violation");
             };
-            let RatchetViolation::Stale(crate::RatchetStaleViolation::Measured(
-                crate::RatchetStaleMeasuredViolation::Directory(violation),
+            let RatchetViolation::Measured(crate::RatchetStaleMeasuredViolation::Directory(
+                violation,
             )) = ratchet
             else {
                 panic!("expected a stale measured directory ratchet");

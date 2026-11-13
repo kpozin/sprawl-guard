@@ -3,7 +3,7 @@ use sprawl_guard_lib::CheckReport;
 use sprawl_guard_lib::RelativePath;
 use sprawl_guard_lib::check::{
     CheckViolation, DirectoryDirectFilesViolation, DirectoryViolationKind, FileLinesViolation,
-    FileViolationKind, RatchetViolation, RatchetViolationKind,
+    FileViolationKind, RatchetViolation,
 };
 
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
@@ -14,7 +14,6 @@ const FILE_LINES_RULE_ID: &str = "sprawl-guard/file-lines";
 const TEST_FILE_LINES_RULE_ID: &str = "sprawl-guard/test-file-lines";
 const DIRECTORY_DIRECT_FILES_RULE_ID: &str = "sprawl-guard/directory-direct-files";
 const TEST_DIRECTORY_DIRECT_FILES_RULE_ID: &str = "sprawl-guard/test-directory-direct-files";
-const RATCHET_INCREASE_RULE_ID: &str = "sprawl-guard/ratchet-increase";
 const RATCHET_STALE_RULE_ID: &str = "sprawl-guard/ratchet-stale";
 
 pub(super) fn sarif_check_report(report: &CheckReport) -> Value {
@@ -57,11 +56,6 @@ fn rules() -> Vec<Value> {
             TEST_DIRECTORY_DIRECT_FILES_RULE_ID,
             "Test directory with too many direct files",
             "A directory directly contains more test files than its limit.",
-        ),
-        rule(
-            RATCHET_INCREASE_RULE_ID,
-            "Ratchet ceiling exceeded",
-            "A measurement rose above the ceiling of its ratchet entry.",
         ),
         rule(
             RATCHET_STALE_RULE_ID,
@@ -107,11 +101,12 @@ fn file_lines_result(violation: &FileLinesViolation) -> Value {
         "level": "error",
         "message": {
             "text": format!(
-                "{} has {} lines (counting {}), over the limit of {}.",
+                "{} has {} lines (counting {}), over the limit of {}{}.",
                 violation.path,
                 violation.measurement.actual().get(),
                 violation.measurement.count_lines(),
-                violation.limit
+                violation.limit,
+                ceiling_message(violation.ratchet)
             )
         },
         "locations": [location(&violation.path)],
@@ -142,11 +137,12 @@ fn directory_direct_files_result(violation: &DirectoryDirectFilesViolation) -> V
         "level": "error",
         "message": {
             "text": format!(
-                "{} in group {} has {} direct {source_kind} files, exceeding limit {}.",
+                "{} in group {} has {} direct {source_kind} files, over the limit of {}{}.",
                 display_path(&violation.path),
                 violation.group,
                 violation.actual,
-                violation.limit
+                violation.limit,
+                ceiling_message(violation.ratchet)
             )
         },
         "locations": [location(&violation.path)],
@@ -181,19 +177,16 @@ fn directory_direct_files_result(violation: &DirectoryDirectFilesViolation) -> V
     result
 }
 
+/// Formats the ratchet ceiling that a violation grew above, if it has one.
+fn ceiling_message(ceiling: Option<impl std::fmt::Display>) -> String {
+    ceiling
+        .map(|ceiling| format!(" and its ratchet ceiling of {ceiling}"))
+        .unwrap_or_default()
+}
+
 fn ratchet_result(violation: &RatchetViolation) -> Value {
-    let rule_id = match violation.kind() {
-        RatchetViolationKind::FileLinesIncreased
-        | RatchetViolationKind::TestFileLinesIncreased
-        | RatchetViolationKind::DirectoryDirectFilesIncreased
-        | RatchetViolationKind::TestDirectoryDirectFilesIncreased => RATCHET_INCREASE_RULE_ID,
-        RatchetViolationKind::FileLinesStale
-        | RatchetViolationKind::TestFileLinesStale
-        | RatchetViolationKind::DirectoryDirectFilesStale
-        | RatchetViolationKind::TestDirectoryDirectFilesStale => RATCHET_STALE_RULE_ID,
-    };
     let mut result = json!({
-        "ruleId": rule_id,
+        "ruleId": RATCHET_STALE_RULE_ID,
         "level": "error",
         "message": {
             "text": ratchet_message(violation)
@@ -227,34 +220,16 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
         .map_or_else(String::new, |measurement| {
             format!(" lines (counting {})", measurement.count_lines())
         });
-    match violation.kind() {
-        RatchetViolationKind::FileLinesIncreased
-        | RatchetViolationKind::TestFileLinesIncreased
-        | RatchetViolationKind::DirectoryDirectFilesIncreased
-        | RatchetViolationKind::TestDirectoryDirectFilesIncreased => {
-            let actual = violation
-                .actual()
-                .map(|value| value.get().to_string())
-                .unwrap_or_else(|| "not measured".to_owned());
-            format!(
-                "{subject} rose to {actual}{measurement_context}, above its ceiling of {}.",
-                violation.ratchet().get()
-            )
-        }
-        RatchetViolationKind::FileLinesStale
-        | RatchetViolationKind::TestFileLinesStale
-        | RatchetViolationKind::DirectoryDirectFilesStale
-        | RatchetViolationKind::TestDirectoryDirectFilesStale => match violation.actual() {
-            Some(actual) => format!(
-                "{subject} has a stale ratchet entry: ceiling {}, now {}{measurement_context}.",
-                violation.ratchet().get(),
-                actual.get()
-            ),
-            None => format!(
-                "{subject} has a stale ratchet entry: ceiling {}, and it was not found.",
-                violation.ratchet().get()
-            ),
-        },
+    match violation.actual() {
+        Some(actual) => format!(
+            "{subject} has a stale ratchet entry: ceiling {}, now {}{measurement_context}.",
+            violation.ratchet().get(),
+            actual.get()
+        ),
+        None => format!(
+            "{subject} has a stale ratchet entry: ceiling {}, and it was not found.",
+            violation.ratchet().get()
+        ),
     }
 }
 
@@ -292,16 +267,15 @@ mod tests {
     use serde_json::json;
     use sprawl_guard_lib::check::{
         CounterInfo, DirectoryDirectFilesViolation, DirectoryViolationKind, FileLinesViolation,
-        FileRatchetStaleMissingViolation, FileViolationKind, RatchetIncreasedViolation,
-        RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
-        RatchetViolation,
+        FileRatchetStaleMissingViolation, FileViolationKind, RatchetStaleMeasuredViolation,
+        RatchetStaleMissingViolation, RatchetViolation,
     };
     use sprawl_guard_lib::{
         CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
         DetectedLanguageCount, DiagnosticDetail, DirectFiles,
-        DirectoryRatchetStaleMeasuredViolation, FileRatchetIncreasedViolation,
-        FileRatchetStaleMeasuredViolation, LanguageGroupId, LanguageId, LineCount, LineLimit,
-        RatchetCount, RatchetEntryCount, RatchetLimit, RelativePath, ScanSummary,
+        DirectoryRatchetStaleMeasuredViolation, FileRatchetStaleMeasuredViolation, LanguageGroupId,
+        LanguageId, LineCount, LineLimit, RatchetCount, RatchetEntryCount, RatchetLimit,
+        RelativePath, ScanSummary,
     };
 
     use super::*;
@@ -435,15 +409,6 @@ mod tests {
                                 }
                             },
                             {
-                                "id": "sprawl-guard/ratchet-increase",
-                                "shortDescription": {
-                                    "text": "Ratchet ceiling exceeded"
-                                },
-                                "fullDescription": {
-                                    "text": "A measurement rose above the ceiling of its ratchet entry."
-                                }
-                            },
-                            {
                                 "id": "sprawl-guard/ratchet-stale",
                                 "shortDescription": {
                                     "text": "Stale ratchet entry"
@@ -534,6 +499,31 @@ mod tests {
         }
 
         #[test]
+        fn it_names_the_ceiling_of_a_file_that_grew_above_it() {
+            let report = report_with(vec![CheckViolation::FileLines(FileLinesViolation {
+                limit: LineLimit::new(1).unwrap(),
+                ratchet: Some(LineLimit::new(2).unwrap()),
+                ..file_lines_violation(FileViolationKind::FileLines, "src/lib.rs")
+            })]);
+
+            let output = sarif_check_report(&report);
+            let result = &output["runs"][0]["results"][0];
+
+            assert_eq!(
+                json!({
+                    "ruleId": result["ruleId"],
+                    "message": result["message"]["text"],
+                    "ratchet": result["properties"]["ratchet"],
+                }),
+                json!({
+                    "ruleId": FILE_LINES_RULE_ID,
+                    "message": "src/lib.rs has 3 lines (counting code), over the limit of 1 and its ratchet ceiling of 2.",
+                    "ratchet": 2,
+                })
+            );
+        }
+
+        #[test]
         fn it_uses_the_test_file_rule_for_test_file_violations() {
             let report = report_with(vec![CheckViolation::FileLines(file_lines_violation(
                 FileViolationKind::TestFileLines,
@@ -608,6 +598,28 @@ mod tests {
         }
 
         #[test]
+        fn it_names_the_ceiling_of_a_directory_that_grew_above_it() {
+            let report = report_with(vec![CheckViolation::DirectoryDirectFiles(
+                DirectoryDirectFilesViolation {
+                    actual: DirectFiles::new(3).unwrap(),
+                    ratchet: Some(DirectFiles::new(2).unwrap()),
+                    ..directory_direct_files_violation(
+                        DirectoryViolationKind::DirectoryDirectFiles,
+                        "src",
+                        vec!["src/a.rs", "src/b.rs", "src/c.rs"],
+                    )
+                },
+            )]);
+
+            let output = sarif_check_report(&report);
+
+            assert_eq!(
+                output["runs"][0]["results"][0]["message"]["text"],
+                "src in group source has 3 direct production files, over the limit of 1 and its ratchet ceiling of 2."
+            );
+        }
+
+        #[test]
         fn it_identifies_groups_when_directory_findings_share_a_path() {
             let report = report_with(vec![
                 CheckViolation::DirectoryDirectFiles(directory_direct_files_violation_in_group(
@@ -629,11 +641,11 @@ mod tests {
 
             assert_eq!(
                 results[0]["message"]["text"],
-                "src in group source has 2 direct production files, exceeding limit 1."
+                "src in group source has 2 direct production files, over the limit of 1."
             );
             assert_eq!(
                 results[1]["message"]["text"],
-                "src in group documentation has 2 direct production files, exceeding limit 1."
+                "src in group documentation has 2 direct production files, over the limit of 1."
             );
         }
     }
@@ -667,60 +679,16 @@ mod tests {
         use super::*;
 
         #[test]
-        fn it_maps_increases_to_the_ratchet_increase_rule() {
-            let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Increased(
-                RatchetIncreasedViolation::File(FileRatchetIncreasedViolation {
-                    kind: FileViolationKind::FileLines,
-                    path: RelativePath::new("src/lib.rs").unwrap(),
-                    measurement: line_measurement(5),
-                    limit: RatchetCount::new(2),
+        fn it_maps_stale_entries_to_the_ratchet_stale_rule() {
+            let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Measured(
+                RatchetStaleMeasuredViolation::Directory(DirectoryRatchetStaleMeasuredViolation {
+                    kind: DirectoryViolationKind::DirectoryDirectFiles,
+                    path: RelativePath::new("src").unwrap(),
+                    group: LanguageGroupId::Source,
+                    actual: RatchetCount::new(1),
+                    limit: RatchetLimit::Finite(RatchetCount::new(2)),
                     ratchet: RatchetCount::new(4),
                 }),
-            ))]);
-
-            let output = sarif_check_report(&report);
-            let result = &output["runs"][0]["results"][0];
-
-            assert_eq!(
-                json!({
-                    "ruleId": result["ruleId"],
-                    "message": result["message"]["text"],
-                    "properties": {
-                        "actual": result["properties"]["actual"],
-                        "count_lines": result["properties"]["count_lines"],
-                        "line_counts": result["properties"]["line_counts"],
-                        "limit": result["properties"]["limit"],
-                        "ratchet": result["properties"]["ratchet"],
-                    },
-                }),
-                json!({
-                    "ruleId": RATCHET_INCREASE_RULE_ID,
-                    "message": "src/lib.rs rose to 5 lines (counting code), above its ceiling of 4.",
-                    "properties": {
-                        "actual": 5,
-                        "count_lines": [],
-                        "line_counts": {"code": 5, "comments": 0, "blank_lines": 0},
-                        "limit": 2,
-                        "ratchet": 4,
-                    },
-                })
-            );
-            assert!(result["properties"].get("group").is_none());
-        }
-
-        #[test]
-        fn it_maps_stale_entries_to_the_ratchet_stale_rule() {
-            let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
-                RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::Directory(
-                    DirectoryRatchetStaleMeasuredViolation {
-                        kind: DirectoryViolationKind::DirectoryDirectFiles,
-                        path: RelativePath::new("src").unwrap(),
-                        group: LanguageGroupId::Source,
-                        actual: RatchetCount::new(1),
-                        limit: RatchetLimit::Finite(RatchetCount::new(2)),
-                        ratchet: RatchetCount::new(4),
-                    },
-                )),
             ))]);
 
             let output = sarif_check_report(&report);
@@ -733,16 +701,14 @@ mod tests {
 
         #[test]
         fn it_identifies_count_lines_for_measured_file_staleness() {
-            let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
-                RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
-                    FileRatchetStaleMeasuredViolation {
-                        kind: FileViolationKind::FileLines,
-                        path: RelativePath::new("src/lib.rs").unwrap(),
-                        measurement: line_measurement(2),
-                        limit: RatchetCount::new(3),
-                        ratchet: RatchetCount::new(4),
-                    },
-                )),
+            let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Measured(
+                RatchetStaleMeasuredViolation::File(FileRatchetStaleMeasuredViolation {
+                    kind: FileViolationKind::FileLines,
+                    path: RelativePath::new("src/lib.rs").unwrap(),
+                    measurement: line_measurement(2),
+                    limit: RatchetCount::new(3),
+                    ratchet: RatchetCount::new(4),
+                }),
             ))]);
 
             let output = sarif_check_report(&report);
@@ -756,14 +722,12 @@ mod tests {
 
         #[test]
         fn it_reports_deleted_ratchet_entries_as_no_longer_measured() {
-            let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
-                RatchetStaleViolation::Missing(RatchetStaleMissingViolation::File(
-                    FileRatchetStaleMissingViolation {
-                        kind: FileViolationKind::FileLines,
-                        path: RelativePath::new("src/deleted.rs").unwrap(),
-                        ratchet: RatchetCount::new(4),
-                    },
-                )),
+            let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Missing(
+                RatchetStaleMissingViolation::File(FileRatchetStaleMissingViolation {
+                    kind: FileViolationKind::FileLines,
+                    path: RelativePath::new("src/deleted.rs").unwrap(),
+                    ratchet: RatchetCount::new(4),
+                }),
             ))]);
 
             let output = sarif_check_report(&report);

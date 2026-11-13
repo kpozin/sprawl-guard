@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::check::report::{
     DirectoryRatchetStaleMissingViolation, DirectoryViolationKind,
     FileRatchetStaleMissingViolation, FileViolationKind, RatchetStaleMissingViolation,
-    RatchetStaleViolation, RatchetViolation,
+    RatchetViolation,
 };
 use crate::check::runner::SelectedPaths;
 use crate::classification::SourceKind;
@@ -19,12 +19,12 @@ pub(super) fn file_ratchets(
 ) -> Vec<RatchetViolation> {
     missing_entries(ratchets, measured, selected_paths, FileRatchetKey::path)
         .map(|(key, ceiling)| {
-            RatchetViolation::Stale(RatchetStaleViolation::Missing(
-                RatchetStaleMissingViolation::File(FileRatchetStaleMissingViolation {
+            RatchetViolation::Missing(RatchetStaleMissingViolation::File(
+                FileRatchetStaleMissingViolation {
                     kind: file_kind(key.role()),
                     path: key.path().clone(),
                     ratchet: RatchetCount::from_loc_limit(*ceiling),
-                }),
+                },
             ))
         })
         .collect()
@@ -42,13 +42,13 @@ pub(super) fn directory_ratchets(
         DirectoryRatchetKey::path,
     )
     .map(|(key, ceiling)| {
-        RatchetViolation::Stale(RatchetStaleViolation::Missing(
-            RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
+        RatchetViolation::Missing(RatchetStaleMissingViolation::Directory(
+            DirectoryRatchetStaleMissingViolation {
                 kind: directory_kind(key.role()),
                 path: key.path().clone(),
                 group: key.group().clone(),
                 ratchet: RatchetCount::from_direct_files(*ceiling),
-            }),
+            },
         ))
     })
     .collect()

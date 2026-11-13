@@ -8,13 +8,12 @@ mod runner;
 pub use report::{
     AnalysisCoverage, CheckErrorKind, CheckReport, CheckStatus, CheckViolation, CheckWarning,
     CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, CounterInfo, DetectedLanguageCount,
-    DirectoryDirectFilesViolation, DirectoryRatchetIncreasedViolation,
-    DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
-    DirectoryViolationKind, FileLinesViolation, FileRatchetIncreasedViolation,
+    DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
+    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind, FileLinesViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
-    NonEmptyUnreadablePaths, RatchetEntryCount, RatchetIncreasedViolation, RatchetLimit,
-    RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
-    RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError, ScanSummary,
+    NonEmptyUnreadablePaths, RatchetEntryCount, RatchetLimit, RatchetStaleMeasuredViolation,
+    RatchetStaleMissingViolation, RatchetViolation, RatchetViolationKind, ReportRoot,
+    ReportRootError, ScanSummary,
 };
 pub(crate) use runner::measure_source;
 pub use runner::{

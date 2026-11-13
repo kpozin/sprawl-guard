@@ -224,14 +224,10 @@ fn directory_violation_sort_order(kind: DirectoryViolationKind) -> u8 {
 
 fn ratchet_violation_sort_order(kind: RatchetViolationKind) -> u8 {
     match kind {
-        RatchetViolationKind::FileLinesIncreased | RatchetViolationKind::FileLinesStale => 4,
-        RatchetViolationKind::TestFileLinesIncreased | RatchetViolationKind::TestFileLinesStale => {
-            5
-        }
-        RatchetViolationKind::DirectoryDirectFilesIncreased
-        | RatchetViolationKind::DirectoryDirectFilesStale => 6,
-        RatchetViolationKind::TestDirectoryDirectFilesIncreased
-        | RatchetViolationKind::TestDirectoryDirectFilesStale => 7,
+        RatchetViolationKind::FileLinesStale => 4,
+        RatchetViolationKind::TestFileLinesStale => 5,
+        RatchetViolationKind::DirectoryDirectFilesStale => 6,
+        RatchetViolationKind::TestDirectoryDirectFilesStale => 7,
     }
 }
 

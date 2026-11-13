@@ -31,11 +31,11 @@ The check groups failures under these headings:
   cohesive, clearly named modules with distinct responsibilities.
 - **Directories with too many direct files** or **Test directories with too many direct files**:
   group related files into clearly named subdirectories.
-- **Ratchet failures**, for an entry whose count rose above its ceiling: shrink the file or
-  directory back to the ceiling or below. The same path also appears under its limit heading;
-  both describe one problem.
-- **Ratchet failures**, for a stale entry: the violation shrank, so run
-  `sprawl-guard tighten --write`.
+- **Stale ratchet entries**: the violation shrank, so run `sprawl-guard tighten --write`.
+
+A failure that names a ceiling, such as `450 lines (limit 400, ceiling 430)`, is a recorded
+violation that grew. Shrink it to the ceiling or below, then run `sprawl-guard tighten --write`.
+Bringing it within the limit is better.
 
 Do not satisfy a limit by moving code into miscellaneous "helpers", "utils" or "common" files.
 

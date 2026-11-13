@@ -51,6 +51,10 @@ their schema versions and need the renames below applied by hand.
   measurements as `src/big.rs: 700 lines (limit 400)`. Paths in every command's human output are
   relative to the root, unquoted, and have control characters escaped.
 - `check --quiet` prints nothing when the check passes.
+- `check` reports a file or directory that grew above its ratchet ceiling once, as a limit
+  violation that names the ceiling: `src/big.rs: 700 lines (limit 400, ceiling 650)`. In JSON and
+  SARIF, its `ratchet` field holds the ceiling. The heading "Ratchet failures" is now
+  "Stale ratchet entries", followed by a hint to run `sprawl-guard tighten --write`.
 - `explain` prints one labeled line per fact, and `languages` prints a table of names, keys, and
   extensions. Use `--format json` for the full language details.
 - SARIF rule descriptions and messages use the same vocabulary.
@@ -72,6 +76,8 @@ their schema versions and need the renames below applied by hand.
 
 ### Removed
 
+- The `*_increased` JSON ratchet kinds and the `sprawl-guard/ratchet-increase` SARIF rule. A
+  violation that grew above its ceiling is reported only by its limit violation.
 - The staged-snapshot preparation hook and its documentation. To check before you commit, run
   `sprawl-guard check` in a pre-commit hook, as described in "Run in CI".
 

@@ -183,7 +183,7 @@ impl Default for RatchetSchemaVersion {
 
 /// Numeric value used when reporting ratchet comparisons.
 ///
-/// Ratchet failures can compare either lines or direct-file counts. The
+/// Ratchet ceilings can count either lines or direct files. The
 /// violation kind identifies the metric, while this wrapper keeps comparison
 /// values branded instead of passing raw integers through the check report.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]

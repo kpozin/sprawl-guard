@@ -20,17 +20,16 @@ fn missing_directory_ratchet(
 ) -> CheckViolation {
     use sprawl_guard_lib::{
         DirectoryRatchetStaleMissingViolation, RatchetCount, RatchetStaleMissingViolation,
-        RatchetStaleViolation,
     };
 
-    CheckViolation::Ratchet(RatchetViolation::Stale(RatchetStaleViolation::Missing(
+    CheckViolation::Ratchet(RatchetViolation::Missing(
         RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
             kind: DirectoryViolationKind::DirectoryDirectFiles,
             path: sprawl_guard_lib::RelativePath::new("src").unwrap(),
             group,
             ratchet: RatchetCount::new(ratchet),
         }),
-    )))
+    ))
 }
 
 pub(super) fn render_check_report(
@@ -300,13 +299,21 @@ fn write_violation_group(
 
 fn violation_message(violation: &FileLinesViolation) -> String {
     format!(
-        "  {}: {} lines (limit {})\n    language: {}, counting {}\n\n",
+        "  {}: {} lines (limit {}{})\n    language: {}, counting {}\n\n",
         display_relative(violation.path.as_str()),
         violation.measurement.actual().get(),
         violation.limit,
+        ceiling_message(violation.ratchet),
         violation.language,
         violation.measurement.count_lines(),
     )
+}
+
+/// Formats the ratchet ceiling that a violation grew above, if it has one.
+fn ceiling_message(ceiling: Option<impl std::fmt::Display>) -> String {
+    ceiling
+        .map(|ceiling| format!(", ceiling {ceiling}"))
+        .unwrap_or_default()
 }
 
 fn write_directory_violation_group(
@@ -366,10 +373,11 @@ fn write_ratchet_violation_group(output: &mut String, report: &CheckReport) {
     if !output.is_empty() && !output.ends_with("\n\n") {
         output.push('\n');
     }
-    output.push_str("Ratchet failures:\n\n");
+    output.push_str("Stale ratchet entries:\n\n");
     for violation in violations {
         output.push_str(&ratchet_violation_message(violation));
     }
+    output.push_str("Run `sprawl-guard tighten --write` to lower or remove them.\n");
 }
 
 fn ratchet_violation_message(violation: &RatchetViolation) -> String {
@@ -397,27 +405,13 @@ fn ratchet_violation_message(violation: &RatchetViolation) -> String {
     )
 }
 
-/// Describes a ratchet failure and names the unit of its measurement.
+/// Names the role of a stale ratchet entry and the unit of its measurement.
 fn ratchet_kind_message(kind: RatchetViolationKind) -> (&'static str, &'static str) {
     match kind {
-        RatchetViolationKind::FileLinesIncreased => ("lines rose above the ceiling", "lines"),
-        RatchetViolationKind::TestFileLinesIncreased => {
-            ("test file lines rose above the ceiling", "lines")
-        }
-        RatchetViolationKind::DirectoryDirectFilesIncreased => {
-            ("direct files rose above the ceiling", "direct files")
-        }
-        RatchetViolationKind::TestDirectoryDirectFilesIncreased => {
-            ("direct test files rose above the ceiling", "direct files")
-        }
-        RatchetViolationKind::FileLinesStale => ("stale ratchet entry", "lines"),
-        RatchetViolationKind::TestFileLinesStale => ("stale test file ratchet entry", "lines"),
-        RatchetViolationKind::DirectoryDirectFilesStale => {
-            ("stale directory ratchet entry", "direct files")
-        }
-        RatchetViolationKind::TestDirectoryDirectFilesStale => {
-            ("stale test directory ratchet entry", "direct files")
-        }
+        RatchetViolationKind::FileLinesStale => ("file", "lines"),
+        RatchetViolationKind::TestFileLinesStale => ("test file", "lines"),
+        RatchetViolationKind::DirectoryDirectFilesStale => ("directory", "direct files"),
+        RatchetViolationKind::TestDirectoryDirectFilesStale => ("test directory", "direct files"),
     }
 }
 
@@ -428,10 +422,11 @@ fn directory_violation_message(violation: &DirectoryDirectFilesViolation) -> Str
         .map(|file| format!("    {}\n", display_relative(file.as_str())))
         .collect::<String>();
     format!(
-        "  {}: {} direct files (limit {}), group {}\n{files}\n",
+        "  {}: {} direct files (limit {}{}), group {}\n{files}\n",
         display_relative(violation.path.as_str()),
         violation.actual,
         violation.limit,
+        ceiling_message(violation.ratchet),
         violation.group,
     )
 }
@@ -444,10 +439,10 @@ mod tests {
         CheckViolation, CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
         DetectedLanguageCount, DiagnosticDetail, DirectFiles, DirectoryDirectFilesViolation,
         DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind, FileLinesViolation,
-        FileRatchetIncreasedViolation, LanguageGroupId, LineCount, LineLimit,
-        NonEmptyUnreadablePaths, RatchetCount, RatchetEntryCount, RatchetIncreasedViolation,
-        RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetViolation,
-        RelativePath, ScanSummary, UnreadablePathSeverity,
+        FileRatchetStaleMeasuredViolation, LanguageGroupId, LineCount, LineLimit,
+        NonEmptyUnreadablePaths, RatchetCount, RatchetEntryCount, RatchetLimit,
+        RatchetStaleMeasuredViolation, RatchetViolation, RelativePath, ScanSummary,
+        UnreadablePathSeverity,
     };
 
     use super::*;
@@ -630,16 +625,17 @@ mod tests {
                 indoc! {"
                     Configuration: built-in defaults (no sprawl-guard.toml in /repo)
 
-                    Ratchet failures:
+                    Stale ratchet entries:
 
-                      src: stale directory ratchet entry
+                      src: directory
                         no current violation (ceiling 4)
                         group: source
 
-                      src: stale directory ratchet entry
+                      src: directory
                         no current violation (ceiling 5)
                         group: documentation
 
+                    Run `sprawl-guard tighten --write` to lower or remove them.
                 "}
             );
         }
@@ -652,8 +648,8 @@ mod tests {
                 counter_info(),
                 scan_summary(),
                 vec![],
-                vec![CheckViolation::Ratchet(RatchetViolation::Stale(
-                    RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::Directory(
+                vec![CheckViolation::Ratchet(RatchetViolation::Measured(
+                    RatchetStaleMeasuredViolation::Directory(
                         DirectoryRatchetStaleMeasuredViolation {
                             kind: DirectoryViolationKind::DirectoryDirectFiles,
                             path: RelativePath::new("docs").unwrap(),
@@ -662,7 +658,7 @@ mod tests {
                             limit: RatchetLimit::Unlimited,
                             ratchet: RatchetCount::new(3),
                         },
-                    )),
+                    ),
                 ))],
             );
 
@@ -680,8 +676,8 @@ mod tests {
                 counter_info(),
                 scan_summary(),
                 vec![],
-                vec![CheckViolation::Ratchet(RatchetViolation::Increased(
-                    RatchetIncreasedViolation::File(FileRatchetIncreasedViolation {
+                vec![CheckViolation::Ratchet(RatchetViolation::Measured(
+                    RatchetStaleMeasuredViolation::File(FileRatchetStaleMeasuredViolation {
                         kind: FileViolationKind::FileLines,
                         path: RelativePath::new("src/lib.rs").unwrap(),
                         measurement: sprawl_guard_lib::code_line_counter::LineMeasurement::new(
@@ -694,7 +690,7 @@ mod tests {
                         )
                         .unwrap(),
                         limit: RatchetCount::new(2),
-                        ratchet: RatchetCount::new(4),
+                        ratchet: RatchetCount::new(6),
                     }),
                 ))],
             );
@@ -702,13 +698,49 @@ mod tests {
             let output = human_check_report(&report, false);
 
             assert!(output.ends_with(indoc! {"
-                Ratchet failures:
+                Stale ratchet entries:
 
-                  src/lib.rs: lines rose above the ceiling
-                    now 5 lines (ceiling 4, limit 2)
+                  src/lib.rs: file
+                    now 5 lines (ceiling 6, limit 2)
                     counting code, comments
 
+                Run `sprawl-guard tighten --write` to lower or remove them.
             "}));
+        }
+
+        #[test]
+        fn it_reports_the_ceiling_of_a_file_that_grew_above_it() {
+            let report = report_with(vec![FileLinesViolation {
+                limit: LineLimit::new(1).unwrap(),
+                ratchet: Some(LineLimit::new(2).unwrap()),
+                ..violation(FileViolationKind::FileLines, "src/lib.rs")
+            }]);
+
+            let output = human_check_report(&report, false);
+
+            assert!(output.contains("  src/lib.rs: 3 lines (limit 1, ceiling 2)\n"));
+        }
+
+        #[test]
+        fn it_reports_the_ceiling_of_a_directory_that_grew_above_it() {
+            let report = CheckReport::complete(
+                report_root(),
+                ConfigSource::BuiltIn,
+                counter_info(),
+                scan_summary(),
+                vec![],
+                vec![CheckViolation::DirectoryDirectFiles(
+                    DirectoryDirectFilesViolation {
+                        limit: DirectFiles::new(1).unwrap(),
+                        ratchet: Some(DirectFiles::new(2).unwrap()),
+                        ..directory_violation(DirectoryViolationKind::DirectoryDirectFiles, "src")
+                    },
+                )],
+            );
+
+            let output = human_check_report(&report, false);
+
+            assert!(output.contains("  src: 3 direct files (limit 1, ceiling 2), group source\n"));
         }
 
         #[test]

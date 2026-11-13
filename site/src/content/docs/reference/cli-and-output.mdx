@@ -121,9 +121,9 @@ them as `config_excluded` and `ratchet_excluded`.
 
 - Human output groups failures under "Files over the line limit", "Test files over the line limit",
   "Directories with too many direct files", "Test directories with too many direct files", and
-  "Ratchet failures". Each failure reads like
-  `src/big.rs: 700 lines (limit 400)`. Paths are relative to the root and never quoted; control
-  characters in them are escaped.
+  "Stale ratchet entries". Each failure reads like `src/big.rs: 700 lines (limit 400)`, or
+  `src/big.rs: 700 lines (limit 400, ceiling 650)` when the file grew above its ratchet ceiling.
+  Paths are relative to the root and never quoted; control characters in them are escaped.
 - JSON output is a structured report with the root, selected paths, where the configuration came
   from, the line counter, coverage, warnings, and violations.
 - SARIF output follows SARIF 2.1.0 and covers check results.
@@ -191,7 +191,9 @@ The report fields are:
 - `coverage`: whether every selected path could be read.
 - `summary`: the number of source files, distinct source directories, and languages checked, plus
   the number of remaining ratchet entries. Passing human output shows the same summary.
-- `warnings` and `violations`: structured diagnostics.
+- `warnings` and `violations`: structured diagnostics. A file or directory violation's `ratchet`
+  field holds its ratchet ceiling when it grew above one, and is `null` when the ratchet file has no
+  entry for it.
 
 When a path cannot be read, `check --format json` still prints a JSON report with `status: "error"`,
 and `check --format sarif` prints only a message on stderr. Other errors may also print only to
@@ -209,7 +211,6 @@ sprawl-guard check --format sarif
 | `sprawl-guard/test-file-lines`             | A test file has more lines than its limit.                      |
 | `sprawl-guard/directory-direct-files`      | A directory directly contains more source files than its limit. |
 | `sprawl-guard/test-directory-direct-files` | A directory directly contains more test files than its limit.   |
-| `sprawl-guard/ratchet-increase`            | A measurement rose above its ratchet ceiling.                   |
 | `sprawl-guard/ratchet-stale`               | A ratchet entry's violation shrank or disappeared.              |
 
 Configuration, path, I/O, parsing, and unreadable-path problems are errors, not violations.

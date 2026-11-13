@@ -15,156 +15,106 @@ mod limit;
 pub use kind::RatchetViolationKind;
 pub use limit::RatchetLimit;
 
-/// A ratchet entry that failed current-check semantics.
+/// A ratchet entry that is no longer current: its violation shrank, ended, or disappeared.
+///
+/// A violation that grew above its ceiling is reported as a limit violation that carries the
+/// ceiling, not as a ratchet violation.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RatchetViolation {
-    /// A measured value increased above its stored ratchet ceiling.
-    Increased(RatchetIncreasedViolation),
-    /// A ratchet entry is no longer current.
-    Stale(RatchetStaleViolation),
+    /// The path is still measured, but the stored ceiling is above its current measurement.
+    Measured(RatchetStaleMeasuredViolation),
+    /// The path is no longer measured.
+    Missing(RatchetStaleMissingViolation),
 }
 
 impl RatchetViolation {
     /// Returns the stable violation kind rendered in machine-readable output.
     pub const fn kind(&self) -> RatchetViolationKind {
         match self {
-            Self::Increased(RatchetIncreasedViolation::File(violation)) => {
-                RatchetViolationKind::increased_file(violation.kind)
+            Self::Measured(RatchetStaleMeasuredViolation::File(violation)) => {
+                RatchetViolationKind::stale_file(violation.kind)
             }
-            Self::Increased(RatchetIncreasedViolation::Directory(violation)) => {
-                RatchetViolationKind::increased_directory(violation.kind)
+            Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => {
+                RatchetViolationKind::stale_directory(violation.kind)
             }
-            Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
-                violation,
-            ))) => RatchetViolationKind::stale_file(violation.kind),
-            Self::Stale(RatchetStaleViolation::Measured(
-                RatchetStaleMeasuredViolation::Directory(violation),
-            )) => RatchetViolationKind::stale_directory(violation.kind),
-            Self::Stale(RatchetStaleViolation::Missing(RatchetStaleMissingViolation::File(
-                violation,
-            ))) => RatchetViolationKind::stale_file(violation.kind),
-            Self::Stale(RatchetStaleViolation::Missing(
-                RatchetStaleMissingViolation::Directory(violation),
-            )) => RatchetViolationKind::stale_directory(violation.kind),
+            Self::Missing(RatchetStaleMissingViolation::File(violation)) => {
+                RatchetViolationKind::stale_file(violation.kind)
+            }
+            Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => {
+                RatchetViolationKind::stale_directory(violation.kind)
+            }
         }
     }
 
     /// Returns the repository-relative file or directory path.
     pub fn path(&self) -> &RelativePath {
         match self {
-            Self::Increased(RatchetIncreasedViolation::File(violation)) => &violation.path,
-            Self::Increased(RatchetIncreasedViolation::Directory(violation)) => &violation.path,
-            Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
-                violation,
-            ))) => &violation.path,
-            Self::Stale(RatchetStaleViolation::Measured(
-                RatchetStaleMeasuredViolation::Directory(violation),
-            )) => &violation.path,
-            Self::Stale(RatchetStaleViolation::Missing(RatchetStaleMissingViolation::File(
-                violation,
-            ))) => &violation.path,
-            Self::Stale(RatchetStaleViolation::Missing(
-                RatchetStaleMissingViolation::Directory(violation),
-            )) => &violation.path,
+            Self::Measured(RatchetStaleMeasuredViolation::File(violation)) => &violation.path,
+            Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => &violation.path,
+            Self::Missing(RatchetStaleMissingViolation::File(violation)) => &violation.path,
+            Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => &violation.path,
         }
     }
 
     /// Returns the current measured value, when the path is still measured.
     pub fn actual(&self) -> Option<RatchetCount> {
         match self {
-            Self::Increased(RatchetIncreasedViolation::File(violation)) => Some(
+            Self::Measured(RatchetStaleMeasuredViolation::File(violation)) => Some(
                 RatchetCount::from_counted_lines(violation.measurement.actual()),
             ),
-            Self::Increased(RatchetIncreasedViolation::Directory(violation)) => {
+            Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => {
                 Some(violation.actual)
             }
-            Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
-                violation,
-            ))) => Some(RatchetCount::from_counted_lines(
-                violation.measurement.actual(),
-            )),
-            Self::Stale(RatchetStaleViolation::Measured(
-                RatchetStaleMeasuredViolation::Directory(violation),
-            )) => Some(violation.actual),
-            Self::Stale(RatchetStaleViolation::Missing(_)) => None,
+            Self::Missing(_) => None,
         }
     }
 
     /// Returns the current configured limit, when the path is still measured.
     pub fn limit(&self) -> Option<RatchetLimit> {
         match self {
-            Self::Increased(RatchetIncreasedViolation::File(violation)) => {
+            Self::Measured(RatchetStaleMeasuredViolation::File(violation)) => {
                 Some(RatchetLimit::Finite(violation.limit))
             }
-            Self::Increased(RatchetIncreasedViolation::Directory(violation)) => {
-                Some(RatchetLimit::Finite(violation.limit))
+            Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => {
+                Some(violation.limit)
             }
-            Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
-                violation,
-            ))) => Some(RatchetLimit::Finite(violation.limit)),
-            Self::Stale(RatchetStaleViolation::Measured(
-                RatchetStaleMeasuredViolation::Directory(violation),
-            )) => Some(violation.limit),
-            Self::Stale(RatchetStaleViolation::Missing(_)) => None,
+            Self::Missing(_) => None,
         }
     }
 
     /// Returns the stored ratchet ceiling.
     pub const fn ratchet(&self) -> RatchetCount {
         match self {
-            Self::Increased(RatchetIncreasedViolation::File(violation)) => violation.ratchet,
-            Self::Increased(RatchetIncreasedViolation::Directory(violation)) => violation.ratchet,
-            Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
-                violation,
-            ))) => violation.ratchet,
-            Self::Stale(RatchetStaleViolation::Measured(
-                RatchetStaleMeasuredViolation::Directory(violation),
-            )) => violation.ratchet,
-            Self::Stale(RatchetStaleViolation::Missing(RatchetStaleMissingViolation::File(
-                violation,
-            ))) => violation.ratchet,
-            Self::Stale(RatchetStaleViolation::Missing(
-                RatchetStaleMissingViolation::Directory(violation),
-            )) => violation.ratchet,
+            Self::Measured(RatchetStaleMeasuredViolation::File(violation)) => violation.ratchet,
+            Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => {
+                violation.ratchet
+            }
+            Self::Missing(RatchetStaleMissingViolation::File(violation)) => violation.ratchet,
+            Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => violation.ratchet,
         }
     }
 
     /// Returns the language group for a directory diagnostic.
     pub fn group(&self) -> Option<&LanguageGroupId> {
         match self {
-            Self::Increased(RatchetIncreasedViolation::Directory(violation)) => {
+            Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => {
                 Some(&violation.group)
             }
-            Self::Stale(RatchetStaleViolation::Measured(
-                RatchetStaleMeasuredViolation::Directory(violation),
-            )) => Some(&violation.group),
-            Self::Stale(RatchetStaleViolation::Missing(
-                RatchetStaleMissingViolation::Directory(violation),
-            )) => Some(&violation.group),
-            Self::Increased(RatchetIncreasedViolation::File(_))
-            | Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
-                _,
-            )))
-            | Self::Stale(RatchetStaleViolation::Missing(RatchetStaleMissingViolation::File(_))) => {
-                None
+            Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => {
+                Some(&violation.group)
             }
+            Self::Measured(RatchetStaleMeasuredViolation::File(_))
+            | Self::Missing(RatchetStaleMissingViolation::File(_)) => None,
         }
     }
 
     /// Returns the line measurement for a measured file diagnostic.
     pub fn line_measurement(&self) -> Option<&LineMeasurement> {
         match self {
-            Self::Increased(RatchetIncreasedViolation::File(violation)) => {
+            Self::Measured(RatchetStaleMeasuredViolation::File(violation)) => {
                 Some(&violation.measurement)
             }
-            Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
-                violation,
-            ))) => Some(&violation.measurement),
-            Self::Increased(RatchetIncreasedViolation::Directory(_))
-            | Self::Stale(RatchetStaleViolation::Measured(
-                RatchetStaleMeasuredViolation::Directory(_),
-            ))
-            | Self::Stale(RatchetStaleViolation::Missing(_)) => None,
+            Self::Measured(RatchetStaleMeasuredViolation::Directory(_)) | Self::Missing(_) => None,
         }
     }
 }
@@ -189,56 +139,6 @@ impl Serialize for RatchetViolation {
         violation.serialize_field("ratchet", &self.ratchet())?;
         violation.end()
     }
-}
-
-/// Ratchet increase with a current measured value and finite configured limit.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RatchetIncreasedViolation {
-    /// File line ratchet increase.
-    File(FileRatchetIncreasedViolation),
-    /// Directory direct-file count ratchet increase.
-    Directory(DirectoryRatchetIncreasedViolation),
-}
-
-/// File line ratchet increase with a current measurement.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FileRatchetIncreasedViolation {
-    /// File role whose line ratchet increased.
-    pub kind: FileViolationKind,
-    /// Repository-relative file path.
-    pub path: RelativePath,
-    /// Current line measurement.
-    pub measurement: LineMeasurement,
-    /// Current configured limit.
-    pub limit: RatchetCount,
-    /// Stored ratchet ceiling.
-    pub ratchet: RatchetCount,
-}
-
-/// Directory direct-file count ratchet increase with a current grouped measurement.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DirectoryRatchetIncreasedViolation {
-    /// Directory role whose direct-file count ratchet increased.
-    pub kind: DirectoryViolationKind,
-    /// Repository-relative directory path.
-    pub path: RelativePath,
-    /// Language group measured at the directory.
-    pub group: LanguageGroupId,
-    /// Current measured value.
-    pub actual: RatchetCount,
-    /// Current configured limit.
-    pub limit: RatchetCount,
-    /// Stored ratchet ceiling.
-    pub ratchet: RatchetCount,
-}
-
-/// Ratchet entry that is no longer current.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum RatchetStaleViolation {
-    /// The path is still measured, but the stored ceiling is stale.
-    Measured(RatchetStaleMeasuredViolation),
-    /// The path is no longer measured.
-    Missing(RatchetStaleMissingViolation),
 }
 
 /// Stale ratchet entry for a path that is still measured.

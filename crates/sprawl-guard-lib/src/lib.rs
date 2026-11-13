@@ -17,14 +17,13 @@ mod value;
 pub use check::{
     AnalysisCoverage, CheckErrorKind, CheckOptions, CheckReport, CheckStatus, CheckViolation,
     CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount,
-    DirectoryDirectFilesViolation, DirectoryRatchetIncreasedViolation,
-    DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
-    DirectoryViolationKind, FileLinesViolation, FileRatchetIncreasedViolation,
+    DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
+    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind, FileLinesViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
-    NonEmptyCheckPaths, NonEmptyUnreadablePaths, RatchetEntryCount, RatchetIncreasedViolation,
-    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
-    RatchetStaleViolation, RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError,
-    ScanSummary, SelectedPaths, check_without_ratchet,
+    NonEmptyCheckPaths, NonEmptyUnreadablePaths, RatchetEntryCount, RatchetLimit,
+    RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetViolation,
+    RatchetViolationKind, ReportRoot, ReportRootError, ScanSummary, SelectedPaths,
+    check_without_ratchet,
 };
 pub use classification::{UnreadablePath, UnreadablePathKind, UnreadablePathSeverity};
 pub use config::{

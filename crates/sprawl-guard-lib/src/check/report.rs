@@ -20,11 +20,10 @@ mod ratchet;
 mod summary;
 
 pub use ratchet::{
-    DirectoryRatchetIncreasedViolation, DirectoryRatchetStaleMeasuredViolation,
-    DirectoryRatchetStaleMissingViolation, FileRatchetIncreasedViolation,
-    FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, RatchetIncreasedViolation,
-    RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
-    RatchetStaleViolation, RatchetViolation, RatchetViolationKind,
+    DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
+    FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, RatchetLimit,
+    RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetViolation,
+    RatchetViolationKind,
 };
 pub use summary::{
     CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount, RatchetEntryCount, ScanSummary,
@@ -360,7 +359,7 @@ pub enum CheckViolation {
     FileLines(FileLinesViolation),
     /// A directory exceeded its configured direct-file limit.
     DirectoryDirectFiles(DirectoryDirectFilesViolation),
-    /// A ratchet entry increased or became stale.
+    /// A ratchet entry is stale.
     Ratchet(RatchetViolation),
 }
 
@@ -379,10 +378,10 @@ pub struct DirectoryDirectFilesViolation {
     pub actual: DirectFiles,
     /// Configured direct-file limit.
     pub limit: DirectFiles,
-    /// Ratchet limit that covers this violation, when available.
+    /// Ceiling recorded for this directory in the ratchet file, which the directory grew above.
     ///
-    /// `None` means no ratchet file was evaluated or no ratchet entry
-    /// covered this directory.
+    /// `None` means the ratchet file has no entry for this directory, or the check did not read
+    /// a ratchet file.
     pub ratchet: Option<DirectFiles>,
     /// Direct child files that contributed to `actual`.
     pub files: Vec<RelativePath>,
@@ -422,10 +421,10 @@ pub struct FileLinesViolation {
     pub measurement: LineMeasurement,
     /// Line limit.
     pub limit: LineLimit,
-    /// Ratchet limit that covers this violation, when available.
+    /// Ceiling recorded for this file in the ratchet file, which the file grew above.
     ///
-    /// `None` means no ratchet file was evaluated or no ratchet entry
-    /// covered this file.
+    /// `None` means the ratchet file has no entry for this file, or the check did not read
+    /// a ratchet file.
     pub ratchet: Option<LineLimit>,
 }
 
