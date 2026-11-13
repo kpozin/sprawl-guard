@@ -17,7 +17,7 @@
     "release:metadata": "node ./scripts/release-metadata.ts",
     "release:prepare-npm": "node ./scripts/publish-npm-packages.ts prepare",
     "release:publish-npm": "node ./scripts/publish-npm-channel.ts",
-    "release:publish-npm-trusted": "node ./scripts/publish-npm-packages.ts publish-trusted",
+    "release:publish-npm-tag": "node ./scripts/publish-npm-packages.ts publish",
     "release:verify-npm": "node ./scripts/publish-npm-packages.ts verify",
     "release:prepare-assets": "node ./scripts/release-assets.ts prepare",
     "release:replace-assets": "node ./scripts/release-assets.ts replace",

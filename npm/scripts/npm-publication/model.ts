@@ -1,9 +1,5 @@
 import { gt } from "semver";
-import type {
-  NpmDistTag,
-  SelectedNpmDistTag,
-  StagingNpmDistTag,
-} from "../npm-dist-tag.ts";
+import type { NpmDistTag } from "../npm-dist-tag.ts";
 import type { PublicPackageVersion } from "../package-version.ts";
 import type {
   AbsoluteDirectoryPath,
@@ -129,15 +125,7 @@ export interface NpmPublicationOperations {
     expectedIntegrity: NpmPackageIntegrity,
     npmDistTag: NpmDistTag,
   ) => PublishArchiveResult;
-  readonly removeRemoteDistTag: (
-    packageName: NpmPackageName,
-    npmDistTag: NpmDistTag,
-  ) => PublishArchiveResult;
   readonly sleepBeforeRetry: () => Promise<void>;
-  readonly updateRemoteDistTag: (
-    packageName: NpmPackageName,
-    npmDistTag: NpmDistTag,
-  ) => PublishArchiveResult;
 }
 
 /** Packed package and its release request. */
@@ -152,7 +140,6 @@ export interface PreparedNpmPublication extends PackagedNpmPublication {
     NpmPackageIntegrityDecision,
     { readonly kind: "integrity_mismatch" }
   >;
-  readonly distTagDecision: NpmDistTagDecision;
 }
 
 /** Result of packing and preflighting the complete npm release set. */
@@ -162,17 +149,6 @@ export type PrepareNpmPublicationsResult =
       readonly publications: readonly PreparedNpmPublication[];
     }
   | Extract<PublishNpmPackagesResult, { readonly kind: "failed" }>;
-
-/** Registry channel used for the initial publish mutation. */
-export type NpmPublicationRoute =
-  | {
-      readonly kind: "local_staging";
-      readonly publicationDistTag: StagingNpmDistTag;
-    }
-  | {
-      readonly kind: "trusted_selected";
-      readonly publicationDistTag: SelectedNpmDistTag;
-    };
 
 /** Decides whether an immutable npm version is absent, identical, or conflicting. */
 export function reconcileNpmPackageIntegrity(args: {

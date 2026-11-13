@@ -1,40 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import {
-  resolveNpmDistTagSelection,
-  SELECTED_NPM_DIST_TAG_SCHEMA,
-  STAGING_NPM_DIST_TAG_SCHEMA,
-} from "./npm-dist-tag.ts";
-
-describe("SELECTED_NPM_DIST_TAG_SCHEMA", () => {
-  describe("when a local command receives an internal staging tag", () => {
-    it("rejects the tag before candidate assembly or publication", () => {
-      assert.equal(
-        SELECTED_NPM_DIST_TAG_SCHEMA.safeParse("sg-candidate-user").success,
-        false,
-      );
-    });
-  });
-
-  describe("when a selected channel is parsed as an internal staging tag", () => {
-    it("requires the reserved prefix followed by one full lowercase commit", () => {
-      for (const tag of [
-        "beta",
-        "sg-candidate-user",
-        "sg-candidate-01234567",
-        "sg-candidate-0123456789ABCDEF0123456789ABCDEF01234567",
-      ]) {
-        assert.equal(STAGING_NPM_DIST_TAG_SCHEMA.safeParse(tag).success, false);
-      }
-      assert.equal(
-        STAGING_NPM_DIST_TAG_SCHEMA.safeParse(
-          "sg-candidate-0123456789abcdef0123456789abcdef01234567",
-        ).success,
-        true,
-      );
-    });
-  });
-});
+import { resolveNpmDistTagSelection } from "./npm-dist-tag.ts";
 
 describe("resolveNpmDistTagSelection", () => {
   describe("when a predefined channel is selected", () => {
@@ -71,8 +37,8 @@ describe("resolveNpmDistTagSelection", () => {
       );
     });
 
-    it("rejects version-like values and the reserved staging namespace", () => {
-      for (const customTag of ["2.0.0", "vnext", "sg-candidate-user"]) {
+    it("rejects version-like values", () => {
+      for (const customTag of ["2.0.0", "vnext"]) {
         assert.deepEqual(
           resolveNpmDistTagSelection({ customTag, selection: "custom" }),
           { kind: "invalid_custom_tag", value: customTag },

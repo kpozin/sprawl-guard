@@ -861,7 +861,7 @@ jobs:
           path: npm-publication-candidate
 
       - name: Publish npm packages
-        run: pnpm --dir npm run release:publish-npm-trusted ../npm-publication-candidate "${RELEASE_COMMIT}" "${RELEASE_TAG}" "${NPM_DIST_TAG}"
+        run: pnpm --dir npm run release:publish-npm-tag ../npm-publication-candidate "${RELEASE_COMMIT}" "${RELEASE_TAG}" "${NPM_DIST_TAG}"
         env:
           NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
           RELEASE_COMMIT: ${{ needs.release-metadata.outputs.release_commit }}

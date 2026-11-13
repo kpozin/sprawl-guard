@@ -5,7 +5,7 @@ import {
   RUNTIME_PACKAGE_DEFINITIONS,
   WRAPPER_PACKAGE_NAME,
 } from "./package-manifests.ts";
-import { SELECTED_NPM_DIST_TAG_SCHEMA } from "./npm-dist-tag.ts";
+import { NPM_DIST_TAG_SCHEMA } from "./npm-dist-tag.ts";
 import {
   type NpmPackageName,
   type NpmPublicationOperations,
@@ -13,7 +13,7 @@ import {
   type RemoteNpmDistTagInspection,
   type RemotePackageIntegrityInspection,
 } from "./npm-publication/model.ts";
-import { publishTrustedNpmPublicationRequests } from "./npm-publication/state.ts";
+import { publishNpmPublicationRequests } from "./npm-publication/state.ts";
 import {
   ABSOLUTE_DIRECTORY_PATH_SCHEMA,
   NPM_ARCHIVE_PATH_SCHEMA,
@@ -22,7 +22,7 @@ import {
 } from "./npm-publication/values.ts";
 import { PUBLIC_PACKAGE_VERSION_SCHEMA } from "./package-version.ts";
 
-const BETA_DIST_TAG = SELECTED_NPM_DIST_TAG_SCHEMA.parse("beta");
+const BETA_DIST_TAG = NPM_DIST_TAG_SCHEMA.parse("beta");
 const VERSION_0_0_9 = PUBLIC_PACKAGE_VERSION_SCHEMA.parse("0.0.9");
 const VERSION_0_3_0 = PUBLIC_PACKAGE_VERSION_SCHEMA.parse("0.3.0");
 const FIRST_RUNTIME_PACKAGE = RUNTIME_PACKAGE_DEFINITIONS[0];
@@ -122,13 +122,11 @@ function publicationOperations(args: {
       args.events.push("publish");
       return { kind: "ok" };
     },
-    removeRemoteDistTag: () => ({ kind: "ok" }),
     sleepBeforeRetry: async () => {},
-    updateRemoteDistTag: () => ({ kind: "ok" }),
   };
 }
 
-describe("publishTrustedNpmPublicationRequests", () => {
+describe("publishNpmPublicationRequests", () => {
   describe("when a complete package set is new", () => {
     it("publishes carriers before the wrapper directly on the selected channel", async () => {
       const events: string[] = [];
@@ -170,16 +168,10 @@ describe("publishTrustedNpmPublicationRequests", () => {
           published.add(publishedPackage.packageName);
           return { kind: "ok" };
         },
-        removeRemoteDistTag: () => {
-          throw new Error("trusted publishing must not remove dist-tags");
-        },
         sleepBeforeRetry: async () => {},
-        updateRemoteDistTag: () => {
-          throw new Error("trusted publishing must not repair dist-tags");
-        },
       };
 
-      const result = await publishTrustedNpmPublicationRequests({
+      const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations,
         requests: [CARRIER_REQUEST, WRAPPER_REQUEST],
@@ -197,7 +189,7 @@ describe("publishTrustedNpmPublicationRequests", () => {
   describe("when an identical package version already targets the selected channel", () => {
     it("resumes without publishing or mutating a dist-tag", async () => {
       const events: string[] = [];
-      const result = await publishTrustedNpmPublicationRequests({
+      const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations: publicationOperations({
           events,
@@ -217,10 +209,88 @@ describe("publishTrustedNpmPublicationRequests", () => {
     });
   });
 
+  describe("when a carrier is already published on the selected channel", () => {
+    describe("and the wrapper is absent", () => {
+      it("publishes only the wrapper", async () => {
+        const events: string[] = [];
+        const published = new Set<NpmPackageName>([CARRIER_REQUEST.packageName]);
+        const wrapperInspections = { count: 0 };
+        const operations: NpmPublicationOperations = {
+          inspectRemoteDistTag: (packageName) => ({
+            kind: "ok",
+            remote: published.has(packageName)
+              ? { kind: "present", version: PACKAGE_VERSION }
+              : { kind: "present", version: VERSION_0_0_9 },
+          }),
+          inspectRemoteIntegrity: (packageName) => {
+            if (packageName === WRAPPER_PACKAGE_NAME) {
+              wrapperInspections.count += 1;
+            }
+            return packageName === WRAPPER_PACKAGE_NAME && wrapperInspections.count < 3
+              ? { kind: "ok", integrity: { kind: "absent" } }
+              : {
+                  kind: "ok",
+                  integrity: { kind: "present", integrity: LOCAL_INTEGRITY },
+                };
+          },
+          packPackage: (request) => ({
+            kind: "ok",
+            archivePath: archivePath(request.packageName),
+            integrity: LOCAL_INTEGRITY,
+            packageName: request.packageName,
+            version: PACKAGE_VERSION,
+          }),
+          publishArchive: (publishedArchivePath, _integrity, npmDistTag) => {
+            assert.equal(publishedArchivePath, archivePath(WRAPPER_PACKAGE_NAME));
+            events.push(`publish:${WRAPPER_PACKAGE_NAME}:${npmDistTag}`);
+            published.add(WRAPPER_PACKAGE_NAME);
+            return { kind: "ok" };
+          },
+          sleepBeforeRetry: async () => {},
+        };
+
+        const result = await publishNpmPublicationRequests({
+          npmDistTag: BETA_DIST_TAG,
+          operations,
+          requests: [CARRIER_REQUEST, WRAPPER_REQUEST],
+          temporaryDirectory: RELEASE_DIRECTORY,
+        });
+
+        assert.deepEqual(result, { kind: "ok" });
+        assert.deepEqual(events, [`publish:${WRAPPER_PACKAGE_NAME}:beta`]);
+      });
+    });
+  });
+
+  describe("when the selected channel already targets a newer release", () => {
+    it("stops during preflight without publishing", async () => {
+      const events: string[] = [];
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: publicationOperations({
+          distTagInspections: [
+            { kind: "ok", remote: { kind: "present", version: VERSION_0_3_0 } },
+          ],
+          events,
+          inspections: [{ kind: "ok", integrity: { kind: "absent" } }],
+        }),
+        requests: [WRAPPER_REQUEST],
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.deepEqual(result, {
+        kind: "failed",
+        packageName: WRAPPER_PACKAGE_NAME,
+        detail: `npm dist-tag beta already targets newer version ${VERSION_0_3_0}`,
+      });
+      assert.deepEqual(events, ["pack", "inspect"]);
+    });
+  });
+
   describe("when an npm preflight read fails transiently", () => {
     it("retries package inspection before publishing", async () => {
       const events: string[] = [];
-      const result = await publishTrustedNpmPublicationRequests({
+      const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations: {
           ...publicationOperations({
@@ -257,7 +327,7 @@ describe("publishTrustedNpmPublicationRequests", () => {
 
     it("retries selected-channel inspection before resuming", async () => {
       const events: string[] = [];
-      const result = await publishTrustedNpmPublicationRequests({
+      const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations: {
           ...publicationOperations({
@@ -287,9 +357,9 @@ describe("publishTrustedNpmPublicationRequests", () => {
   });
 
   describe("when an identical version does not own the selected channel", () => {
-    it("requires explicit local repair instead of mutating the channel with OIDC", async () => {
+    it("stops with a repair command instead of changing the channel", async () => {
       const events: string[] = [];
-      const result = await publishTrustedNpmPublicationRequests({
+      const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations: publicationOperations({
           distTagInspections: [
@@ -320,9 +390,9 @@ describe("publishTrustedNpmPublicationRequests", () => {
   });
 
   describe("when an identical version loses the selected channel after preflight", () => {
-    it("fails instead of reporting a completed trusted publication", async () => {
+    it("fails instead of reporting a completed publication", async () => {
       const events: string[] = [];
-      const result = await publishTrustedNpmPublicationRequests({
+      const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations: publicationOperations({
           distTagInspections: [
@@ -346,10 +416,39 @@ describe("publishTrustedNpmPublicationRequests", () => {
     });
   });
 
+  describe("when a newer release takes the channel from an identical version after preflight", () => {
+    it("refuses without suggesting a rollback", async () => {
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: publicationOperations({
+          distTagInspections: [
+            { kind: "ok", remote: { kind: "present", version: PACKAGE_VERSION } },
+            { kind: "ok", remote: { kind: "present", version: VERSION_0_3_0 } },
+          ],
+          events: [],
+          inspections: [
+            {
+              kind: "ok",
+              integrity: { kind: "present", integrity: LOCAL_INTEGRITY },
+            },
+          ],
+        }),
+        requests: [WRAPPER_REQUEST],
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.deepEqual(result, {
+        kind: "failed",
+        packageName: WRAPPER_PACKAGE_NAME,
+        detail: `npm dist-tag beta already targets newer version ${VERSION_0_3_0}`,
+      });
+    });
+  });
+
   describe("when the selected channel advances after preflight", () => {
     it("refuses to publish an older package onto the channel", async () => {
       const events: string[] = [];
-      const result = await publishTrustedNpmPublicationRequests({
+      const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations: publicationOperations({
           distTagInspections: [
@@ -374,7 +473,7 @@ describe("publishTrustedNpmPublicationRequests", () => {
   describe("when a later package conflicts with the registry", () => {
     it("finishes the complete preflight before publishing a carrier", async () => {
       const events: string[] = [];
-      const result = await publishTrustedNpmPublicationRequests({
+      const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations: {
           inspectRemoteDistTag: () => ({
@@ -404,10 +503,8 @@ describe("publishTrustedNpmPublicationRequests", () => {
             events.push("publish");
             return { kind: "ok" };
           },
-          removeRemoteDistTag: () => ({ kind: "ok" }),
-          sleepBeforeRetry: async () => {},
-          updateRemoteDistTag: () => ({ kind: "ok" }),
-        },
+                sleepBeforeRetry: async () => {},
+              },
         requests: [CARRIER_REQUEST, WRAPPER_REQUEST],
         temporaryDirectory: RELEASE_DIRECTORY,
       });
@@ -418,6 +515,100 @@ describe("publishTrustedNpmPublicationRequests", () => {
         `pack:${WRAPPER_PACKAGE_NAME}`,
         `inspect:${CARRIER_REQUEST.packageName}`,
         `inspect:${WRAPPER_PACKAGE_NAME}`,
+      ]);
+    });
+  });
+
+  describe("when a later package cannot be assembled", () => {
+    it("publishes nothing until every carrier and the wrapper have packed", async () => {
+      const events: string[] = [];
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: {
+          ...publicationOperations({ events, inspections: [] }),
+          packPackage: (request) => {
+            events.push(`pack:${request.packageName}`);
+            return request.packageName === WRAPPER_PACKAGE_NAME
+              ? { kind: "failed", detail: "wrapper pack failed" }
+              : {
+                  kind: "ok",
+                  archivePath: archivePath(request.packageName),
+                  integrity: LOCAL_INTEGRITY,
+                  packageName: request.packageName,
+                  version: PACKAGE_VERSION,
+                };
+          },
+        },
+        requests: [CARRIER_REQUEST, WRAPPER_REQUEST],
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.deepEqual(result, {
+        kind: "failed",
+        packageName: WRAPPER_PACKAGE_NAME,
+        detail: "wrapper pack failed",
+      });
+      assert.deepEqual(events, [
+        `pack:${CARRIER_REQUEST.packageName}`,
+        `pack:${WRAPPER_PACKAGE_NAME}`,
+      ]);
+    });
+  });
+
+  describe("when the packed package identity differs from the request", () => {
+    it("stops before querying or publishing", async () => {
+      const events: string[] = [];
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: publicationOperations({ events, inspections: [] }),
+        requests: [CARRIER_REQUEST],
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.equal(result.kind, "failed");
+      assert.deepEqual(events, ["pack"]);
+    });
+  });
+
+  describe("when registry propagation is transient after publication", () => {
+    it("retries without repeating the upload", async () => {
+      const events: string[] = [];
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: {
+          ...publicationOperations({
+            distTagInspections: [
+              { kind: "ok", remote: { kind: "absent" } },
+              { kind: "ok", remote: { kind: "absent" } },
+            ],
+            events,
+            inspections: [
+              { kind: "ok", integrity: { kind: "absent" } },
+              { kind: "ok", integrity: { kind: "absent" } },
+              { kind: "transient_failure", detail: "HTTP 503" },
+              {
+                kind: "ok",
+                integrity: { kind: "present", integrity: LOCAL_INTEGRITY },
+              },
+            ],
+          }),
+          sleepBeforeRetry: async () => {
+            events.push("sleep");
+          },
+        },
+        requests: [WRAPPER_REQUEST],
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.deepEqual(result, { kind: "ok" });
+      assert.deepEqual(events, [
+        "pack",
+        "inspect",
+        "inspect",
+        "publish",
+        "inspect",
+        "sleep",
+        "inspect",
       ]);
     });
   });

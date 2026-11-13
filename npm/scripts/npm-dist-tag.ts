@@ -6,13 +6,6 @@ import { z } from "zod";
 const MAXIMUM_NPM_DIST_TAG_LENGTH = 64;
 const CUSTOM_NPM_DIST_TAG_PATTERN = /^(?!v)(?!x(?:$|[.-]))[a-z][a-z0-9._-]*$/u;
 
-/** Prefix reserved for temporary tags created by the publication protocol. */
-export const RESERVED_NPM_DIST_TAG_PREFIX = "sg-candidate-";
-const STAGING_NPM_DIST_TAG_PATTERN = new RegExp(
-  `^${RESERVED_NPM_DIST_TAG_PREFIX}[0-9a-f]{40}$`,
-  "u",
-);
-
 /** npm channels offered directly by release entry points. */
 export const PRESET_NPM_DIST_TAGS = [
   "latest",
@@ -37,27 +30,9 @@ export const NPM_DIST_TAG_SCHEMA = z
 /** npm distribution tag that is safe to pass to `npm publish --tag`. */
 export type NpmDistTag = z.infer<typeof NPM_DIST_TAG_SCHEMA>;
 
-/** User-selected npm channel that cannot collide with publication staging tags. */
-export const SELECTED_NPM_DIST_TAG_SCHEMA = NPM_DIST_TAG_SCHEMA.refine(
-  (tag) => !tag.startsWith(RESERVED_NPM_DIST_TAG_PREFIX),
-  { message: "npm dist-tag uses the reserved publication staging prefix" },
-).brand<"SelectedNpmDistTag">();
-
-/** Validated user-selected npm channel. */
-export type SelectedNpmDistTag = z.infer<typeof SELECTED_NPM_DIST_TAG_SCHEMA>;
-
-/** Internal npm tag used while one release's complete package set is assembled. */
-export const STAGING_NPM_DIST_TAG_SCHEMA = NPM_DIST_TAG_SCHEMA.refine(
-  (tag) => STAGING_NPM_DIST_TAG_PATTERN.test(tag),
-  { message: "npm staging tag must identify one full lowercase release commit" },
-).brand<"StagingNpmDistTag">();
-
-/** Validated internal npm publication staging tag. */
-export type StagingNpmDistTag = z.infer<typeof STAGING_NPM_DIST_TAG_SCHEMA>;
-
 /** Result of resolving the preset/custom release-channel inputs. */
 export type ResolveNpmDistTagSelectionResult =
-  | { readonly kind: "ok"; readonly tag: SelectedNpmDistTag }
+  | { readonly kind: "ok"; readonly tag: NpmDistTag }
   | { readonly kind: "invalid_selection"; readonly value: string }
   | { readonly kind: "missing_custom_tag" }
   | { readonly kind: "invalid_custom_tag"; readonly value: string }
@@ -81,7 +56,7 @@ export function resolveNpmDistTagSelection(args: {
     if (args.customTag.length === 0) {
       return { kind: "missing_custom_tag" };
     }
-    const parsedCustomTag = SELECTED_NPM_DIST_TAG_SCHEMA.safeParse(args.customTag);
+    const parsedCustomTag = NPM_DIST_TAG_SCHEMA.safeParse(args.customTag);
     return parsedCustomTag.success
       ? { kind: "ok", tag: parsedCustomTag.data }
       : { kind: "invalid_custom_tag", value: args.customTag };
@@ -94,7 +69,7 @@ export function resolveNpmDistTagSelection(args: {
   }
   return {
     kind: "ok",
-    tag: SELECTED_NPM_DIST_TAG_SCHEMA.parse(parsedSelection.data),
+    tag: NPM_DIST_TAG_SCHEMA.parse(parsedSelection.data),
   };
 }
 

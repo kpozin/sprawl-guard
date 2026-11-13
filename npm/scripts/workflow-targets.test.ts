@@ -543,7 +543,7 @@ describe("native runtime workflow coverage", () => {
       );
 
       const npmPublish = stepWithName(npmJob.steps, "Publish npm packages");
-      assert.match(npmPublish.run ?? "", /release:publish-npm-trusted/u);
+      assert.match(npmPublish.run ?? "", /release:publish-npm-tag/u);
       assert.equal(npmPublish.env?.NODE_AUTH_TOKEN, undefined);
       assert.doesNotMatch(npmPublish.run ?? "", /dist-tag/u);
       for (const job of [cargoJob, npmJob]) {

@@ -27,17 +27,17 @@ describe("resolveNpmChannelPublication", () => {
     });
   });
 
-  describe("when a custom channel uses the staging namespace", () => {
+  describe("when a custom channel is version-like", () => {
     it("rejects the channel before invoking the publisher", () => {
       assert.deepEqual(
         resolveNpmChannelPublication([
           ...RELEASE_ARGUMENTS,
           "custom",
-          "sg-candidate-user",
+          "2.0.0",
         ]),
         {
           kind: "invalid_channel",
-          detail: { kind: "invalid_custom_tag", value: "sg-candidate-user" },
+          detail: { kind: "invalid_custom_tag", value: "2.0.0" },
         },
       );
     });

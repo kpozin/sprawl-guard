@@ -14,17 +14,10 @@ import {
   WRAPPER_PACKAGE_NAME,
   publishWorkspaceTextFiles,
 } from "./package-manifests.ts";
-import {
-  SELECTED_NPM_DIST_TAG_SCHEMA,
-  STAGING_NPM_DIST_TAG_SCHEMA,
-  type NpmDistTag,
-  type SelectedNpmDistTag,
-  type StagingNpmDistTag,
-} from "./npm-dist-tag.ts";
+import { NPM_DIST_TAG_SCHEMA, type NpmDistTag } from "./npm-dist-tag.ts";
 import { PUBLIC_PACKAGE_VERSION_SCHEMA } from "./package-version.ts";
 import { PAYLOAD_CHECK_KIND } from "./payload-check.ts";
 import {
-  reconcileNpmDistTag,
   type NpmPackageName,
   type NpmPublicationOperations,
   type NpmPublicationRequest,
@@ -36,13 +29,7 @@ import {
   type SuccessfulPackResult,
   type ValidationResult,
 } from "./npm-publication/model.ts";
-import {
-  inspectDistTagBeforePublication,
-  prepareNpmPublications,
-  publishPreparedNpmPublications,
-  publishTrustedNpmPublicationRequests,
-  waitForPublishedDistTag,
-} from "./npm-publication/state.ts";
+import { publishNpmPublicationRequests } from "./npm-publication/state.ts";
 import {
   ABSOLUTE_DIRECTORY_PATH_SCHEMA,
   NPM_ARCHIVE_FILE_NAME_SCHEMA,
@@ -71,7 +58,6 @@ import {
   inspectReleaseSource,
   parseReleaseSourceExpectation,
   RELEASE_COMMIT_SCHEMA,
-  type ReleaseCommit,
   type ReleaseSourceExpectation,
 } from "./release-source.ts";
 
@@ -85,7 +71,7 @@ const NPM_PUBLICATION_CANDIDATE_MANIFEST_FILE = "npm-publication-candidate.json"
 const NPM_PUBLICATION_CANDIDATE_SCHEMA = z
   .object({
     schemaVersion: z.literal(2),
-    npmDistTag: SELECTED_NPM_DIST_TAG_SCHEMA,
+    npmDistTag: NPM_DIST_TAG_SCHEMA,
     releaseCommit: RELEASE_COMMIT_SCHEMA,
     releaseTag: RELEASE_TAG_SCHEMA,
     releaseVersion: PUBLIC_PACKAGE_VERSION_SCHEMA,
@@ -109,7 +95,7 @@ const TRANSIENT_NPM_FAILURE_PATTERN =
   /(?:EAI_AGAIN|ECONNRESET|ETIMEDOUT|ERR_SOCKET_TIMEOUT|E429|E50[0234]|HTTP (?:408|429|5\d\d))/u;
 const NPM_COMMAND_MAXIMUM_OUTPUT_BYTES = 1_048_576;
 const NPM_READ_COMMAND_TIMEOUT_MILLISECONDS = 30_000;
-const NPM_MUTATION_COMMAND_TIMEOUT_MILLISECONDS = 600_000;
+const NPM_PUBLISH_COMMAND_TIMEOUT_MILLISECONDS = 600_000;
 
 type NpmCommandResult =
   | { readonly kind: "ok"; readonly stdout: string }
@@ -237,18 +223,10 @@ type LoadNpmPublicationCandidateResult =
       readonly detail: string;
     };
 
-type LoadedNpmPublication =
-  | {
-      readonly kind: "ok";
-      readonly operations: NpmPublicationOperations;
-      readonly requests: readonly NpmPublicationRequest[];
-    }
-  | Extract<PublishNpmPackagesResult, { readonly kind: "failed" }>;
-
 /** Packs and records the complete npm candidate before registry authentication. */
 export function prepareNpmPublicationCandidate(args: {
   readonly expectation: ReleaseSourceExpectation;
-  readonly npmDistTag: SelectedNpmDistTag;
+  readonly npmDistTag: NpmDistTag;
   readonly outputDirectory: AbsoluteDirectoryPath;
   readonly workspaceRootDirectory: AbsoluteDirectoryPath;
 }): PublishNpmPackagesResult {
@@ -329,7 +307,7 @@ export function prepareNpmPublicationCandidate(args: {
 function loadNpmPublicationCandidate(args: {
   readonly candidateDirectory: AbsoluteDirectoryPath;
   readonly expectation: ReleaseSourceExpectation;
-  readonly npmDistTag: SelectedNpmDistTag;
+  readonly npmDistTag: NpmDistTag;
   readonly requests: readonly NpmPublicationRequest[];
 }): LoadNpmPublicationCandidateResult {
   let parsedJson: unknown;
@@ -422,102 +400,17 @@ function candidateRequestFailure(
   return { kind: "failed", packageName: request.packageName, detail };
 }
 
-/** Runs the ordered, resumable npm publication state machine through supplied operations. */
-export async function publishNpmPublicationRequests(args: {
-  readonly npmDistTag: SelectedNpmDistTag;
-  readonly stagingNpmDistTag: StagingNpmDistTag;
-  readonly operations: NpmPublicationOperations;
-  readonly requests: readonly NpmPublicationRequest[];
-  readonly temporaryDirectory: AbsoluteDirectoryPath;
-}): Promise<PublishNpmPackagesResult> {
-  const prepared = await prepareNpmPublications(args);
-  if (prepared.kind === "failed") {
-    return prepared;
-  }
-  const preparedPublications = prepared.publications;
-
-  const publication = await publishPreparedNpmPublications({
-    operations: args.operations,
-    publications: preparedPublications,
-    route: {
-      kind: "local_staging",
-      publicationDistTag: args.stagingNpmDistTag,
-    },
-  });
-  if (publication.kind === "failed") {
-    return publication;
-  }
-
-  for (const { request } of preparedPublications) {
-    const distTag = await reconcilePublishedDistTag({
-      npmDistTag: args.npmDistTag,
-      operations: args.operations,
-      packageName: request.packageName,
-    });
-    if (distTag.kind === "failed") {
-      return failedPublication(request, distTag.detail);
-    }
-  }
-
-  for (const { request } of preparedPublications) {
-    const stagingTag = await removePublishedStagingDistTag({
-      operations: args.operations,
-      packageName: request.packageName,
-      selectedNpmDistTag: args.npmDistTag,
-      stagingNpmDistTag: args.stagingNpmDistTag,
-    });
-    if (stagingTag.kind === "failed") {
-      return failedPublication(request, stagingTag.detail);
-    }
-  }
-  return { kind: "ok" };
-}
-
-/** Publishes absent packages and safely skips byte-identical versions from a resumed release. */
+/**
+ * Publishes a validated candidate on the selected channel, skipping byte-identical versions from
+ * a resumed release. Authentication comes from npm trusted publishing in CI or an interactive
+ * login locally.
+ */
 export async function publishNpmPackages(args: {
   readonly candidateDirectory: AbsoluteDirectoryPath;
   readonly expectation: ReleaseSourceExpectation;
-  readonly npmDistTag: SelectedNpmDistTag;
+  readonly npmDistTag: NpmDistTag;
   readonly workspaceRootDirectory: AbsoluteDirectoryPath;
 }): Promise<PublishNpmPackagesResult> {
-  const loaded = loadNpmPublicationForRelease(args);
-  if (loaded.kind === "failed") {
-    return loaded;
-  }
-  return publishNpmPublicationRequests({
-    npmDistTag: args.npmDistTag,
-    operations: loaded.operations,
-    requests: loaded.requests,
-    stagingNpmDistTag: npmStagingDistTag(args.expectation.commit),
-    temporaryDirectory: args.candidateDirectory,
-  });
-}
-
-/** Publishes a validated candidate through npm's GitHub Actions trusted publisher. */
-export async function publishTrustedNpmPackages(args: {
-  readonly candidateDirectory: AbsoluteDirectoryPath;
-  readonly expectation: ReleaseSourceExpectation;
-  readonly npmDistTag: SelectedNpmDistTag;
-  readonly workspaceRootDirectory: AbsoluteDirectoryPath;
-}): Promise<PublishNpmPackagesResult> {
-  const loaded = loadNpmPublicationForRelease(args);
-  if (loaded.kind === "failed") {
-    return loaded;
-  }
-  return publishTrustedNpmPublicationRequests({
-    npmDistTag: args.npmDistTag,
-    operations: loaded.operations,
-    requests: loaded.requests,
-    temporaryDirectory: args.candidateDirectory,
-  });
-}
-
-function loadNpmPublicationForRelease(args: {
-  readonly candidateDirectory: AbsoluteDirectoryPath;
-  readonly expectation: ReleaseSourceExpectation;
-  readonly npmDistTag: SelectedNpmDistTag;
-  readonly workspaceRootDirectory: AbsoluteDirectoryPath;
-}): LoadedNpmPublication {
   const requests = npmPublicationRequests(args);
   const candidate = loadNpmPublicationCandidate({
     candidateDirectory: args.candidateDirectory,
@@ -525,25 +418,22 @@ function loadNpmPublicationForRelease(args: {
     npmDistTag: args.npmDistTag,
     requests,
   });
-  return candidate.kind === "failed"
-    ? candidate
-    : {
-        kind: "ok",
-        operations: productionOperations(candidate.packedByPackageName),
-        requests,
-      };
-}
-
-/** Returns the release-scoped tag used while uploading a complete package set. */
-export function npmStagingDistTag(releaseCommit: ReleaseCommit): StagingNpmDistTag {
-  return STAGING_NPM_DIST_TAG_SCHEMA.parse(`sg-candidate-${releaseCommit}`);
+  if (candidate.kind === "failed") {
+    return candidate;
+  }
+  return publishNpmPublicationRequests({
+    npmDistTag: args.npmDistTag,
+    operations: productionOperations(candidate.packedByPackageName),
+    requests,
+    temporaryDirectory: args.candidateDirectory,
+  });
 }
 
 /** Validates a downloaded npm candidate without registry credentials. */
 export function verifyNpmPublicationCandidate(args: {
   readonly candidateDirectory: AbsoluteDirectoryPath;
   readonly expectation: ReleaseSourceExpectation;
-  readonly npmDistTag: SelectedNpmDistTag;
+  readonly npmDistTag: NpmDistTag;
   readonly workspaceRootDirectory: AbsoluteDirectoryPath;
 }): PublishNpmPackagesResult {
   const loaded = loadNpmPublicationCandidate({
@@ -564,89 +454,6 @@ function failedPublication(
     packageName: request.packageName,
     detail,
   };
-}
-
-async function reconcilePublishedDistTag(args: {
-  readonly npmDistTag: NpmDistTag;
-  readonly operations: NpmPublicationOperations;
-  readonly packageName: NpmPackageName;
-}): Promise<PublishArchiveResult> {
-  const inspected = await inspectDistTagBeforePublication(
-    args.packageName,
-    args.npmDistTag,
-    args.operations,
-  );
-  if (inspected.kind !== "ok") {
-    return { kind: "failed", detail: inspected.detail };
-  }
-  const decision = reconcileNpmDistTag({
-    releaseVersion: PACKAGE_VERSION,
-    remote: inspected.remote,
-  });
-  if (decision.kind === "keep") {
-    return { kind: "ok" };
-  }
-  if (decision.kind === "would_move_backward") {
-    return {
-      kind: "failed",
-      detail: `refusing to move npm dist-tag ${args.npmDistTag} backward from ${decision.currentVersion}`,
-    };
-  }
-  const updated = args.operations.updateRemoteDistTag(args.packageName, args.npmDistTag);
-  if (updated.kind === "failed") {
-    return updated;
-  }
-  return waitForPublishedDistTag(args);
-}
-
-async function removePublishedStagingDistTag(args: {
-  readonly operations: NpmPublicationOperations;
-  readonly packageName: NpmPackageName;
-  readonly selectedNpmDistTag: SelectedNpmDistTag;
-  readonly stagingNpmDistTag: StagingNpmDistTag;
-}): Promise<PublishArchiveResult> {
-  const inspected = await inspectDistTagBeforePublication(
-    args.packageName,
-    args.stagingNpmDistTag,
-    args.operations,
-  );
-  if (inspected.kind !== "ok") {
-    return { kind: "failed", detail: inspected.detail };
-  }
-  if (
-    inspected.remote.kind === "present"
-    && inspected.remote.version !== PACKAGE_VERSION
-  ) {
-    return {
-      kind: "failed",
-      detail: `refusing to remove npm staging tag ${args.stagingNpmDistTag} from ${inspected.remote.version}`,
-    };
-  }
-  const selected = await inspectDistTagBeforePublication(
-    args.packageName,
-    args.selectedNpmDistTag,
-    args.operations,
-  );
-  if (selected.kind !== "ok") {
-    return { kind: "failed", detail: selected.detail };
-  }
-  if (
-    selected.remote.kind !== "present"
-    || selected.remote.version !== PACKAGE_VERSION
-  ) {
-    return {
-      kind: "failed",
-      detail: `refusing to remove npm staging tag ${args.stagingNpmDistTag} because selected npm channel ${args.selectedNpmDistTag} no longer targets ${PACKAGE_VERSION}`,
-    };
-  }
-  if (inspected.remote.kind === "absent") {
-    return { kind: "ok" };
-  }
-  const removed = args.operations.removeRemoteDistTag(
-    args.packageName,
-    args.stagingNpmDistTag,
-  );
-  return removed;
 }
 
 function packPackage(
@@ -869,38 +676,7 @@ function inspectRemoteDistTag(
       };
 }
 
-function updateRemoteDistTag(
-  packageName: NpmPackageName,
-  npmDistTag: NpmDistTag,
-): PublishArchiveResult {
-  const updated = runInteractiveNpmMutation([
-    "dist-tag",
-    "add",
-    `${packageName}@${PACKAGE_VERSION}`,
-    npmDistTag,
-    "--registry",
-    NPM_REGISTRY_URL,
-  ]);
-  return updated.kind === "ok"
-    ? { kind: "ok" }
-    : { kind: "failed", detail: updated.detail };
-}
-
-function removeRemoteDistTag(
-  packageName: NpmPackageName,
-  npmDistTag: NpmDistTag,
-): PublishArchiveResult {
-  return runInteractiveNpmMutation([
-    "dist-tag",
-    "rm",
-    packageName,
-    npmDistTag,
-    "--registry",
-    NPM_REGISTRY_URL,
-  ]);
-}
-
-/** Returns the npm arguments for an interactive, local registry publication. */
+/** Returns the npm arguments that publish one archive directly on the selected channel. */
 export function npmPublishArguments(
   archivePath: NpmArchivePath,
   npmDistTag: NpmDistTag,
@@ -927,13 +703,10 @@ function publishArchive(
   if (integrityValidation.kind === "invalid") {
     return { kind: "failed", detail: integrityValidation.detail };
   }
-  return runInteractiveNpmMutation(npmPublishArguments(archivePath, npmDistTag));
-}
-
-function runInteractiveNpmMutation(args: readonly string[]): PublishArchiveResult {
-  const result = spawnSync("npm", args, {
+  // Inherit the terminal so a local interactive login can show npm's browser approval prompt.
+  const result = spawnSync("npm", npmPublishArguments(archivePath, npmDistTag), {
     stdio: "inherit",
-    timeout: NPM_MUTATION_COMMAND_TIMEOUT_MILLISECONDS,
+    timeout: NPM_PUBLISH_COMMAND_TIMEOUT_MILLISECONDS,
   });
   return result.status === 0
     ? { kind: "ok" }
@@ -941,7 +714,7 @@ function runInteractiveNpmMutation(args: readonly string[]): PublishArchiveResul
         kind: "failed",
         detail:
           result.error?.message
-          ?? `npm ${args[0] ?? "command"} exited with status ${String(result.status)}`,
+          ?? `npm publish exited with status ${String(result.status)}`,
       };
 }
 
@@ -988,12 +761,10 @@ function productionOperations(
         detail: `npm candidate omitted ${request.packageName}`,
       },
     publishArchive,
-    removeRemoteDistTag,
     sleepBeforeRetry: () =>
       new Promise<void>((resolve) =>
         setTimeout(resolve, REGISTRY_VISIBILITY_INTERVAL_MILLISECONDS),
       ),
-    updateRemoteDistTag,
   };
 }
 
@@ -1001,16 +772,11 @@ async function main(): Promise<number> {
   const mode = process.argv[2];
   const candidateDirectoryArgument = process.argv[3];
   if (
-    (
-      mode !== "prepare"
-      && mode !== "verify"
-      && mode !== "publish"
-      && mode !== "publish-trusted"
-    )
+    (mode !== "prepare" && mode !== "verify" && mode !== "publish")
     || candidateDirectoryArgument === undefined
   ) {
     console.error(
-      "usage: publish-npm-packages.ts <prepare|verify|publish|publish-trusted> <candidate-directory> <full-commit> <v-tag> <npm-dist-tag>",
+      "usage: publish-npm-packages.ts <prepare|verify|publish> <candidate-directory> <full-commit> <v-tag> <npm-dist-tag>",
     );
     return 1;
   }
@@ -1019,7 +785,7 @@ async function main(): Promise<number> {
     console.error("release source requires a full commit and matching v-prefixed tag");
     return 1;
   }
-  const parsedNpmDistTag = SELECTED_NPM_DIST_TAG_SCHEMA.safeParse(process.argv[6]);
+  const parsedNpmDistTag = NPM_DIST_TAG_SCHEMA.safeParse(process.argv[6]);
   if (!parsedNpmDistTag.success || process.argv.length !== 7) {
     console.error("release source requires one validated npm dist-tag");
     return 1;
@@ -1050,7 +816,7 @@ async function main(): Promise<number> {
             npmDistTag: parsedNpmDistTag.data,
             workspaceRootDirectory: WORKSPACE_ROOT_DIRECTORY,
           })
-        : await (mode === "publish" ? publishNpmPackages : publishTrustedNpmPackages)({
+        : await publishNpmPackages({
             candidateDirectory,
             expectation: parsedSource.expectation,
             npmDistTag: parsedNpmDistTag.data,

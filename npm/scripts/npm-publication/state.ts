@@ -1,13 +1,13 @@
 import { gt } from "semver";
 import { PACKAGE_VERSION } from "../package-manifests.ts";
-import type { NpmDistTag, SelectedNpmDistTag } from "../npm-dist-tag.ts";
+import type { NpmDistTag } from "../npm-dist-tag.ts";
+import type { PublicPackageVersion } from "../package-version.ts";
 import {
   reconcileNpmDistTag,
   reconcileNpmPackageIntegrity,
   type NpmPackageName,
   type NpmPublicationOperations,
   type NpmPublicationRequest,
-  type NpmPublicationRoute,
   type NpmPackageIntegrityDecision,
   type PackagedNpmPublication,
   type PrepareNpmPublicationsResult,
@@ -25,9 +25,35 @@ import {
 
 const REGISTRY_VISIBILITY_ATTEMPTS = 60;
 
+/**
+ * Publishes every absent package version directly on the selected channel, runtime carriers
+ * before the wrapper.
+ *
+ * Each absent package costs exactly one registry write and no dist-tag changes, so the same flow
+ * works with npm trusted publishing, which cannot change dist-tags, and with an interactive local
+ * login, where npm asks for one browser approval per write. A resumed release skips identical
+ * versions that already own the channel and stops with a repair command for any that do not.
+ */
+export async function publishNpmPublicationRequests(args: {
+  readonly npmDistTag: NpmDistTag;
+  readonly operations: NpmPublicationOperations;
+  readonly requests: readonly NpmPublicationRequest[];
+  readonly temporaryDirectory: AbsoluteDirectoryPath;
+}): Promise<PublishNpmPackagesResult> {
+  const prepared = await prepareNpmPublications(args);
+  if (prepared.kind === "failed") {
+    return prepared;
+  }
+  return publishPreparedNpmPublications({
+    npmDistTag: args.npmDistTag,
+    operations: args.operations,
+    publications: prepared.publications,
+  });
+}
+
 /** Packs and preflights every package before the first registry mutation. */
-export async function prepareNpmPublications(args: {
-  readonly npmDistTag: SelectedNpmDistTag;
+async function prepareNpmPublications(args: {
+  readonly npmDistTag: NpmDistTag;
   readonly operations: NpmPublicationOperations;
   readonly requests: readonly NpmPublicationRequest[];
   readonly temporaryDirectory: AbsoluteDirectoryPath;
@@ -79,19 +105,25 @@ export async function prepareNpmPublications(args: {
     if (distTagDecision.kind === "would_move_backward") {
       return failedPublication(
         request,
-        `npm dist-tag ${args.npmDistTag} already targets newer version ${distTagDecision.currentVersion}`,
+        backwardDistTagFailure(args.npmDistTag, distTagDecision.currentVersion).detail,
       );
     }
-    preparedPublications.push({ ...publication, decision, distTagDecision });
+    if (decision.kind === "skip" && distTagDecision.kind !== "keep") {
+      return failedPublication(
+        request,
+        distTagRepairFailure(request.packageName, args.npmDistTag).detail,
+      );
+    }
+    preparedPublications.push({ ...publication, decision });
   }
   return { kind: "ok", publications: preparedPublications };
 }
 
-/** Publishes a prepared set through either local staging or trusted publishing. */
-export async function publishPreparedNpmPublications(args: {
+/** Publishes a preflighted set in order, rechecking each package and channel before its write. */
+async function publishPreparedNpmPublications(args: {
+  readonly npmDistTag: NpmDistTag;
   readonly operations: NpmPublicationOperations;
   readonly publications: readonly PreparedNpmPublication[];
-  readonly route: NpmPublicationRoute;
 }): Promise<PublishNpmPackagesResult> {
   for (const { decision, packed, request } of args.publications) {
     let currentDecision: NpmPackageIntegrityDecision = decision;
@@ -115,15 +147,13 @@ export async function publishPreparedNpmPublications(args: {
       );
     }
     if (currentDecision.kind === "skip") {
-      if (args.route.kind === "trusted_selected") {
-        const repairFailure = await inspectTrustedNpmDistTag({
-          npmDistTag: args.route.publicationDistTag,
-          operations: args.operations,
-          request,
-        });
-        if (repairFailure.kind === "failed") {
-          return failedPublication(request, repairFailure.detail);
-        }
+      const ownership = await requireNpmDistTagOwnership({
+        npmDistTag: args.npmDistTag,
+        operations: args.operations,
+        request,
+      });
+      if (ownership.kind === "failed") {
+        return failedPublication(request, ownership.detail);
       }
       console.log(
         `already published with matching integrity: ${request.packageName}@${PACKAGE_VERSION}`,
@@ -131,21 +161,19 @@ export async function publishPreparedNpmPublications(args: {
       continue;
     }
 
-    if (args.route.kind === "trusted_selected") {
-      const channelFailure = await inspectTrustedNpmDistTagBeforeMutation({
-        npmDistTag: args.route.publicationDistTag,
-        operations: args.operations,
-        request,
-      });
-      if (channelFailure.kind === "failed") {
-        return failedPublication(request, channelFailure.detail);
-      }
+    const channel = await refuseBackwardNpmDistTag({
+      npmDistTag: args.npmDistTag,
+      operations: args.operations,
+      request,
+    });
+    if (channel.kind === "failed") {
+      return failedPublication(request, channel.detail);
     }
 
     const published = args.operations.publishArchive(
       packed.archivePath,
       packed.integrity,
-      args.route.publicationDistTag,
+      args.npmDistTag,
     );
     if (published.kind === "failed") {
       return failedPublication(request, published.detail);
@@ -158,56 +186,21 @@ export async function publishPreparedNpmPublications(args: {
     if (visible.kind === "failed") {
       return failedPublication(request, visible.detail);
     }
-    if (args.route.kind === "trusted_selected") {
-      const distTagVisible = await waitForPublishedDistTag({
-        npmDistTag: args.route.publicationDistTag,
-        operations: args.operations,
-        packageName: request.packageName,
-      });
-      if (distTagVisible.kind === "failed") {
-        return failedPublication(request, distTagVisible.detail);
-      }
+    const distTagVisible = await waitForPublishedDistTag({
+      npmDistTag: args.npmDistTag,
+      operations: args.operations,
+      packageName: request.packageName,
+    });
+    if (distTagVisible.kind === "failed") {
+      return failedPublication(request, distTagVisible.detail);
     }
     console.log(`published ${request.packageName}@${PACKAGE_VERSION}`);
   }
   return { kind: "ok" };
 }
 
-/** Publishes with npm trusted publishing without separate dist-tag mutations. */
-export async function publishTrustedNpmPublicationRequests(args: {
-  readonly npmDistTag: SelectedNpmDistTag;
-  readonly operations: NpmPublicationOperations;
-  readonly requests: readonly NpmPublicationRequest[];
-  readonly temporaryDirectory: AbsoluteDirectoryPath;
-}): Promise<PublishNpmPackagesResult> {
-  const prepared = await prepareNpmPublications(args);
-  if (prepared.kind === "failed") {
-    return prepared;
-  }
-  for (const publication of prepared.publications) {
-    if (
-      publication.decision.kind === "skip"
-      && publication.distTagDecision.kind !== "keep"
-    ) {
-      const repairFailure = trustedDistTagRepairFailure(
-        publication.request.packageName,
-        args.npmDistTag,
-      );
-      return failedPublication(publication.request, repairFailure.detail);
-    }
-  }
-  return publishPreparedNpmPublications({
-    operations: args.operations,
-    publications: prepared.publications,
-    route: {
-      kind: "trusted_selected",
-      publicationDistTag: args.npmDistTag,
-    },
-  });
-}
-
 /** Reads one immutable package version with bounded transient retries. */
-export async function inspectBeforePublication(
+async function inspectBeforePublication(
   packageName: NpmPackageName,
   operations: NpmPublicationOperations,
 ): Promise<RemotePackageIntegrityInspection> {
@@ -222,7 +215,7 @@ export async function inspectBeforePublication(
 }
 
 /** Reads one npm channel with bounded transient retries. */
-export async function inspectDistTagBeforePublication(
+async function inspectDistTagBeforePublication(
   packageName: NpmPackageName,
   npmDistTag: NpmDistTag,
   operations: NpmPublicationOperations,
@@ -238,7 +231,7 @@ export async function inspectDistTagBeforePublication(
 }
 
 /** Waits until npm serves the release through the selected channel. */
-export async function waitForPublishedDistTag(args: {
+async function waitForPublishedDistTag(args: {
   readonly npmDistTag: NpmDistTag;
   readonly operations: NpmPublicationOperations;
   readonly packageName: NpmPackageName;
@@ -335,8 +328,9 @@ async function retryTransientRegistryRead<
   return result ?? timeoutResult;
 }
 
-async function inspectTrustedNpmDistTag(args: {
-  readonly npmDistTag: SelectedNpmDistTag;
+/** Confirms that an already-published identical version still owns the selected channel. */
+async function requireNpmDistTagOwnership(args: {
+  readonly npmDistTag: NpmDistTag;
   readonly operations: NpmPublicationOperations;
   readonly request: NpmPublicationRequest;
 }): Promise<PublishArchiveResult> {
@@ -348,14 +342,23 @@ async function inspectTrustedNpmDistTag(args: {
   if (distTag.kind !== "ok") {
     return { kind: "failed", detail: distTag.detail };
   }
-  return distTag.remote.kind === "present"
-    && distTag.remote.version === PACKAGE_VERSION
-    ? { kind: "ok" }
-    : trustedDistTagRepairFailure(args.request.packageName, args.npmDistTag);
+  const decision = reconcileNpmDistTag({
+    releaseVersion: PACKAGE_VERSION,
+    remote: distTag.remote,
+  });
+  switch (decision.kind) {
+    case "keep":
+      return { kind: "ok" };
+    case "would_move_backward":
+      return backwardDistTagFailure(args.npmDistTag, decision.currentVersion);
+    case "update":
+      return distTagRepairFailure(args.request.packageName, args.npmDistTag);
+  }
 }
 
-async function inspectTrustedNpmDistTagBeforeMutation(args: {
-  readonly npmDistTag: SelectedNpmDistTag;
+/** Rereads the selected channel so a publish never moves it to an older version. */
+async function refuseBackwardNpmDistTag(args: {
+  readonly npmDistTag: NpmDistTag;
   readonly operations: NpmPublicationOperations;
   readonly request: NpmPublicationRequest;
 }): Promise<PublishArchiveResult> {
@@ -372,20 +375,29 @@ async function inspectTrustedNpmDistTagBeforeMutation(args: {
     remote: distTag.remote,
   });
   return decision.kind === "would_move_backward"
-    ? {
-        kind: "failed",
-        detail: `npm dist-tag ${args.npmDistTag} already targets newer version ${decision.currentVersion}`,
-      }
+    ? backwardDistTagFailure(args.npmDistTag, decision.currentVersion)
     : { kind: "ok" };
 }
 
-function trustedDistTagRepairFailure(
-  packageName: NpmPackageName,
-  npmDistTag: SelectedNpmDistTag,
+/** Explains why a publish would move the selected channel to an older version. */
+function backwardDistTagFailure(
+  npmDistTag: NpmDistTag,
+  currentVersion: PublicPackageVersion,
 ): Extract<PublishArchiveResult, { readonly kind: "failed" }> {
   return {
     kind: "failed",
-    detail: `matching package version does not own npm dist-tag ${npmDistTag}; repair with npm dist-tag add ${packageName}@${PACKAGE_VERSION} ${npmDistTag} --registry ${NPM_REGISTRY_URL} using a short-lived local credential`,
+    detail: `npm dist-tag ${npmDistTag} already targets newer version ${currentVersion}`,
+  };
+}
+
+/** Explains how to point the channel at a matching version that a resumed release found. */
+function distTagRepairFailure(
+  packageName: NpmPackageName,
+  npmDistTag: NpmDistTag,
+): Extract<PublishArchiveResult, { readonly kind: "failed" }> {
+  return {
+    kind: "failed",
+    detail: `matching package version does not own npm dist-tag ${npmDistTag}; repair with npm dist-tag add ${packageName}@${PACKAGE_VERSION} ${npmDistTag} --registry ${NPM_REGISTRY_URL} from an interactive npm login`,
   };
 }
 
