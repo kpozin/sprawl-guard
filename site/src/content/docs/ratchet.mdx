@@ -49,15 +49,16 @@ with `sprawl-guard update PATH --allow-increases --write`.
 ## Guide coding agents
 
 Coding agents tend to satisfy a size limit by moving code into catch-all files or by raising the
-limit. Add instructions like these to the repository's agent instructions file:
+limit. Sprawl Guard comes with an [agent skill](https://agentskills.io) that tells an agent how to
+run the check and how to fix each kind of failure. The npm package includes it at
+`node_modules/@kpozin/sprawl-guard/skills/sprawl-guard/`, and the
+[GitHub repository](https://github.com/kpozin/sprawl-guard/tree/main/skills/sprawl-guard) has it
+too. Copy the `sprawl-guard` directory to where your agent loads skills, such as `.claude/skills/`
+for Claude Code.
+
+If your agent does not support skills, copy the directory to `skills/sprawl-guard/` in the
+repository instead, and add a line like this to the repository's agent instructions file:
 
 ```md
-Before declaring work complete, run `sprawl-guard tighten --write` and `sprawl-guard check`.
-
-Resolve new violations with meaningful refactors. Split code into cohesive, clearly named modules
-with distinct responsibilities. Do not create miscellaneous "helpers," "utils," or "common" files
-merely to satisfy a limit.
-
-Do not raise limits, add overrides, or run `sprawl-guard update` to make the check pass. Recording
-a new violation requires review.
+Before declaring work complete, follow skills/sprawl-guard/SKILL.md.
 ```

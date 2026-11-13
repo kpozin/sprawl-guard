@@ -42,5 +42,7 @@ If an existing repository exceeds the limits you want, keep the limits and
 - [Configure checks](https://kpozin.github.io/sprawl-guard/configure-checks/)
 - [Run in CI](https://kpozin.github.io/sprawl-guard/run-in-ci/)
 - [Work with the ratchet](https://kpozin.github.io/sprawl-guard/ratchet/)
+- [Agent skill for coding agents](https://github.com/kpozin/sprawl-guard/blob/main/skills/sprawl-guard/SKILL.md)
+  and [how to install it](https://kpozin.github.io/sprawl-guard/ratchet/#guide-coding-agents)
 - [CLI and output reference](https://kpozin.github.io/sprawl-guard/reference/cli-and-output/)
 - [Source and issue tracker](https://github.com/kpozin/sprawl-guard)

@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { PACKAGE_VERSION } from "./package-manifests.ts";
+import {
+  PACKAGE_VERSION,
+  PUBLISH_WRAPPER_DOCUMENTS,
+} from "./package-manifests.ts";
 import { renderPublishWorkspace } from "./render-publish-workspace.ts";
 
 describe("renderPublishWorkspace", () => {
@@ -18,18 +21,10 @@ describe("renderPublishWorkspace", () => {
     fs.mkdirSync(tempWorkspaceRoot);
     fs.writeFileSync(path.join(tempPublicRoot, "LICENSE-MIT"), "mit\n");
     fs.writeFileSync(path.join(tempPublicRoot, "LICENSE-APACHE"), "apache\n");
-    fs.mkdirSync(
-      path.join(tempPublicRoot, "site", "public", "schemas", "v1"),
-      { recursive: true },
-    );
-    for (const fileName of [
-      "sprawl-guard.schema.json",
-      "sprawl-guard.ratchet.schema.json",
-    ]) {
-      fs.writeFileSync(
-        path.join(tempPublicRoot, "site", "public", "schemas", "v1", fileName),
-        `{\"title\":\"${fileName}\"}\n`,
-      );
+    for (const document of PUBLISH_WRAPPER_DOCUMENTS) {
+      const sourcePath = path.join(tempWorkspaceRoot, document.sourcePath);
+      fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+      fs.writeFileSync(sourcePath, `source ${document.sourcePath}\n`);
     }
 
     fs.mkdirSync(path.join(tempWorkspaceRoot, "sprawl-guard", "dist", "bin"), {
@@ -84,25 +79,22 @@ describe("renderPublishWorkspace", () => {
         "LICENSE-MIT",
         "LICENSE-APACHE",
         "schema/",
+        "skills/",
         "dist/",
         "!dist/lib/*.test.js",
       ]);
-      for (const fileName of [
-        "sprawl-guard.schema.json",
-        "sprawl-guard.ratchet.schema.json",
-      ]) {
+      for (const document of PUBLISH_WRAPPER_DOCUMENTS) {
         assert.equal(
           fs.readFileSync(
             path.join(
               tempWorkspaceRoot,
               ".stage",
               "sprawl-guard",
-              "schema",
-              fileName,
+              document.packagePath,
             ),
             "utf8",
           ),
-          `{\"title\":\"${fileName}\"}\n`,
+          `source ${document.sourcePath}\n`,
         );
       }
       assert.equal(

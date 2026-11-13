@@ -62,6 +62,13 @@ their schema versions and need the renames below applied by hand.
 
 - The JSON `summary` reports `ratchet_entries`, and a passing human check prints how many ratchet
   entries remain.
+- An agent skill, `skills/sprawl-guard/SKILL.md`, tells coding agents how to run the check and fix
+  failures. The npm package includes it.
+
+### Fixed
+
+- The npm package's `schema/sprawl-guard.schema.json` is the current (v2) configuration schema.
+  It was the v1 schema.
 
 ### Removed
 

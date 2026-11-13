@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   PUBLISH_WORKSPACE_DIRECTORY,
   PUBLISH_LICENSE_FILE_NAMES,
-  PUBLISH_WRAPPER_SCHEMAS,
+  PUBLISH_WRAPPER_DOCUMENTS,
   RUNTIME_PACKAGE_DEFINITIONS,
   publishWorkspaceTextFiles,
 } from "./package-manifests.ts";
@@ -36,7 +36,6 @@ const WORKSPACE_ROOT_DIRECTORY = path.resolve(
   fileURLToPath(new URL("..", import.meta.url)),
 );
 const SOURCE_WRAPPER_DIRECTORY = "sprawl-guard" as const;
-const SOURCE_SCHEMA_DIRECTORY = "../site/public/schemas/v1" as const;
 
 /** Renders the script-free staged publish workspace under `.stage/`. */
 export function renderPublishWorkspace(args: {
@@ -57,9 +56,7 @@ export function renderPublishWorkspace(args: {
   const sourceEntries = [
     `${SOURCE_WRAPPER_DIRECTORY}/README.md`,
     `${SOURCE_WRAPPER_DIRECTORY}/dist`,
-    ...PUBLISH_WRAPPER_SCHEMAS.map(
-      (schema) => `${SOURCE_SCHEMA_DIRECTORY}/${schema.fileName}`,
-    ),
+    ...PUBLISH_WRAPPER_DOCUMENTS.map((document) => document.sourcePath),
     ...PUBLISH_LICENSE_FILE_NAMES.map((fileName) => `../${fileName}`),
   ];
 
@@ -106,18 +103,18 @@ export function renderPublishWorkspace(args: {
   }
   writtenPaths.push(wrapperDistCopy.destinationRelativePath);
 
-  for (const schema of PUBLISH_WRAPPER_SCHEMAS) {
-    const schemaCopy = copySourceEntry({
+  for (const document of PUBLISH_WRAPPER_DOCUMENTS) {
+    const documentCopy = copySourceEntry({
       workspaceRootDirectory: args.workspaceRootDirectory,
-      sourceRelativePath: `${SOURCE_SCHEMA_DIRECTORY}/${schema.fileName}`,
-      destinationRelativePath: `${PUBLISH_WORKSPACE_DIRECTORY}/${SOURCE_WRAPPER_DIRECTORY}/${schema.packagePath}`,
+      sourceRelativePath: document.sourcePath,
+      destinationRelativePath: `${PUBLISH_WORKSPACE_DIRECTORY}/${SOURCE_WRAPPER_DIRECTORY}/${document.packagePath}`,
       temporaryStageRootDirectory: temporaryStageRootDirectory.path,
     });
-    if (schemaCopy.kind !== "ok") {
+    if (documentCopy.kind !== "ok") {
       safeRemoveDirectory(temporaryStageRootDirectory.path);
-      return schemaCopy;
+      return documentCopy;
     }
-    writtenPaths.push(schemaCopy.destinationRelativePath);
+    writtenPaths.push(documentCopy.destinationRelativePath);
   }
 
   for (const fileName of PUBLISH_LICENSE_FILE_NAMES) {

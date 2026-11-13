@@ -3,7 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { RUNTIME_PACKAGE_DEFINITIONS } from "./package-manifests.ts";
+import {
+  PUBLISH_WRAPPER_DOCUMENTS,
+  RUNTIME_PACKAGE_DEFINITIONS,
+} from "./package-manifests.ts";
 import {
   absoluteDirectoryPath,
   artifactRootDirectory,
@@ -31,18 +34,10 @@ describe("stagePublishPayloads", () => {
     fs.mkdirSync(tempWorkspaceRoot);
     fs.writeFileSync(path.join(tempPublicRoot, "LICENSE-MIT"), "mit\n");
     fs.writeFileSync(path.join(tempPublicRoot, "LICENSE-APACHE"), "apache\n");
-    fs.mkdirSync(
-      path.join(tempPublicRoot, "site", "public", "schemas", "v1"),
-      { recursive: true },
-    );
-    for (const fileName of [
-      "sprawl-guard.schema.json",
-      "sprawl-guard.ratchet.schema.json",
-    ]) {
-      fs.writeFileSync(
-        path.join(tempPublicRoot, "site", "public", "schemas", "v1", fileName),
-        "{}\n",
-      );
+    for (const document of PUBLISH_WRAPPER_DOCUMENTS) {
+      const sourcePath = path.join(tempPublicRoot, "npm", document.sourcePath);
+      fs.mkdirSync(path.dirname(sourcePath), { recursive: true });
+      fs.writeFileSync(sourcePath, "{}\n");
     }
     tempArtifactRoot = artifactRootDirectory(
       fs.mkdtempSync(

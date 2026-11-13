@@ -8,7 +8,7 @@ import { z } from "zod";
 import {
   PACKAGE_VERSION,
   PUBLISH_LICENSE_FILE_NAMES,
-  PUBLISH_WRAPPER_SCHEMAS,
+  PUBLISH_WRAPPER_DOCUMENTS,
   PUBLISH_WORKSPACE_DIRECTORY,
   RUNTIME_PACKAGE_DEFINITIONS,
   WRAPPER_PACKAGE_NAME,
@@ -223,7 +223,7 @@ const WRAPPER_REQUIRED_PATHS = parsePackageRelativePaths([
   "README.md",
   ...PUBLISH_LICENSE_FILE_NAMES,
   "dist/bin/sprawl-guard.js",
-  ...PUBLISH_WRAPPER_SCHEMAS.map((schema) => schema.packagePath),
+  ...PUBLISH_WRAPPER_DOCUMENTS.map((document) => document.packagePath),
 ]);
 
 type LoadNpmPublicationCandidateResult =

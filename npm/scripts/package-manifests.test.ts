@@ -61,6 +61,7 @@ describe("renderPublishWrapperPackageManifest", () => {
         "LICENSE-MIT",
         "LICENSE-APACHE",
         "schema/",
+        "skills/",
         "dist/",
         "!dist/lib/*.test.js",
       ]);

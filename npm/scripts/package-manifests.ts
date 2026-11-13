@@ -204,21 +204,29 @@ const PUBLISH_WORKSPACE_ROOT_MANIFEST: PublishWorkspaceRootManifest = {
 /** Runtime package metadata shared by manifest rendering and payload staging. */
 export const RUNTIME_PACKAGE_DEFINITIONS = SHARED_RUNTIME_PACKAGE_DEFINITIONS;
 
-/** Schema documents distributed with the user-facing npm wrapper. */
-export const PUBLISH_WRAPPER_SCHEMAS = [
+/**
+ * Documents that the user-facing npm wrapper ships alongside its code: the JSON Schemas for editor
+ * support and the agent skill. Source paths are relative to the npm workspace root.
+ */
+export const PUBLISH_WRAPPER_DOCUMENTS = [
   {
-    fileName: "sprawl-guard.schema.json",
+    sourcePath: "../site/public/schemas/v2/sprawl-guard.schema.json",
     packagePath: payloadFileRelativePath("schema/sprawl-guard.schema.json"),
   },
   {
-    fileName: "sprawl-guard.ratchet.schema.json",
+    sourcePath: "../site/public/schemas/v1/sprawl-guard.ratchet.schema.json",
     packagePath: payloadFileRelativePath("schema/sprawl-guard.ratchet.schema.json"),
+  },
+  {
+    sourcePath: "../skills/sprawl-guard/SKILL.md",
+    packagePath: payloadFileRelativePath("skills/sprawl-guard/SKILL.md"),
   },
 ] as const;
 const PUBLISH_WRAPPER_FILES = [
   "README.md",
   ...PUBLISH_LICENSE_FILE_NAMES,
   "schema/",
+  "skills/",
   "dist/",
   "!dist/lib/*.test.js",
 ] as const;

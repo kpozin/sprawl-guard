@@ -7,7 +7,7 @@ import { inspectFilesystemEntry } from "./filesystem-entry.ts";
 import {
   PUBLISH_WORKSPACE_DIRECTORY,
   PUBLISH_LICENSE_FILE_NAMES,
-  PUBLISH_WRAPPER_SCHEMAS,
+  PUBLISH_WRAPPER_DOCUMENTS,
   RUNTIME_PACKAGE_DEFINITIONS,
   publishWorkspaceTextFiles,
 } from "./package-manifests.ts";
@@ -124,7 +124,7 @@ export function stagePublishPayloads(args: {
     ...[
       "README.md",
       "dist/bin/sprawl-guard.js",
-      ...PUBLISH_WRAPPER_SCHEMAS.map((schema) => schema.packagePath),
+      ...PUBLISH_WRAPPER_DOCUMENTS.map((document) => document.packagePath),
       ...PUBLISH_LICENSE_FILE_NAMES,
     ].map((relativePath) =>
       renderedWorkspaceRelativePath(`${wrapperDirectory}/${relativePath}`),

@@ -39,6 +39,7 @@ instead of fixing them all first.
 ## Links
 
 - [Documentation](https://kpozin.github.io/sprawl-guard/)
+- [Agent skill for coding agents](skills/sprawl-guard/SKILL.md)
 - [Build and test from source](docs/DEVELOPMENT.md)
 - [Releases](https://github.com/kpozin/sprawl-guard/releases)
 - [Issues](https://github.com/kpozin/sprawl-guard/issues)
