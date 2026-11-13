@@ -12,7 +12,7 @@ mod when_a_path_contains_terminal_controls {
         let root = TempDir::new().unwrap();
         write_config(
             &root,
-            "[limits.max_lines_per_file]\nproduction = 1\n[limits.max_leaf_files_per_directory]\nproduction = 1\n",
+            "[limits.max_lines_per_file]\nproduction = 1\n[limits.max_direct_files_per_directory]\nproduction = 1\n",
         );
         let directory = "src\n! raise\r\u{1b}[2J";
         write_rust_source_with_function_count(&root, &format!("{directory}/a.rs"), 2);
@@ -25,8 +25,9 @@ mod when_a_path_contains_terminal_controls {
         assert_eq!(summary.lines().count(), 6, "{summary:?}");
         assert!(!summary.contains('\r'));
         assert!(!summary.contains('\u{1b}'));
-        assert!(summary.contains(&format!("file {:?}", format!("{directory}/a.rs"))));
-        assert!(summary.contains(&format!("directory {directory:?}")));
+        let escaped = r"src\n! raise\r\u{1b}[2J";
+        assert!(summary.contains(&format!("+ add {escaped}/a.rs (production lines)")));
+        assert!(summary.contains(&format!("+ add {escaped} (production direct files")));
     }
 }
 
@@ -56,7 +57,7 @@ mod when_approving_one_new_file {
         for output in [&preview, &write] {
             let summary = stdout(output);
             assert!(
-                summary.contains("+ add file \"src/new.rs\" [production] max_loc: none -> 2"),
+                summary.contains("+ add src/new.rs (production lines): none -> 2"),
                 "{summary}"
             );
             assert!(!summary.contains("legacy/lib.rs"));
@@ -64,7 +65,7 @@ mod when_approving_one_new_file {
         assert_eq!(
             production_file_ratchet_entry(&read_ratchet_file(&root), "legacy/lib.rs")
                 .unwrap()
-                .max_loc
+                .max_lines
                 .get(),
             9
         );
@@ -89,9 +90,7 @@ mod when_an_existing_violation_grows {
         assert_exit_code(&preserved, exit_codes::SUCCESS);
         assert_eq!(stdout(&preserved), "No ratchet changes.\n");
         assert_exit_code(&allowed, exit_codes::SUCCESS);
-        assert!(
-            stdout(&allowed).contains("! raise file \"src/lib.rs\" [production] max_loc: 2 -> 3")
-        );
+        assert!(stdout(&allowed).contains("! raise src/lib.rs (production lines): 2 -> 3"));
     }
 }
 
@@ -101,7 +100,7 @@ mod when_tightening_mixed_entries {
     #[test]
     fn it_distinguishes_roles_groups_lowering_and_deletion() {
         let root = TempDir::new().unwrap();
-        write_mixed_group_directory_fanout_fixture(&root);
+        write_mixed_group_directory_direct_files_fixture(&root);
         write_ratchet(
             &root,
             indoc! {r#"
@@ -109,22 +108,22 @@ mod when_tightening_mixed_entries {
             [[files]]
             path = "deleted.rs"
             role = "test"
-            max_loc = 3
+            max_lines = 3
             [[directories]]
             path = "src"
             role = "production"
             group = "source"
-            leaf_files = 4
+            max_direct_files = 4
             [[directories]]
             path = "src"
             role = "production"
             group = "documentation"
-            leaf_files = 5
+            max_direct_files = 5
             [[directories]]
             path = "src"
             role = "test"
             group = "source"
-            leaf_files = 2
+            max_direct_files = 2
         "#},
         );
 
@@ -133,10 +132,10 @@ mod when_tightening_mixed_entries {
         assert_exit_code(&output, exit_codes::SUCCESS);
         let summary = stdout(&output);
         for expected in [
-            "- remove file \"deleted.rs\" [test] max_loc: 3 -> none",
-            "- lower directory \"src\" [production, source] leaf_files: 4 -> 2",
-            "- lower directory \"src\" [production, documentation] leaf_files: 5 -> 2",
-            "- remove directory \"src\" [test, source] leaf_files: 2 -> none",
+            "- remove deleted.rs (test lines): 3 -> none",
+            "- lower src (production direct files, group source): 4 -> 2",
+            "- lower src (production direct files, group documentation): 5 -> 2",
+            "- remove src (test direct files, group source): 2 -> none",
         ] {
             assert!(summary.contains(expected), "{summary}");
         }
@@ -176,10 +175,7 @@ mod when_no_ceilings_change {
         assert_exit_code(&preview, exit_codes::SUCCESS);
         assert_eq!(
             stdout(&preview),
-            format!(
-                "No ceiling changes; --write will create an empty ratchet at {:?}.\n",
-                root.path().join("sprawl-guard.ratchet.toml")
-            )
+            "No ratchet changes; --write will create an empty ratchet file sprawl-guard.ratchet.toml\n"
         );
         assert!(!root.path().join("sprawl-guard.ratchet.toml").exists());
 
@@ -190,7 +186,10 @@ mod when_no_ceilings_change {
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert!(read_ratchet_file(&root).is_empty());
-        assert!(stdout(&output).contains("Created empty ratchet at"));
+        assert_eq!(
+            stdout(&output),
+            "Created empty ratchet file sprawl-guard.ratchet.toml\n"
+        );
     }
 }
 
@@ -217,11 +216,11 @@ mod when_full_toml_is_requested {
                 [[files]]
                 path = "new.rs"
                 role = "production"
-                max_loc = 2
+                max_lines = 2
                 [[files]]
                 path = "old.rs"
                 role = "production"
-                max_loc = 9
+                max_lines = 9
             })
         );
     }
@@ -242,7 +241,7 @@ mod when_full_toml_is_requested {
 
             assert_exit_code(&output, exit_codes::SUCCESS);
             assert_eq!(stdout(&output), "");
-            assert_eq!(read_ratchet_file(&root).files[0].max_loc.get(), 2);
+            assert_eq!(read_ratchet_file(&root).files[0].max_lines.get(), 2);
         }
     }
 }

@@ -1,4 +1,4 @@
-//! Rust `cfg(test)` preprocessing for production LOC counting.
+//! Rust `cfg(test)` preprocessing for production line counting.
 
 use std::borrow::Cow;
 
@@ -16,7 +16,7 @@ use crate::config::{Config, RustCfgTestExclusion};
 
 /// Result of Rust `cfg(test)` preprocessing for one source string.
 pub(crate) struct RustCfgTestPreprocessResult<'source> {
-    /// Source passed to the LOC counter after any exclusions.
+    /// Source passed to the line counter after any exclusions.
     pub(crate) source: Cow<'source, str>,
     /// Stable metadata for diagnostics and `explain`.
     pub(crate) info: RustCfgTestInfo,
@@ -35,7 +35,7 @@ pub(crate) struct RustCfgTestWarning {
 pub struct RustCfgTestInfo {
     /// How far the preprocessor got for this file.
     pub status: RustCfgTestStatus,
-    /// Number of top-level items excluded before LOC counting.
+    /// Number of top-level items excluded before line counting.
     pub excluded_items: ExcludedItemCount,
 }
 
@@ -55,9 +55,9 @@ impl RustCfgTestInfo {
 pub enum RustCfgTestStatus {
     /// Rust-specific exclusion is disabled by config.
     Disabled,
-    /// The source is path-classified as test code, so production-only exclusion is not applied.
+    /// The source is a test file, so the production-only exclusion is not applied.
     PathClassifiedTest,
-    /// The prefilter found no likely `cfg(test)` attribute.
+    /// A quick text scan found no likely `cfg(test)` attribute.
     PrefilterSkipped,
     /// The file parsed successfully and file-wide plus top-level item predicates were evaluated.
     Parsed,
@@ -90,8 +90,8 @@ impl ExcludedItemCount {
 
 /// Removes top-level Rust items that can compile only when `test` is enabled.
 ///
-/// Parse failures retain the original source so unsupported syntax does not suppress LOC
-/// enforcement.
+/// Parse failures keep the original source, so unsupported syntax never hides lines from the
+/// check.
 pub(crate) fn preprocess_rust_cfg_test(source: &str) -> RustCfgTestPreprocessResult<'_> {
     if !looks_like_cfg_test(source) {
         return RustCfgTestPreprocessResult {

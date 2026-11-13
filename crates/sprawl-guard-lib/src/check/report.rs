@@ -6,14 +6,15 @@ use nutype::nutype;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
-use crate::classification::{SourceKind, TraversalIncident};
-use crate::code_line_counter::LocMeasurement;
+use crate::classification::{SourceKind, UnreadablePath};
+use crate::code_line_counter::LineMeasurement;
 use crate::rust_cfg::RustCfgTestWarning;
 use crate::{
-    ConfigSource, DiagnosticDetail, LanguageGroupId, LanguageId, LeafFiles, LocLimit, RelativePath,
+    ConfigSource, DiagnosticDetail, DirectFiles, LanguageGroupId, LanguageId, LineLimit,
+    RelativePath,
 };
 
-use super::runner::CheckScope;
+use super::runner::SelectedPaths;
 
 mod ratchet;
 mod summary;
@@ -25,17 +26,19 @@ pub use ratchet::{
     RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
     RatchetStaleViolation, RatchetViolation, RatchetViolationKind,
 };
-pub use summary::{CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount, ScanSummary};
+pub use summary::{
+    CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount, RatchetEntryCount, ScanSummary,
+};
 
 /// Successful result of one `sprawl-guard check` run.
 ///
-/// This type represents completed policy analysis only. Operational failures,
-/// including fail-mode traversal incidents, are returned as errors instead of
+/// This type represents completed check analysis only. Operational failures,
+/// including fail-mode unreadable paths, are returned as errors instead of
 /// being embedded in the report.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckReport {
     root: ReportRoot,
-    scope: CheckScope,
+    selected_paths: SelectedPaths,
     config_source: ConfigSource,
     counter: CounterInfo,
     coverage: AnalysisCoverage,
@@ -52,7 +55,7 @@ impl Serialize for CheckReport {
         let mut report = serializer.serialize_struct("CheckReport", 9)?;
         report.serialize_field("status", &self.status())?;
         report.serialize_field("root", &self.root)?;
-        report.serialize_field("scope", &self.scope)?;
+        report.serialize_field("paths", &self.selected_paths)?;
         report.serialize_field("config_source", &self.config_source)?;
         report.serialize_field("counter", &self.counter)?;
         report.serialize_field("coverage", &self.coverage)?;
@@ -74,7 +77,7 @@ impl CheckReport {
     ) -> Self {
         Self {
             root: context.root,
-            scope: context.scope,
+            selected_paths: context.selected_paths,
             config_source: context.config_source,
             counter,
             coverage,
@@ -94,7 +97,7 @@ impl CheckReport {
         violations: Vec<CheckViolation>,
     ) -> Self {
         Self::new(
-            CheckContext::new(root, CheckScope::All, config_source),
+            CheckContext::new(root, SelectedPaths::All, config_source),
             counter,
             AnalysisCoverage::Complete,
             summary,
@@ -103,29 +106,27 @@ impl CheckReport {
         )
     }
 
-    /// Creates a partial check report from non-empty traversal incidents.
+    /// Creates a partial check report from non-empty unreadable paths.
     pub fn partial(
         root: ReportRoot,
         config_source: ConfigSource,
         counter: CounterInfo,
         summary: ScanSummary,
         warnings: Vec<CheckWarning>,
-        traversal_incidents: NonEmptyTraversalIncidents,
+        unreadable_paths: NonEmptyUnreadablePaths,
         violations: Vec<CheckViolation>,
     ) -> Self {
         Self::new(
-            CheckContext::new(root, CheckScope::All, config_source),
+            CheckContext::new(root, SelectedPaths::All, config_source),
             counter,
-            AnalysisCoverage::Partial {
-                traversal_incidents,
-            },
+            AnalysisCoverage::Partial { unreadable_paths },
             summary,
             warnings,
             violations,
         )
     }
 
-    /// Returns the derived policy status for this report.
+    /// Returns the derived check status for this report.
     pub fn status(&self) -> CheckStatus {
         if self.has_violations() {
             CheckStatus::Failed
@@ -139,22 +140,22 @@ impl CheckReport {
         self.root.as_str()
     }
 
-    /// Returns the normalized path scope requested by the caller.
-    pub fn scope(&self) -> &CheckScope {
-        &self.scope
+    /// Returns the normalized paths selected by the caller.
+    pub fn selected_paths(&self) -> &SelectedPaths {
+        &self.selected_paths
     }
 
-    /// Returns the source from which the resolved policy was assembled.
+    /// Returns the source from which the resolved configuration was assembled.
     pub fn config_source(&self) -> &ConfigSource {
         &self.config_source
     }
 
-    /// Returns LOC backend metadata used to produce measurements.
+    /// Returns line-counting backend metadata used to produce measurements.
     pub fn counter(&self) -> &CounterInfo {
         &self.counter
     }
 
-    /// Returns whether discovery and measurement covered every path required within the requested scope.
+    /// Returns whether discovery and measurement covered every path required within the selected paths.
     pub fn analysis_complete(&self) -> bool {
         matches!(self.coverage, AnalysisCoverage::Complete)
     }
@@ -169,39 +170,41 @@ impl CheckReport {
         &self.warnings
     }
 
-    /// Returns recoverable descendant traversal failures collected during discovery.
-    pub fn traversal_incidents(&self) -> &[TraversalIncident] {
+    /// Returns the paths below the root that could not be read during discovery.
+    pub fn unreadable_paths(&self) -> &[UnreadablePath] {
         match &self.coverage {
             AnalysisCoverage::Complete => &[],
-            AnalysisCoverage::Partial {
-                traversal_incidents,
-            } => traversal_incidents.as_slice(),
+            AnalysisCoverage::Partial { unreadable_paths } => unreadable_paths.as_slice(),
         }
     }
 
-    /// Returns policy violations found by this run.
+    /// Returns the violations found by this run.
     pub fn violations(&self) -> &[CheckViolation] {
         &self.violations
     }
 
-    /// Returns whether the report contains at least one policy violation.
+    /// Returns whether the report contains at least one violation.
     pub fn has_violations(&self) -> bool {
         !self.violations.is_empty()
     }
 }
 
-/// Repository selection and policy provenance for one completed check.
+/// Selected paths and the configuration source for one completed check.
 pub(crate) struct CheckContext {
     root: ReportRoot,
-    scope: CheckScope,
+    selected_paths: SelectedPaths,
     config_source: ConfigSource,
 }
 
 impl CheckContext {
-    pub(crate) fn new(root: ReportRoot, scope: CheckScope, config_source: ConfigSource) -> Self {
+    pub(crate) fn new(
+        root: ReportRoot,
+        selected_paths: SelectedPaths,
+        config_source: ConfigSource,
+    ) -> Self {
         Self {
             root,
-            scope,
+            selected_paths,
             config_source,
         }
     }
@@ -263,29 +266,29 @@ pub enum ReportRootError {
 pub enum AnalysisCoverage {
     /// All required paths were discovered and measured.
     Complete,
-    /// Analysis continued after recoverable traversal incidents.
+    /// Analysis continued past paths that could not be read.
     Partial {
-        /// Non-empty incident list explaining why analysis is partial.
-        traversal_incidents: NonEmptyTraversalIncidents,
+        /// Non-empty list of unreadable paths explaining why analysis is partial.
+        unreadable_paths: NonEmptyUnreadablePaths,
     },
 }
 
-/// Non-empty traversal incident collection.
+/// Non-empty unreadable path collection.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct NonEmptyTraversalIncidents(Vec<TraversalIncident>);
+pub struct NonEmptyUnreadablePaths(Vec<UnreadablePath>);
 
-impl NonEmptyTraversalIncidents {
-    /// Creates a non-empty incident collection.
-    pub fn new(incidents: Vec<TraversalIncident>) -> Option<Self> {
-        if incidents.is_empty() {
+impl NonEmptyUnreadablePaths {
+    /// Creates a non-empty collection, or `None` when `paths` is empty.
+    pub fn new(paths: Vec<UnreadablePath>) -> Option<Self> {
+        if paths.is_empty() {
             return None;
         }
-        Some(Self(incidents))
+        Some(Self(paths))
     }
 
-    /// Returns the incidents as a slice.
-    pub fn as_slice(&self) -> &[TraversalIncident] {
+    /// Returns the unreadable paths as a slice.
+    pub fn as_slice(&self) -> &[UnreadablePath] {
         &self.0
     }
 }
@@ -300,7 +303,7 @@ pub enum CheckStatus {
     Failed,
 }
 
-/// LOC backend metadata included in stable machine-readable output.
+/// Line-counting backend metadata included in stable machine-readable output.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CounterInfo {
     /// Backend identifier.
@@ -345,103 +348,103 @@ pub enum CheckWarningKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckErrorKind {
-    /// Recoverable traversal incidents were collected in fail mode.
+    /// Recoverable unreadable paths were collected in fail mode.
     TraversalFailed,
 }
 
-/// One policy violation in a check report.
+/// One violation in a check report.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum CheckViolation {
-    /// A source file exceeded its configured LOC budget.
-    FileLoc(FileLocViolation),
-    /// A directory exceeded its configured direct leaf-file budget.
-    DirectoryFanout(DirectoryFanoutViolation),
+    /// A source file exceeded its line limit.
+    FileLines(FileLinesViolation),
+    /// A directory exceeded its configured direct-file limit.
+    DirectoryDirectFiles(DirectoryDirectFilesViolation),
     /// A ratchet entry increased or became stale.
     Ratchet(RatchetViolation),
 }
 
-/// A directory that exceeded its configured direct leaf-file budget.
+/// A directory that exceeded its configured direct-file limit.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct DirectoryFanoutViolation {
-    /// Which directory fan-out budget was exceeded.
+pub struct DirectoryDirectFilesViolation {
+    /// Which directory direct-file limit was exceeded.
     pub kind: DirectoryViolationKind,
-    /// Language group whose direct child files exceeded the budget.
+    /// Language group whose direct child files exceeded the limit.
     pub group: LanguageGroupId,
     /// Repository-relative directory path.
     ///
     /// The repository root is represented by an empty relative path.
     pub path: RelativePath,
-    /// Counted direct child leaf files.
-    pub actual: LeafFiles,
-    /// Configured leaf-file limit.
-    pub limit: LeafFiles,
+    /// Counted direct child files.
+    pub actual: DirectFiles,
+    /// Configured direct-file limit.
+    pub limit: DirectFiles,
     /// Ratchet limit that covers this violation, when available.
     ///
     /// `None` means no ratchet file was evaluated or no ratchet entry
     /// covered this directory.
-    pub ratchet: Option<LeafFiles>,
-    /// Direct child leaf files that contributed to `actual`.
+    pub ratchet: Option<DirectFiles>,
+    /// Direct child files that contributed to `actual`.
     pub files: Vec<RelativePath>,
 }
 
-/// Directory fan-out violation kind.
+/// Directory direct-file count violation kind.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DirectoryViolationKind {
-    /// Production leaf-file fan-out violation.
-    DirectoryFanout,
-    /// Path-classified test leaf-file fan-out violation.
-    TestDirectoryFanout,
+    /// Production direct-file violation.
+    DirectoryDirectFiles,
+    /// Test direct-file violation.
+    TestDirectoryDirectFiles,
 }
 
 impl DirectoryViolationKind {
     /// Returns the production or test role measured by this violation.
     pub const fn role(self) -> SourceKind {
         match self {
-            Self::DirectoryFanout => SourceKind::Production,
-            Self::TestDirectoryFanout => SourceKind::Test,
+            Self::DirectoryDirectFiles => SourceKind::Production,
+            Self::TestDirectoryDirectFiles => SourceKind::Test,
         }
     }
 }
 
-/// A file that exceeded its configured LOC budget.
+/// A file that exceeded its line limit.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct FileLocViolation {
-    /// Which LOC budget was exceeded.
+pub struct FileLinesViolation {
+    /// Which line limit was exceeded.
     pub kind: FileViolationKind,
     /// Repository-relative source path.
     pub path: RelativePath,
-    /// Language used for LOC counting.
+    /// Language used for line counting.
     pub language: LanguageId,
-    /// Measured configured LOC and its logical-line breakdown.
+    /// Measured lines and their breakdown.
     #[serde(flatten)]
-    pub measurement: LocMeasurement,
-    /// Configured LOC limit.
-    pub limit: LocLimit,
+    pub measurement: LineMeasurement,
+    /// Line limit.
+    pub limit: LineLimit,
     /// Ratchet limit that covers this violation, when available.
     ///
     /// `None` means no ratchet file was evaluated or no ratchet entry
     /// covered this file.
-    pub ratchet: Option<LocLimit>,
+    pub ratchet: Option<LineLimit>,
 }
 
-/// File LOC violation kind.
+/// File line violation kind.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileViolationKind {
-    /// Production-path file LOC violation.
-    FileLoc,
-    /// Path-classified test file LOC violation.
-    TestFileLoc,
+    /// Production-path file line violation.
+    FileLines,
+    /// Test file line violation.
+    TestFileLines,
 }
 
 impl FileViolationKind {
     /// Returns the production or test role measured by this violation.
     pub const fn role(self) -> SourceKind {
         match self {
-            Self::FileLoc => SourceKind::Production,
-            Self::TestFileLoc => SourceKind::Test,
+            Self::FileLines => SourceKind::Production,
+            Self::TestFileLines => SourceKind::Test,
         }
     }
 }

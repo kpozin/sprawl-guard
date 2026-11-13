@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::classification::{SourceKind, TraversalIncident};
+use crate::classification::{SourceKind, UnreadablePath};
 use crate::config::LanguageGroupsError;
 use crate::{LanguageGroupId, LanguageId, RelativePath};
 
@@ -46,10 +46,10 @@ pub enum SprawlError {
         /// Expected root.
         root: PathBuf,
     },
-    /// A requested check scope does not exist.
-    #[error("check scope does not exist: {path}")]
-    MissingCheckScope {
-        /// Missing scope path as supplied by the caller.
+    /// A requested selected path does not exist.
+    #[error("selected path does not exist: {path}")]
+    MissingSelectedPath {
+        /// Missing selected path as supplied by the caller.
         path: PathBuf,
     },
     /// An explicit config file does not exist.
@@ -80,7 +80,7 @@ pub enum SprawlError {
         /// Underlying I/O error.
         source: std::io::Error,
     },
-    /// A source file could not be read for LOC counting.
+    /// A source file could not be read for line counting.
     #[error("failed to read source {path}: {source}")]
     ReadSource {
         /// Source file path.
@@ -186,7 +186,7 @@ pub enum SprawlError {
     },
     /// An enabled language had neither bundled nor authored included paths.
     #[error(
-        "enabled language {language} must use bundled paths, a nonempty include, or nonempty additional_globs"
+        "enabled language {language} must use bundled paths, a nonempty include, or nonempty extend_include"
     )]
     LanguageWithoutIncludedPaths {
         /// Language whose authored path selection is empty.
@@ -208,16 +208,13 @@ pub enum SprawlError {
         /// Underlying traversal error.
         source: ignore::Error,
     },
-    /// Ignore-aware traversal collected recoverable incidents.
-    #[error(
-        "traversal failed under {root}: {}",
-        format_traversal_incident_count(incidents)
-    )]
+    /// Ignore-aware traversal found unreadable paths.
+    #[error("could not read {} path(s) under {root}", unreadable_paths.len())]
     TraversalFailed {
         /// Traversed repository root.
         root: PathBuf,
-        /// Collected traversal incidents.
-        incidents: Vec<TraversalIncident>,
+        /// Collected unreadable paths.
+        unreadable_paths: Vec<UnreadablePath>,
     },
     /// Source discovery inspected more filesystem entries than allowed.
     #[error("traversal entry limit exceeded under {root}: saw more than {limit} entries")]
@@ -248,8 +245,8 @@ pub enum SprawlError {
         /// Matching languages.
         languages: Vec<LanguageId>,
     },
-    /// A LOC backend returned a count that cannot be represented.
-    #[error("LOC count for {path} is too large to represent: {count}")]
+    /// A line-counting backend returned a count that cannot be represented.
+    #[error("line count for {path} is too large to represent: {count}")]
     CodeLineCountOverflow {
         /// Counted source path.
         path: PathBuf,
@@ -267,11 +264,4 @@ fn format_language_list(languages: &[LanguageId]) -> String {
         .map(ToString::to_string)
         .collect::<Vec<_>>()
         .join(", ")
-}
-
-fn format_traversal_incident_count(incidents: &[TraversalIncident]) -> String {
-    match incidents.len() {
-        1 => "1 incident".to_owned(),
-        count => format!("{count} incidents"),
-    }
 }

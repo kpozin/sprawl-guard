@@ -1,21 +1,21 @@
 use crate::config::{
     CommonLanguageConfig, Config, ConfigSchemaVersion, FilesConfig, IgnoreConfig, LanguageConfig,
-    LanguageGroupsConfig, LanguageLimits, LanguageMode, Limits, MaxLeafFilesPerDirectoryLimits,
+    LanguageGroupsConfig, LanguageLimits, LanguageMode, Limits, MaxDirectFilesPerDirectoryLimits,
     MaxLinesPerFileLimits, OutputConfig, OutputFormat, RatchetConfig, RustCfgTestExclusion,
     RustLanguageConfig, SourceFileByteLimit, SymlinkTraversal, TestsConfig, TraversalConfig,
-    TraversalEntryLimit, TraversalErrorPolicy,
+    TraversalEntryLimit, UnreadablePathPolicy,
 };
 use crate::{
-    GlobPattern, IncludedLineTypes, LanguageId, LeafFileLimit, LeafFiles, LocLimit, RatchetFilePath,
+    CountLines, DirectFileLimit, DirectFiles, GlobPattern, LanguageId, LineLimit, RatchetFilePath,
 };
 use tokei::LanguageType;
 
 const DEFAULT_MAX_NON_TEST_CODE_LINES_PER_FILE: u32 = 400;
-const DEFAULT_MAX_LEAF_FILES_PER_DIRECTORY: u32 = 10;
+const DEFAULT_MAX_DIRECT_FILES_PER_DIRECTORY: u32 = 10;
 const DEFAULT_MAX_CODE_LINES_PER_TEST_FILE: u32 = 800;
 const DEFAULT_MAX_TRAVERSAL_ENTRIES: u32 = 1_000_000;
 const DEFAULT_MAX_SOURCE_FILE_BYTES: u64 = 10 * 1024 * 1024;
-// GitHub's code-review exclusions provide the baseline `*.lock` and `go.sum` policy:
+// GitHub's code-review exclusions provide the baseline `*.lock` and `go.sum` excludes:
 // https://docs.github.com/en/copilot/reference/review-excluded-files
 // Exact names cover common lockfiles whose names do not end in `.lock`.
 const DEFAULT_DEPENDENCY_LOCKFILE_EXCLUDES: [&str; 7] = [
@@ -33,19 +33,20 @@ pub fn built_in_config() -> Config {
     let languages = default_languages();
     let language_groups = LanguageGroupsConfig::automatic(languages.keys().copied());
     Config {
+        authored_file: None,
         schema_version: ConfigSchemaVersion::CURRENT,
         limits: Limits {
             max_lines_per_file: MaxLinesPerFileLimits {
-                included_line_types: IncludedLineTypes::Code,
-                production: LocLimit::trusted(DEFAULT_MAX_NON_TEST_CODE_LINES_PER_FILE),
-                test: LocLimit::trusted(DEFAULT_MAX_CODE_LINES_PER_TEST_FILE),
+                count_lines: CountLines::Code,
+                production: LineLimit::trusted(DEFAULT_MAX_NON_TEST_CODE_LINES_PER_FILE),
+                test: LineLimit::trusted(DEFAULT_MAX_CODE_LINES_PER_TEST_FILE),
             },
-            max_leaf_files_per_directory: MaxLeafFilesPerDirectoryLimits {
-                production: LeafFileLimit::Finite(LeafFiles::trusted(
-                    DEFAULT_MAX_LEAF_FILES_PER_DIRECTORY,
+            max_direct_files_per_directory: MaxDirectFilesPerDirectoryLimits {
+                production: DirectFileLimit::Finite(DirectFiles::trusted(
+                    DEFAULT_MAX_DIRECT_FILES_PER_DIRECTORY,
                 )),
-                test: LeafFileLimit::Finite(LeafFiles::trusted(
-                    DEFAULT_MAX_LEAF_FILES_PER_DIRECTORY,
+                test: DirectFileLimit::Finite(DirectFiles::trusted(
+                    DEFAULT_MAX_DIRECT_FILES_PER_DIRECTORY,
                 )),
             },
         },
@@ -61,13 +62,13 @@ pub fn built_in_config() -> Config {
             same_file_system: true,
             max_entries: TraversalEntryLimit::trusted(DEFAULT_MAX_TRAVERSAL_ENTRIES),
             max_file_bytes: SourceFileByteLimit::trusted(DEFAULT_MAX_SOURCE_FILE_BYTES),
-            error_policy: TraversalErrorPolicy::Fail,
+            unreadable_paths: UnreadablePathPolicy::Fail,
         },
         files: FilesConfig {
-            exclude: glob_patterns(DEFAULT_DEPENDENCY_LOCKFILE_EXCLUDES),
+            extend_exclude: glob_patterns(DEFAULT_DEPENDENCY_LOCKFILE_EXCLUDES),
         },
         tests: TestsConfig {
-            check_path_tests: true,
+            check: true,
             globs: glob_patterns([
                 "tests/**",
                 "**/tests/**",
@@ -130,7 +131,7 @@ fn rust_language_config() -> LanguageConfig {
         CommonLanguageConfig {
             mode: LanguageMode::Enabled,
             include: None,
-            additional_globs: vec![],
+            extend_include: vec![],
             exclude: vec![],
             test_globs: glob_patterns(["benches/**"]),
             limits: LanguageLimits::default(),
@@ -145,7 +146,7 @@ fn generic_language_config() -> LanguageConfig {
     LanguageConfig::generic(CommonLanguageConfig {
         mode: LanguageMode::Enabled,
         include: None,
-        additional_globs: vec![],
+        extend_include: vec![],
         exclude: vec![],
         test_globs: vec![],
         limits: LanguageLimits::default(),

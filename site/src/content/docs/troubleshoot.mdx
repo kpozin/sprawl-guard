@@ -1,11 +1,11 @@
 ---
 title: Troubleshoot
-description: Diagnose installation, configuration, classification, and output problems.
+description: Diagnose installation, configuration, test-file, and output problems.
 ---
 
 import { TabItem, Tabs } from "@astrojs/starlight/components";
 
-Start with the resolved policy and an explanation of the affected path:
+Start with the resolved configuration and an explanation of the affected path:
 
 <Tabs syncKey="package-manager">
   <TabItem label="Cargo">
@@ -41,7 +41,7 @@ Check the installation for your package manager:
 <Tabs syncKey="package-manager">
   <TabItem label="Cargo">
 
-Ensure Cargo's binary directory is on `PATH`, then confirm the installation:
+Check that Cargo's binary directory is on `PATH`, then confirm the installation:
 
 ```sh
 cargo install --list
@@ -73,45 +73,46 @@ pnpm exec sprawl-guard --version
 
 ## Configuration is missing or invalid
 
-Sprawl Guard uses built-in defaults when `sprawl-guard.toml` does not exist under the repository
-root. Run `sprawl-guard init --dry-run` to preview a configuration. Alternative filenames are not
-discovered implicitly; select one explicitly with `--config PATH`. Parse errors reject unknown
-fields and identify the file and location.
+Sprawl Guard uses built-in defaults when `sprawl-guard.toml` does not exist in the repository root.
+Run `sprawl-guard init` to preview a configuration. Alternative filenames are not discovered. Select
+one with `--config PATH`. Unknown fields are errors, and the message names the file and location.
 
 ## No files were checked, or the check passed unexpectedly
 
 Run `sprawl-guard languages --detected`, then inspect enabled languages, global excludes, ignore
 settings, and language globs in `sprawl-guard config resolved`. `sprawl-guard explain PATH` reports
-the first decision that included or excluded a path.
+the first rule that included or excluded a path.
 
 ## A path has the wrong language, test status, or override
 
-Use `sprawl-guard explain PATH`. It reports language ownership, production or test classification,
-effective limits, matching overrides, and Rust `cfg(test)` handling. Overlapping language includes
-can make ownership ambiguous; later matching overrides win for fields they set.
+Use `sprawl-guard explain PATH`. It reports which language claims the path, whether it is a test
+file, its limits, matching overrides, and Rust `cfg(test)` handling. A path that more than one
+enabled language claims is an error. When several overrides match a path, later ones win for the
+fields they set.
 
 ## A ratchet entry is stale, missing, or conflicted
 
-A stale entry means that a measurement improved, disappeared, or no longer exceeds its configured
-limit. Preview `sprawl-guard tighten PATH`, then write it with `sprawl-guard tighten PATH --write`.
+A stale entry means that a measurement shrank, disappeared, or no longer exceeds its limit. Preview
+`sprawl-guard tighten PATH`, then save it with `sprawl-guard tighten PATH --write`.
 
-If a current violation has no entry, preview `sprawl-guard update PATH`, then write it with
+If a current violation has no entry, preview `sprawl-guard update PATH`, then save it with
 `sprawl-guard update PATH --write`.
 
-After concurrent edits, update your checkout and regenerate the affected entries. Never resolve a
+After concurrent edits, update your checkout, then rerun `update` or `tighten` on the affected
+paths. Never resolve a
 ratchet conflict by keeping an unexplained higher ceiling.
 
 ## Local and CI results differ
 
 Compare the output of `sprawl-guard --version`, checkout contents, repository root, configuration
-path, resolved configuration, and command line. Run `sprawl-guard check` in CI without path scopes
-or write flags. Ignore rules and filesystem traversal settings can also change which files are
-visible.
+path, resolved configuration, and command line. Run `sprawl-guard check` in CI on the whole
+repository. Ignore files and `[traversal]` settings can also change which files are scanned.
 
 ## JSON or SARIF is rejected
 
-Confirm that `--format json` or `--format sarif` is attached to `check`. Diagnostic commands support
-human or JSON output, but not SARIF. Check the exit code before parsing stdout. Exit code `2` can
-report some traversal failures as structured output, but other operational errors write
-human-readable stderr and may leave stdout empty. SARIF is version 2.1.0; its rule IDs are listed in
-[CLI and output](/sprawl-guard/reference/cli-and-output/).
+Confirm that `--format json` or `--format sarif` follows `check`. Only `check` supports SARIF.
+`languages` and `explain` support `human` and `json`, and `update` and `tighten` support `human` and
+`toml`. Check the exit code before parsing stdout. When a path cannot be read, `check --format json`
+still prints a JSON report and exits `2`. For other errors, Sprawl Guard prints a message on stderr
+and may leave stdout empty. SARIF output is version 2.1.0, and
+[CLI and output](/sprawl-guard/reference/cli-and-output/) lists its rule IDs.

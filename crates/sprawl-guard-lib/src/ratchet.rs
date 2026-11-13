@@ -11,22 +11,24 @@ use serde::{Deserialize, Serialize};
 use crate::classification::SourceKind;
 use crate::file_io::write_text_atomically;
 use crate::value::schema::{TomlSchemaDirective, TomlSchemaUrl, authored_toml_schema_generator};
-use crate::{CountedLoc, LanguageGroupId, LeafFiles, LocLimit, RelativePath, Result, SprawlError};
+use crate::{
+    CountedLines, DirectFiles, LanguageGroupId, LineLimit, RelativePath, Result, SprawlError,
+};
 
 /// Measured ceilings for current violations.
 ///
 /// The file omits language, ownership, reasons, and configured limits. Checks derive those values
-/// from source classification and policy.
+/// from source classification and the configured limits.
 #[derive(Clone, Debug, Default, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 #[schemars(title = "Sprawl Guard ratchet")]
 pub struct RatchetFile {
     /// Ratchet file schema version.
     pub schema_version: RatchetSchemaVersion,
-    /// File LOC ceilings for both source roles.
+    /// File line ceilings for both source roles.
     #[serde(default)]
     pub files: Vec<FileRatchet>,
-    /// Directory fan-out ceilings for both source roles.
+    /// Directory direct-file count ceilings for both source roles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub directories: Vec<DirectoryRatchet>,
 }
@@ -181,7 +183,7 @@ impl Default for RatchetSchemaVersion {
 
 /// Numeric value used when reporting ratchet comparisons.
 ///
-/// Ratchet failures can compare either configured LOC or leaf-file counts. The
+/// Ratchet failures can compare either lines or direct-file counts. The
 /// violation kind identifies the metric, while this wrapper keeps comparison
 /// values branded instead of passing raw integers through the check report.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -194,18 +196,18 @@ impl RatchetCount {
         Self(value)
     }
 
-    /// Converts a configured LOC limit to a ratchet comparison count.
-    pub const fn from_loc_limit(value: LocLimit) -> Self {
+    /// Converts a line limit to a ratchet comparison count.
+    pub const fn from_loc_limit(value: LineLimit) -> Self {
         Self(value.get())
     }
 
-    /// Converts a measured LOC count to a ratchet comparison count.
-    pub const fn from_counted_loc(value: CountedLoc) -> Self {
+    /// Converts a measured line count to a ratchet comparison count.
+    pub const fn from_counted_lines(value: CountedLines) -> Self {
         Self(value.get())
     }
 
-    /// Converts a leaf-file count to a ratchet comparison count.
-    pub const fn from_leaf_files(value: LeafFiles) -> Self {
+    /// Converts a direct-file count to a ratchet comparison count.
+    pub const fn from_direct_files(value: DirectFiles) -> Self {
         Self(value.get())
     }
 
@@ -221,7 +223,7 @@ impl fmt::Display for RatchetCount {
     }
 }
 
-/// Identity of one persisted file LOC measurement.
+/// Identity of one persisted file line measurement.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct FileRatchetKey {
     path: RelativePath,
@@ -245,7 +247,7 @@ impl FileRatchetKey {
     }
 }
 
-/// One file LOC ratchet ceiling.
+/// One file line ratchet ceiling.
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileRatchet {
@@ -254,8 +256,8 @@ pub struct FileRatchet {
     pub path: RelativePath,
     /// Production or test role measured at the file.
     pub role: SourceKind,
-    /// Allowed configured LOC ceiling for an existing violation.
-    pub max_loc: LocLimit,
+    /// Allowed line ceiling for an existing violation.
+    pub max_lines: LineLimit,
 }
 
 fn nonempty_relative_path_schema(generator: &mut SchemaGenerator) -> Schema {
@@ -272,7 +274,7 @@ impl FileRatchet {
     }
 }
 
-/// Identity of one persisted directory fan-out measurement.
+/// Identity of one persisted directory direct-file measurement.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct DirectoryRatchetKey {
     path: RelativePath,
@@ -302,7 +304,7 @@ impl DirectoryRatchetKey {
     }
 }
 
-/// One directory fan-out ratchet ceiling.
+/// One directory direct-file ratchet ceiling.
 #[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DirectoryRatchet {
@@ -312,8 +314,8 @@ pub struct DirectoryRatchet {
     pub role: SourceKind,
     /// Language group measured at this directory.
     pub group: LanguageGroupId,
-    /// Allowed direct leaf-file ceiling for an existing violation.
-    pub leaf_files: LeafFiles,
+    /// Allowed direct-file ceiling for an existing violation.
+    pub max_direct_files: DirectFiles,
 }
 
 impl DirectoryRatchet {
@@ -326,28 +328,28 @@ impl DirectoryRatchet {
 /// Ratchet ceilings indexed by their complete measurement identities.
 #[derive(Debug)]
 pub struct RatchetLookup {
-    files: BTreeMap<FileRatchetKey, LocLimit>,
-    directories: BTreeMap<DirectoryRatchetKey, LeafFiles>,
+    files: BTreeMap<FileRatchetKey, LineLimit>,
+    directories: BTreeMap<DirectoryRatchetKey, DirectFiles>,
 }
 
 impl RatchetLookup {
-    /// Returns a file LOC ceiling by path and role.
-    pub fn file_ceiling(&self, key: &FileRatchetKey) -> Option<LocLimit> {
+    /// Returns a file line ceiling by path and role.
+    pub fn file_ceiling(&self, key: &FileRatchetKey) -> Option<LineLimit> {
         self.files.get(key).copied()
     }
 
-    /// Returns a directory fan-out ceiling by path, role, and group.
-    pub fn directory_ceiling(&self, key: &DirectoryRatchetKey) -> Option<LeafFiles> {
+    /// Returns a directory direct-file ceiling by path, role, and group.
+    pub fn directory_ceiling(&self, key: &DirectoryRatchetKey) -> Option<DirectFiles> {
         self.directories.get(key).copied()
     }
 
-    /// Returns all indexed file LOC ceilings.
-    pub fn files(&self) -> &BTreeMap<FileRatchetKey, LocLimit> {
+    /// Returns all indexed file line ceilings.
+    pub fn files(&self) -> &BTreeMap<FileRatchetKey, LineLimit> {
         &self.files
     }
 
-    /// Returns all indexed directory fan-out ceilings.
-    pub fn directories(&self) -> &BTreeMap<DirectoryRatchetKey, LeafFiles> {
+    /// Returns all indexed directory direct-file ceilings.
+    pub fn directories(&self) -> &BTreeMap<DirectoryRatchetKey, DirectFiles> {
         &self.directories
     }
 }
@@ -361,12 +363,12 @@ impl TryFrom<RatchetFile> for RatchetLookup {
             files: file
                 .files
                 .into_iter()
-                .map(|entry| (entry.key(), entry.max_loc))
+                .map(|entry| (entry.key(), entry.max_lines))
                 .collect(),
             directories: file
                 .directories
                 .into_iter()
-                .map(|entry| (entry.key(), entry.leaf_files))
+                .map(|entry| (entry.key(), entry.max_direct_files))
                 .collect(),
         })
     }
@@ -429,7 +431,7 @@ mod tests {
         let entry = FileRatchet {
             path: RelativePath::new("src/lib.rs").unwrap(),
             role: SourceKind::Production,
-            max_loc: LocLimit::new(2).unwrap(),
+            max_lines: LineLimit::new(2).unwrap(),
         };
         RatchetFile {
             schema_version: RatchetSchemaVersion::CURRENT,
@@ -452,24 +454,24 @@ mod tests {
                     [[files]]
                     path = "src/client/api.ts"
                     role = "production"
-                    max_loc = 731
+                    max_lines = 731
 
                     [[files]]
                     path = "src/client/api.test.ts"
                     role = "test"
-                    max_loc = 1200
+                    max_lines = 1200
 
                     [[directories]]
                     path = "src/api"
                     role = "production"
                     group = "frontend"
-                    leaf_files = 17
+                    max_direct_files = 17
 
                     [[directories]]
                     path = "src/api/tests"
                     role = "test"
                     group = "frontend"
-                    leaf_files = 31
+                    max_direct_files = 31
                 "#};
 
                 let file =
@@ -504,12 +506,12 @@ mod tests {
                         [[files]]
                         path = "src/lib.rs"
                         role = "production"
-                        max_loc = 2
+                        max_lines = 2
 
                         [[files]]
                         path = "src/lib.rs"
                         role = "test"
-                        max_loc = 3
+                        max_lines = 3
                     "#},
                 )
                 .unwrap();
@@ -527,12 +529,12 @@ mod tests {
                         [[files]]
                         path = "src/lib.rs"
                         role = "production"
-                        max_loc = 2
+                        max_lines = 2
 
                         [[files]]
                         path = "src/lib.rs"
                         role = "production"
-                        max_loc = 3
+                        max_lines = 3
                     "#},
                 )
                 .unwrap_err();
@@ -558,13 +560,13 @@ mod tests {
                         path = "src"
                         role = "production"
                         group = "source"
-                        leaf_files = 2
+                        max_direct_files = 2
 
                         [[directories]]
                         path = "src"
                         role = "production"
                         group = "removed_group"
-                        leaf_files = 3
+                        max_direct_files = 3
                     "#},
                 )
                 .unwrap();
@@ -583,13 +585,13 @@ mod tests {
                         path = "src"
                         role = "test"
                         group = "source"
-                        leaf_files = 2
+                        max_direct_files = 2
 
                         [[directories]]
                         path = "src"
                         role = "test"
                         group = "source"
-                        leaf_files = 3
+                        max_direct_files = 3
                     "#},
                 )
                 .unwrap_err();
@@ -614,7 +616,7 @@ mod tests {
                         [[directories]]
                         path = "src/api"
                         role = "production"
-                        leaf_files = 17
+                        max_direct_files = 17
                     "#},
                 )
                 .unwrap_err();
@@ -642,16 +644,16 @@ mod tests {
             fn it_rejects_incomplete_file_entries() {
                 for (input, field) in [
                     (
-                        "schema_version = 1\n[[files]]\nrole = \"production\"\nmax_loc = 1",
+                        "schema_version = 1\n[[files]]\nrole = \"production\"\nmax_lines = 1",
                         "path",
                     ),
                     (
-                        "schema_version = 1\n[[files]]\npath = \"a.rs\"\nmax_loc = 1",
+                        "schema_version = 1\n[[files]]\npath = \"a.rs\"\nmax_lines = 1",
                         "role",
                     ),
                     (
                         "schema_version = 1\n[[files]]\npath = \"a.rs\"\nrole = \"production\"",
-                        "max_loc",
+                        "max_lines",
                     ),
                 ] {
                     assert_missing_field(input, field);
@@ -662,20 +664,20 @@ mod tests {
             fn it_rejects_incomplete_directory_entries() {
                 for (input, field) in [
                     (
-                        "schema_version = 1\n[[directories]]\nrole = \"production\"\ngroup = \"source\"\nleaf_files = 1",
+                        "schema_version = 1\n[[directories]]\nrole = \"production\"\ngroup = \"source\"\nmax_direct_files = 1",
                         "path",
                     ),
                     (
-                        "schema_version = 1\n[[directories]]\npath = \"src\"\ngroup = \"source\"\nleaf_files = 1",
+                        "schema_version = 1\n[[directories]]\npath = \"src\"\ngroup = \"source\"\nmax_direct_files = 1",
                         "role",
                     ),
                     (
-                        "schema_version = 1\n[[directories]]\npath = \"src\"\nrole = \"production\"\nleaf_files = 1",
+                        "schema_version = 1\n[[directories]]\npath = \"src\"\nrole = \"production\"\nmax_direct_files = 1",
                         "group",
                     ),
                     (
                         "schema_version = 1\n[[directories]]\npath = \"src\"\nrole = \"production\"\ngroup = \"source\"",
-                        "leaf_files",
+                        "max_direct_files",
                     ),
                 ] {
                     assert_missing_field(input, field);
@@ -689,8 +691,8 @@ mod tests {
             #[test]
             fn it_rejects_file_and_directory_entries() {
                 for input in [
-                    "schema_version = 1\n[[files]]\npath = \"a.rs\"\nrole = \"production\"\nmax_loc = 0",
-                    "schema_version = 1\n[[directories]]\npath = \"src\"\nrole = \"production\"\ngroup = \"source\"\nleaf_files = 0",
+                    "schema_version = 1\n[[files]]\npath = \"a.rs\"\nrole = \"production\"\nmax_lines = 0",
+                    "schema_version = 1\n[[directories]]\npath = \"src\"\nrole = \"production\"\ngroup = \"source\"\nmax_direct_files = 0",
                 ] {
                     assert!(
                         RatchetFile::parse(Path::new("sprawl-guard.ratchet.toml"), input).is_err()
@@ -760,7 +762,7 @@ mod tests {
                         [[files]]
                         path = "src/lib.rs"
                         role = "fixture"
-                        max_loc = 2
+                        max_lines = 2
                     "#},
                 )
                 .unwrap_err();
@@ -782,7 +784,7 @@ mod tests {
                         [[files]]
                         path = ""
                         role = "production"
-                        max_loc = 2
+                        max_lines = 2
                     "#},
                 )
                 .unwrap_err();
@@ -838,7 +840,7 @@ mod tests {
                         [[files]]
                         path = "src/lib.rs"
                         role = "production"
-                        max_loc = 2
+                        max_lines = 2
                         owner = "team"
                     "#},
                 )
@@ -883,24 +885,24 @@ mod tests {
                         [[files]]
                         path = "z.rs"
                         role = "production"
-                        max_loc = 2
+                        max_lines = 2
 
                         [[files]]
                         path = "a.rs"
                         role = "test"
-                        max_loc = 3
+                        max_lines = 3
 
                         [[directories]]
                         path = "z"
                         role = "production"
                         group = "source"
-                        leaf_files = 2
+                        max_direct_files = 2
 
                         [[directories]]
                         path = "a"
                         role = "test"
                         group = "source"
-                        leaf_files = 3
+                        max_direct_files = 3
                     "#},
                 )
                 .unwrap();

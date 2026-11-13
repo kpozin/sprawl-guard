@@ -21,7 +21,6 @@ pub(super) const BUNDLED_FILENAMES: &[(LanguageType, &[&str])] = &[
     (LanguageType::Snakemake, &["snakefile"]),
 ];
 
-
 /// Filename suffixes grouped by their canonical Tokei owner.
 #[rustfmt::skip]
 pub(super) const BUNDLED_PATH_SUFFIXES: &[(LanguageType, &[FilenameSuffix])] = &[

@@ -5,32 +5,8 @@
       "path": [
         "sprawl-guard"
       ],
-      "usage": "Usage: sprawl-guard [OPTIONS] <COMMAND>",
+      "usage": "Usage: sprawl-guard <COMMAND>",
       "arguments": [
-        {
-          "id": "root",
-          "syntax": "--root <ROOT>",
-          "help": "Repository root. Defaults to the current directory",
-          "conflicts_with": [],
-          "default_values": [],
-          "possible_values": []
-        },
-        {
-          "id": "config",
-          "syntax": "--config <CONFIG>",
-          "help": "Config file path. Relative paths are resolved under `--root`",
-          "conflicts_with": [],
-          "default_values": [],
-          "possible_values": []
-        },
-        {
-          "id": "quiet",
-          "syntax": "--quiet",
-          "help": "Suppress non-essential output",
-          "conflicts_with": [],
-          "default_values": [],
-          "possible_values": []
-        },
         {
           "id": "help",
           "syntax": "-h, --help",
@@ -57,9 +33,33 @@
       "usage": "Usage: sprawl-guard init [OPTIONS]",
       "arguments": [
         {
-          "id": "dry_run",
-          "syntax": "--dry-run",
-          "help": "Print the planned configuration without creating files",
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "quiet",
+          "syntax": "--quiet",
+          "help": "Suppress non-essential output",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "write",
+          "syntax": "--write",
+          "help": "Create the configuration file instead of only previewing it",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -82,9 +82,17 @@
       "usage": "Usage: sprawl-guard languages [OPTIONS]",
       "arguments": [
         {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root scanned by `--detected`. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "format",
           "syntax": "--format <FORMAT>",
-          "help": "Output format",
+          "help": "Output format. Defaults to `human`",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": [
@@ -124,9 +132,33 @@
       "usage": "Usage: sprawl-guard check [OPTIONS] [PATHS]...",
       "arguments": [
         {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "quiet",
+          "syntax": "--quiet",
+          "help": "Suppress non-essential output",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "format",
           "syntax": "--format <FORMAT>",
-          "help": "Output format",
+          "help": "Output format. Defaults to `[output].format` in the configuration, or `human`",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": [
@@ -147,7 +179,7 @@
         {
           "id": "require_ratchet_current",
           "syntax": "--require-ratchet-current",
-          "help": "Fail if the ratchet file is stale",
+          "help": "Fail when the ratchet file has stale entries. This is the default",
           "conflicts_with": [
             "--no-require-ratchet-current"
           ],
@@ -157,7 +189,7 @@
         {
           "id": "no_require_ratchet_current",
           "syntax": "--no-require-ratchet-current",
-          "help": "Allow stale ratchet entries for exploratory local checks",
+          "help": "Allow stale ratchet entries, for exploratory local checks",
           "conflicts_with": [
             "--require-ratchet-current"
           ],
@@ -165,26 +197,26 @@
           "possible_values": []
         },
         {
-          "id": "traversal_error_policy",
-          "syntax": "--traversal-error-policy <TRAVERSAL_ERROR_POLICY>",
-          "help": "Override how recoverable descendant traversal errors affect this check",
+          "id": "unreadable_paths",
+          "syntax": "--unreadable-paths <UNREADABLE_PATHS>",
+          "help": "What to do with files or directories that cannot be read. Defaults to `[traversal].unreadable_paths` in the configuration, or `fail`",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": [
             {
               "name": "fail",
-              "help": "Collect recoverable traversal incidents, then fail the run"
+              "help": "Collect recoverable unreadable paths, then fail the run"
             },
             {
               "name": "warn",
-              "help": "Report recoverable traversal incidents as warnings and continue"
+              "help": "Report recoverable unreadable paths as warnings and continue"
             }
           ]
         },
         {
           "id": "paths",
           "syntax": "[PATHS]...",
-          "help": "Paths to check. Defaults to the repository root",
+          "help": "Paths to check. Checks the whole repository when omitted",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -207,9 +239,33 @@
       "usage": "Usage: sprawl-guard update [OPTIONS] [PATHS]...",
       "arguments": [
         {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "quiet",
+          "syntax": "--quiet",
+          "help": "Suppress non-essential output",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "write",
           "syntax": "--write",
-          "help": "Write the ratchet changes instead of only previewing them",
+          "help": "Save the ratchet changes instead of only previewing them",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -217,7 +273,7 @@
         {
           "id": "allow_increases",
           "syntax": "--allow-increases",
-          "help": "Permit existing ratchet ceilings to increase to current measurements",
+          "help": "Raise existing ratchet ceilings to current measurements. Without this flag, `update` never raises them",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -225,7 +281,7 @@
         {
           "id": "format",
           "syntax": "--format <FORMAT>",
-          "help": "Show changed ceilings or the complete resulting TOML document",
+          "help": "Output format",
           "conflicts_with": [],
           "default_values": [
             "human"
@@ -233,18 +289,18 @@
           "possible_values": [
             {
               "name": "human",
-              "help": "Describe only added, raised, lowered, or removed ceilings"
+              "help": "List the ratchet entries that would be added or raised"
             },
             {
               "name": "toml",
-              "help": "Print the complete resulting ratchet as parseable TOML"
+              "help": "Print the complete resulting ratchet file as TOML"
             }
           ]
         },
         {
           "id": "paths",
           "syntax": "[PATHS]...",
-          "help": "Paths scanned for current violations",
+          "help": "Paths to scan for new violations. Scans the whole repository when omitted",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -267,9 +323,33 @@
       "usage": "Usage: sprawl-guard tighten [OPTIONS] [PATHS]...",
       "arguments": [
         {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "quiet",
+          "syntax": "--quiet",
+          "help": "Suppress non-essential output",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "write",
           "syntax": "--write",
-          "help": "Write the ratchet changes instead of only previewing them",
+          "help": "Save the ratchet changes instead of only previewing them",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -277,7 +357,7 @@
         {
           "id": "format",
           "syntax": "--format <FORMAT>",
-          "help": "Show changed ceilings or the complete resulting TOML document",
+          "help": "Output format",
           "conflicts_with": [],
           "default_values": [
             "human"
@@ -285,18 +365,18 @@
           "possible_values": [
             {
               "name": "human",
-              "help": "Describe only added, raised, lowered, or removed ceilings"
+              "help": "List the ratchet entries that would be lowered or removed"
             },
             {
               "name": "toml",
-              "help": "Print the complete resulting ratchet as parseable TOML"
+              "help": "Print the complete resulting ratchet file as TOML"
             }
           ]
         },
         {
           "id": "paths",
           "syntax": "[PATHS]...",
-          "help": "Paths whose ratchet entries are evaluated",
+          "help": "Paths whose ratchet entries are evaluated. Evaluates the whole ratchet file when omitted",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -316,7 +396,7 @@
         "sprawl-guard",
         "config"
       ],
-      "usage": "Usage: sprawl-guard config [OPTIONS] <COMMAND>",
+      "usage": "Usage: sprawl-guard config <COMMAND>",
       "arguments": [
         {
           "id": "help",
@@ -337,6 +417,22 @@
       "usage": "Usage: sprawl-guard config resolved [OPTIONS]",
       "arguments": [
         {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "help",
           "syntax": "-h, --help",
           "help": "Print help",
@@ -354,6 +450,22 @@
       ],
       "usage": "Usage: sprawl-guard config export [OPTIONS]",
       "arguments": [
+        {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
         {
           "id": "help",
           "syntax": "-h, --help",
@@ -373,9 +485,43 @@
       "usage": "Usage: sprawl-guard config upgrade [OPTIONS]",
       "arguments": [
         {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "quiet",
+          "syntax": "--quiet",
+          "help": "Suppress non-essential output",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "write",
+          "syntax": "--write",
+          "help": "Save the upgraded configuration instead of only previewing it",
+          "conflicts_with": [
+            "--check"
+          ],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "check",
           "syntax": "--check",
-          "help": "Report whether an upgrade is needed without changing the file",
+          "help": "Save nothing, and exit with code 1 when an upgrade is pending",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -395,7 +541,7 @@
         "sprawl-guard",
         "schema"
       ],
-      "usage": "Usage: sprawl-guard schema [OPTIONS] <DOCUMENT>",
+      "usage": "Usage: sprawl-guard schema <DOCUMENT>",
       "arguments": [
         {
           "id": "format",
@@ -432,9 +578,25 @@
       "usage": "Usage: sprawl-guard explain [OPTIONS] <PATH>",
       "arguments": [
         {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "format",
           "syntax": "--format <FORMAT>",
-          "help": "Output format",
+          "help": "Output format. Defaults to `human`",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": [
@@ -451,7 +613,7 @@
         {
           "id": "path",
           "syntax": "<PATH>",
-          "help": "Path to explain",
+          "help": "Path to explain. The path does not need to exist",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []

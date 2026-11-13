@@ -2,12 +2,12 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use sprawl_guard_lib::check::check as run_policy_check;
-use sprawl_guard_lib::config::{LoadOptions, OutputFormat, load_resolved_config};
+use sprawl_guard_lib::check::check as run_check;
+use sprawl_guard_lib::config::{OutputFormat, load_resolved_config};
 use sprawl_guard_lib::{CheckOptions, SprawlError};
 
 use super::{
-    CheckArgs, CheckFormat, Cli, Command, ConfigCommand, ConfigSubcommand, HumanJsonFormat,
+    CheckArgs, CheckFormat, Command, ConfigCommand, ConfigSubcommand, HumanJsonFormat,
     check_output, config as config_cli, explain_output, init, languages, ratchet, schema,
 };
 use crate::error::{CliError, Result};
@@ -31,18 +31,11 @@ impl CommandOutcome {
 }
 
 pub(in crate::cli) fn execute_cli_command(
-    cli: Cli,
+    command: Command,
     default_root: PathBuf,
 ) -> Result<CommandOutcome> {
-    let Cli {
-        root,
-        config,
-        quiet,
-        command,
-    } = cli;
-    let root = root.unwrap_or(default_root);
     match command {
-        Command::Config(config_command) => execute_config(root, config, quiet, config_command),
+        Command::Config(config_command) => execute_config(default_root, config_command),
         Command::Schema(args) => {
             let document = schema::schema_payload(args.format)?;
             Ok(CommandOutcome::new(
@@ -51,11 +44,15 @@ pub(in crate::cli) fn execute_cli_command(
                 String::new(),
             ))
         }
-        Command::Languages(args) => execute_languages(root, args),
-        Command::Check(args) => execute_check(root, config, quiet, args),
-        Command::Explain(args) => execute_explain(root, config, args),
+        Command::Languages(args) => {
+            let root = args.root.clone().unwrap_or(default_root);
+            execute_languages(root, args)
+        }
+        Command::Check(args) => execute_check(default_root, args),
+        Command::Explain(args) => execute_explain(default_root, args),
         Command::Init(args) => {
-            let execution = init::execute_init(Some(root), config, args)?;
+            let quiet = args.quiet.quiet;
+            let execution = init::execute_init(default_root, args)?;
             Ok(CommandOutcome::new(
                 0,
                 init::render_init_stdout(&execution, quiet),
@@ -63,10 +60,12 @@ pub(in crate::cli) fn execute_cli_command(
             ))
         }
         Command::Update(args) => {
-            ratchet_command_outcome(ratchet::execute_update(Some(root), config, args), quiet)
+            let quiet = args.quiet.quiet;
+            ratchet_command_outcome(ratchet::execute_update(default_root, args), quiet)
         }
         Command::Tighten(args) => {
-            ratchet_command_outcome(ratchet::execute_tighten(Some(root), config, args), quiet)
+            let quiet = args.quiet.quiet;
+            ratchet_command_outcome(ratchet::execute_tighten(default_root, args), quiet)
         }
         Command::Machine(_) => unreachable!("machine commands are handled before shared execution"),
     }
@@ -79,13 +78,14 @@ fn ratchet_command_outcome(execution: Result<String>, quiet: bool) -> Result<Com
             if quiet { String::new() } else { stdout },
             String::new(),
         )),
-        Err(CliError::Library(SprawlError::TraversalFailed { root, incidents })) => {
-            Ok(CommandOutcome::new(
-                2,
-                String::new(),
-                check_output::render_traversal_failure_human(&root, &incidents),
-            ))
-        }
+        Err(CliError::Library(SprawlError::TraversalFailed {
+            root,
+            unreadable_paths,
+        })) => Ok(CommandOutcome::new(
+            2,
+            String::new(),
+            check_output::render_traversal_failure_human(&root, &unreadable_paths),
+        )),
         Err(error) => Err(error),
     }
 }
@@ -122,17 +122,12 @@ fn retry_stdout<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T
     }
 }
 
-fn execute_check(
-    root: PathBuf,
-    config_path: Option<PathBuf>,
-    quiet: bool,
-    args: CheckArgs,
-) -> Result<CommandOutcome> {
-    let loaded = load_resolved_config(&LoadOptions {
-        root: root.clone(),
-        config: config_path,
-    })?;
-    let policy = loaded.resolved_policy();
+fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcome> {
+    let quiet = args.quiet.quiet;
+    let require_ratchet_current = require_ratchet_current_arg(&args);
+    let load_options = args.project.load_options(default_root);
+    let loaded = load_resolved_config(&load_options)?;
+    let policy = loaded.resolved_config();
     let config_source = policy.source().clone();
     let format = match args.format {
         Some(CheckFormat::Human) => CheckFormat::Human,
@@ -140,30 +135,39 @@ fn execute_check(
         Some(CheckFormat::Sarif) => CheckFormat::Sarif,
         None => check_format_from_config(&loaded.config.output.format)?,
     };
-    let require_ratchet_current = require_ratchet_current_arg(&args);
-    let report = match run_policy_check(CheckOptions {
-        root: root.clone(),
+    let report = match run_check(CheckOptions {
+        root: load_options.root.clone(),
         policy,
         paths: args.paths,
         require_ratchet_current,
-        traversal_error_policy: args.traversal_error_policy.map(Into::into),
+        unreadable_paths: args.unreadable_paths.map(Into::into),
     }) {
         Ok(report) => report,
-        Err(SprawlError::TraversalFailed { root, incidents }) if format == CheckFormat::Human => {
+        Err(SprawlError::TraversalFailed {
+            root,
+            unreadable_paths,
+        }) if format == CheckFormat::Human => {
             return Ok(CommandOutcome::new(
                 2,
                 String::new(),
                 check_output::render_check_traversal_failure_human(
                     &root,
                     &config_source,
-                    &incidents,
+                    &unreadable_paths,
                 ),
             ));
         }
-        Err(SprawlError::TraversalFailed { root, incidents }) if format == CheckFormat::Json => {
+        Err(SprawlError::TraversalFailed {
+            root,
+            unreadable_paths,
+        }) if format == CheckFormat::Json => {
             return Ok(CommandOutcome::new(
                 2,
-                check_output::render_traversal_failure_json(&root, &config_source, &incidents)?,
+                check_output::render_traversal_failure_json(
+                    &root,
+                    &config_source,
+                    &unreadable_paths,
+                )?,
                 String::new(),
             ));
         }
@@ -186,17 +190,17 @@ fn require_ratchet_current_arg(args: &CheckArgs) -> Option<bool> {
     None
 }
 
-fn execute_config(
-    root: PathBuf,
-    config_path: Option<PathBuf>,
-    quiet: bool,
-    command: ConfigCommand,
-) -> Result<CommandOutcome> {
+fn execute_config(default_root: PathBuf, command: ConfigCommand) -> Result<CommandOutcome> {
     let execution = match command.command {
-        ConfigSubcommand::Resolved => config_cli::execute_config_resolved(Some(root), config_path)?,
-        ConfigSubcommand::Export => config_cli::execute_config_export(Some(root), config_path)?,
+        ConfigSubcommand::Resolved(project) => {
+            config_cli::execute_config_resolved(&project.load_options(default_root))?
+        }
+        ConfigSubcommand::Export(project) => {
+            config_cli::execute_config_export(&project.load_options(default_root))?
+        }
         ConfigSubcommand::Upgrade(args) => {
-            let execution = config_cli::execute_config_migrate(root, config_path, args)?;
+            let quiet = args.quiet.quiet;
+            let execution = config_cli::execute_config_migrate(default_root, args)?;
             return Ok(CommandOutcome::new(
                 execution.exit_code(),
                 config_cli::render_config_migration_stdout(&execution, quiet),
@@ -211,17 +215,14 @@ fn execute_config(
     ))
 }
 
-fn execute_explain(
-    root: PathBuf,
-    config_path: Option<PathBuf>,
-    args: super::ExplainArgs,
-) -> Result<CommandOutcome> {
-    let loaded = load_resolved_config(&LoadOptions {
-        root: root.clone(),
-        config: config_path,
-    })?;
-    let classification =
-        sprawl_guard_lib::classification::explain_path(&root, &args.path, &loaded.config)?;
+fn execute_explain(default_root: PathBuf, args: super::ExplainArgs) -> Result<CommandOutcome> {
+    let load_options = args.project.load_options(default_root);
+    let loaded = load_resolved_config(&load_options)?;
+    let classification = sprawl_guard_lib::classification::explain_path(
+        &load_options.root,
+        &args.path,
+        &loaded.config,
+    )?;
     let stdout = match args.format.unwrap_or(HumanJsonFormat::Human) {
         HumanJsonFormat::Human => format!("{}\n", explain_output::explain_message(&classification)),
         HumanJsonFormat::Json => serde_json::to_string_pretty(&classification)

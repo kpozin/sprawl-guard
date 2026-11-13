@@ -7,9 +7,9 @@ use indoc::formatdoc;
 
 use crate::GlobPattern;
 use crate::classification::ClassifiedSource;
-use crate::classification::{TraversalIncidentKind, TraversalIncidentSeverity};
+use crate::classification::{UnreadablePathKind, UnreadablePathSeverity};
 use crate::config::{
-    Config, LoadOptions, SymlinkTraversal, TraversalErrorPolicy, load_resolved_config,
+    Config, LoadOptions, SymlinkTraversal, UnreadablePathPolicy, load_resolved_config,
 };
 
 pub(crate) fn load_config(root: &Path) -> Config {
@@ -22,7 +22,7 @@ pub(crate) fn load_config(root: &Path) -> Config {
     for fixture_path in ["sprawl-guard.toml", ".sprawlrc.toml"] {
         config
             .files
-            .exclude
+            .extend_exclude
             .push(GlobPattern::new(fixture_path).unwrap());
     }
     config
@@ -62,13 +62,13 @@ pub(crate) fn write_rust_symlink_traversal_config(root: &Path, policy: SymlinkTr
 
 pub(crate) fn write_rust_symlink_traversal_warn_config(root: &Path, policy: SymlinkTraversal) {
     let policy = symlink_traversal_name(policy);
-    let error_policy = traversal_error_policy_name(TraversalErrorPolicy::Warn);
+    let unreadable_paths = unreadable_paths_name(UnreadablePathPolicy::Warn);
     write_config(
         root,
         &formatdoc! {r#"
             [traversal]
             follow_symlinks = "{policy}"
-            error_policy = "{error_policy}"
+            unreadable_paths = "{unreadable_paths}"
 
             [languages.rust]
             enabled = true
@@ -119,12 +119,15 @@ pub(crate) fn source_paths(sources: &[ClassifiedSource]) -> Vec<&str> {
 }
 
 pub(crate) fn assert_symlink_loop_error(error: crate::SprawlError) {
-    let crate::SprawlError::TraversalFailed { incidents, .. } = error else {
+    let crate::SprawlError::TraversalFailed {
+        unreadable_paths, ..
+    } = error
+    else {
         panic!("expected traversal failure, got {error}");
     };
-    assert_eq!(incidents.len(), 1);
-    assert_eq!(incidents[0].kind, TraversalIncidentKind::SymlinkLoop);
-    assert_eq!(incidents[0].severity, TraversalIncidentSeverity::Error);
+    assert_eq!(unreadable_paths.len(), 1);
+    assert_eq!(unreadable_paths[0].kind, UnreadablePathKind::SymlinkLoop);
+    assert_eq!(unreadable_paths[0].severity, UnreadablePathSeverity::Error);
 }
 
 fn symlink_traversal_name(policy: SymlinkTraversal) -> &'static str {
@@ -136,9 +139,9 @@ fn symlink_traversal_name(policy: SymlinkTraversal) -> &'static str {
     }
 }
 
-fn traversal_error_policy_name(policy: TraversalErrorPolicy) -> &'static str {
+fn unreadable_paths_name(policy: UnreadablePathPolicy) -> &'static str {
     match policy {
-        TraversalErrorPolicy::Fail => "fail",
-        TraversalErrorPolicy::Warn => "warn",
+        UnreadablePathPolicy::Fail => "fail",
+        UnreadablePathPolicy::Warn => "warn",
     }
 }

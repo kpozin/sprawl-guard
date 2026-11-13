@@ -25,7 +25,7 @@ pub(super) fn update_ratchet(
             .entry(current.key())
             .and_modify(|previous| {
                 if ceiling_policy.allows_increases() {
-                    previous.max_loc = std::cmp::max(previous.max_loc, current.max_loc);
+                    previous.max_lines = std::cmp::max(previous.max_lines, current.max_lines);
                 }
             })
             .or_insert(current);
@@ -41,7 +41,8 @@ pub(super) fn update_ratchet(
             .entry(current.key())
             .and_modify(|previous| {
                 if ceiling_policy.allows_increases() {
-                    previous.leaf_files = std::cmp::max(previous.leaf_files, current.leaf_files);
+                    previous.max_direct_files =
+                        std::cmp::max(previous.max_direct_files, current.max_direct_files);
                 }
             })
             .or_insert(current);
@@ -56,7 +57,7 @@ pub(super) fn update_ratchet(
     next
 }
 
-/// Applies `tighten` semantics: lower existing scoped entries and remove stale ones.
+/// Applies `tighten` semantics: lower selected entries and remove stale ones.
 ///
 /// Entries outside `scope` are preserved. Entries inside `scope` are never
 /// raised and no new entries are created.
@@ -78,7 +79,7 @@ pub(super) fn lower_ratchet_scope(
                 current.file_ceiling(&entry.key()).map(|value| FileRatchet {
                     path: entry.path,
                     role: entry.role,
-                    max_loc: std::cmp::min(entry.max_loc, value),
+                    max_lines: std::cmp::min(entry.max_lines, value),
                 })
             })
             .collect(),
@@ -95,7 +96,7 @@ pub(super) fn lower_ratchet_scope(
                         path: entry.path,
                         role: entry.role,
                         group: entry.group,
-                        leaf_files: std::cmp::min(entry.leaf_files, value),
+                        max_direct_files: std::cmp::min(entry.max_direct_files, value),
                     })
             })
             .collect(),
@@ -130,13 +131,13 @@ mod tests {
                 path = "src"
                 role = "production"
                 group = "source"
-                leaf_files = 5
+                max_direct_files = 5
 
                 [[directories]]
                 path = "src"
                 role = "production"
                 group = "documentation"
-                leaf_files = 7
+                max_direct_files = 7
             "#});
             let current = parse_ratchet(indoc! {r#"
                 schema_version = 1
@@ -145,14 +146,14 @@ mod tests {
                 path = "src"
                 role = "production"
                 group = "source"
-                leaf_files = 3
+                max_direct_files = 3
             "#});
 
             let next = lower_ratchet_scope(previous, current, &RatchetScope::All).unwrap();
 
             assert_eq!(next.directories.len(), 1);
             assert_eq!(next.directories[0].group, LanguageGroupId::Source);
-            assert_eq!(next.directories[0].leaf_files.get(), 3);
+            assert_eq!(next.directories[0].max_direct_files.get(), 3);
         }
 
         #[test]
@@ -164,13 +165,13 @@ mod tests {
                 path = "src"
                 role = "production"
                 group = "source"
-                leaf_files = 5
+                max_direct_files = 5
 
                 [[directories]]
                 path = "src"
                 role = "production"
                 group = "documentation"
-                leaf_files = 2
+                max_direct_files = 2
             "#});
             let current = parse_ratchet(indoc! {r#"
                 schema_version = 1
@@ -179,21 +180,21 @@ mod tests {
                 path = "src"
                 role = "production"
                 group = "source"
-                leaf_files = 4
+                max_direct_files = 4
 
                 [[directories]]
                 path = "src"
                 role = "production"
                 group = "documentation"
-                leaf_files = 3
+                max_direct_files = 3
             "#});
 
             let next = update_ratchet(previous, current, CeilingUpdatePolicy::AllowIncreases);
 
             assert_eq!(next.directories[0].group, LanguageGroupId::Source);
-            assert_eq!(next.directories[0].leaf_files.get(), 5);
+            assert_eq!(next.directories[0].max_direct_files.get(), 5);
             assert_eq!(next.directories[1].group, LanguageGroupId::Documentation);
-            assert_eq!(next.directories[1].leaf_files.get(), 3);
+            assert_eq!(next.directories[1].max_direct_files.get(), 3);
         }
 
         #[test]
@@ -205,25 +206,25 @@ mod tests {
                 path = "z"
                 role = "test"
                 group = "source"
-                leaf_files = 1
+                max_direct_files = 1
 
                 [[directories]]
                 path = "z"
                 role = "production"
                 group = "documentation"
-                leaf_files = 1
+                max_direct_files = 1
 
                 [[directories]]
                 path = "a"
                 role = "test"
                 group = "source"
-                leaf_files = 1
+                max_direct_files = 1
 
                 [[directories]]
                 path = "z"
                 role = "production"
                 group = "source"
-                leaf_files = 1
+                max_direct_files = 1
             "#});
 
             ratchet.sort();
@@ -256,13 +257,13 @@ mod tests {
                 path = "src"
                 role = "production"
                 group = "source"
-                leaf_files = 5
+                max_direct_files = 5
 
                 [[directories]]
                 path = "src"
                 role = "test"
                 group = "source"
-                leaf_files = 2
+                max_direct_files = 2
             "#});
             let current = parse_ratchet(indoc! {r#"
                 schema_version = 1
@@ -271,21 +272,21 @@ mod tests {
                 path = "src"
                 role = "production"
                 group = "source"
-                leaf_files = 4
+                max_direct_files = 4
 
                 [[directories]]
                 path = "src"
                 role = "test"
                 group = "source"
-                leaf_files = 3
+                max_direct_files = 3
             "#});
 
             let next = update_ratchet(previous, current, CeilingUpdatePolicy::Preserve);
 
             assert_eq!(next.directories[0].role, SourceKind::Production);
-            assert_eq!(next.directories[0].leaf_files.get(), 5);
+            assert_eq!(next.directories[0].max_direct_files.get(), 5);
             assert_eq!(next.directories[1].role, SourceKind::Test);
-            assert_eq!(next.directories[1].leaf_files.get(), 2);
+            assert_eq!(next.directories[1].max_direct_files.get(), 2);
         }
     }
 
@@ -300,17 +301,17 @@ mod tests {
                 [[files]]
                 path = "z.rs"
                 role = "test"
-                max_loc = 1
+                max_lines = 1
 
                 [[files]]
                 path = "z.rs"
                 role = "production"
-                max_loc = 1
+                max_lines = 1
 
                 [[files]]
                 path = "a.rs"
                 role = "test"
-                max_loc = 1
+                max_lines = 1
             "#});
 
             ratchet.sort();

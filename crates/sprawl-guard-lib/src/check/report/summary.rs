@@ -43,7 +43,21 @@ impl DetectedLanguageCount {
     }
 }
 
-/// Coverage counts for source files successfully measured by a check.
+/// Number of entries in the ratchet file: file ceilings plus directory ceilings.
+#[nutype(derive(Clone, Copy, Debug, Eq, PartialEq, Serialize))]
+pub struct RatchetEntryCount(u32);
+
+impl RatchetEntryCount {
+    pub(crate) fn from_len(value: usize) -> Self {
+        Self::new(
+            value
+                .try_into()
+                .expect("ratchet entry count must fit in u32"),
+        )
+    }
+}
+
+/// Counts reported with a completed check.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct ScanSummary {
     /// Source files measured.
@@ -52,6 +66,9 @@ pub struct ScanSummary {
     pub directories_checked: CheckedDirectoryCount,
     /// Languages represented by measured files.
     pub languages_detected: DetectedLanguageCount,
+    /// Entries in the ratchet file, counted across the whole repository rather than the
+    /// requested paths. Zero when no ratchet file exists.
+    pub ratchet_entries: RatchetEntryCount,
 }
 
 impl ScanSummary {
@@ -60,11 +77,13 @@ impl ScanSummary {
         files_checked: CheckedFileCount,
         directories_checked: CheckedDirectoryCount,
         languages_detected: DetectedLanguageCount,
+        ratchet_entries: RatchetEntryCount,
     ) -> Self {
         Self {
             files_checked,
             directories_checked,
             languages_detected,
+            ratchet_entries,
         }
     }
 }

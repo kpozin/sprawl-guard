@@ -7,17 +7,17 @@ use crate::check::report::{
     FileRatchetStaleMissingViolation, FileViolationKind, RatchetStaleMissingViolation,
     RatchetStaleViolation, RatchetViolation,
 };
-use crate::check::runner::CheckScope;
+use crate::check::runner::SelectedPaths;
 use crate::classification::SourceKind;
 use crate::ratchet::{DirectoryRatchetKey, FileRatchetKey, RatchetCount};
-use crate::{LeafFiles, LocLimit, RelativePath};
+use crate::{DirectFiles, LineLimit, RelativePath};
 
 pub(super) fn file_ratchets(
-    ratchets: &BTreeMap<FileRatchetKey, LocLimit>,
+    ratchets: &BTreeMap<FileRatchetKey, LineLimit>,
     measured: &BTreeSet<FileRatchetKey>,
-    scope: &CheckScope,
+    selected_paths: &SelectedPaths,
 ) -> Vec<RatchetViolation> {
-    missing_entries(ratchets, measured, scope, FileRatchetKey::path)
+    missing_entries(ratchets, measured, selected_paths, FileRatchetKey::path)
         .map(|(key, ceiling)| {
             RatchetViolation::Stale(RatchetStaleViolation::Missing(
                 RatchetStaleMissingViolation::File(FileRatchetStaleMissingViolation {
@@ -31,45 +31,50 @@ pub(super) fn file_ratchets(
 }
 
 pub(super) fn directory_ratchets(
-    ratchets: &BTreeMap<DirectoryRatchetKey, LeafFiles>,
+    ratchets: &BTreeMap<DirectoryRatchetKey, DirectFiles>,
     measured: &BTreeSet<DirectoryRatchetKey>,
-    scope: &CheckScope,
+    selected_paths: &SelectedPaths,
 ) -> Vec<RatchetViolation> {
-    missing_entries(ratchets, measured, scope, DirectoryRatchetKey::path)
-        .map(|(key, ceiling)| {
-            RatchetViolation::Stale(RatchetStaleViolation::Missing(
-                RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
-                    kind: directory_kind(key.role()),
-                    path: key.path().clone(),
-                    group: key.group().clone(),
-                    ratchet: RatchetCount::from_leaf_files(*ceiling),
-                }),
-            ))
-        })
-        .collect()
+    missing_entries(
+        ratchets,
+        measured,
+        selected_paths,
+        DirectoryRatchetKey::path,
+    )
+    .map(|(key, ceiling)| {
+        RatchetViolation::Stale(RatchetStaleViolation::Missing(
+            RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
+                kind: directory_kind(key.role()),
+                path: key.path().clone(),
+                group: key.group().clone(),
+                ratchet: RatchetCount::from_direct_files(*ceiling),
+            }),
+        ))
+    })
+    .collect()
 }
 
 fn missing_entries<'a, Key: Ord, Ceiling>(
     ratchets: &'a BTreeMap<Key, Ceiling>,
     measured: &'a BTreeSet<Key>,
-    scope: &'a CheckScope,
+    selected_paths: &'a SelectedPaths,
     path: impl Fn(&Key) -> &RelativePath + 'a,
 ) -> impl Iterator<Item = (&'a Key, &'a Ceiling)> + 'a {
     ratchets
         .iter()
-        .filter(move |(key, _)| scope.contains(path(key)) && !measured.contains(*key))
+        .filter(move |(key, _)| selected_paths.contains(path(key)) && !measured.contains(*key))
 }
 
 const fn file_kind(role: SourceKind) -> FileViolationKind {
     match role {
-        SourceKind::Production => FileViolationKind::FileLoc,
-        SourceKind::Test => FileViolationKind::TestFileLoc,
+        SourceKind::Production => FileViolationKind::FileLines,
+        SourceKind::Test => FileViolationKind::TestFileLines,
     }
 }
 
 const fn directory_kind(role: SourceKind) -> DirectoryViolationKind {
     match role {
-        SourceKind::Production => DirectoryViolationKind::DirectoryFanout,
-        SourceKind::Test => DirectoryViolationKind::TestDirectoryFanout,
+        SourceKind::Production => DirectoryViolationKind::DirectoryDirectFiles,
+        SourceKind::Test => DirectoryViolationKind::TestDirectoryDirectFiles,
     }
 }

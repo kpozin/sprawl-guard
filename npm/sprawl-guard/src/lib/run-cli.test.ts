@@ -166,7 +166,7 @@ describe("compiled wrapper entrypoint", () => {
 
       assert.equal(result.error, undefined);
       assert.equal(result.signal, null);
-      assert.equal(result.status, 1);
+      assert.equal(result.status, 2);
       assert.doesNotMatch(
         result.stderr,
         /ExperimentalWarning: WASI is an experimental feature/,

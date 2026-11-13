@@ -1,53 +1,74 @@
 ---
 title: How checks work
-description: Source discovery, measurements, limits, scopes, and ratchet semantics.
+description: Source files, line counts, direct files, limits, selected paths, and the ratchet file.
 ---
 
-## Discovery and language support
+## Terms
+
+| Term                              | Meaning                                                                                                           |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| configuration (config file)       | `sprawl-guard.toml`.                                                                                              |
+| built-in defaults                 | Settings used when no config file exists or a field is omitted.                                                   |
+| source file                       | A file that one enabled language claims.                                                                          |
+| test file / production file       | A source file that matches a test glob, or one that does not.                                                     |
+| language group                    | Languages whose files share one direct-file count per directory.                                                  |
+| lines                             | The counted lines of a file: code, plus comments or blank lines if configured.                                    |
+| direct files                      | Source files immediately inside a directory. Files in its subdirectories do not count.                            |
+| limit                             | The maximum set in the configuration.                                                                             |
+| violation                         | A file whose lines, or a directory whose direct files, exceed its limit.                                          |
+| ratchet file                      | `sprawl-guard.ratchet.toml`, which records existing violations.                                                   |
+| ratchet entry                     | One recorded violation in the ratchet file.                                                                       |
+| ceiling                           | The maximum recorded in a ratchet entry. Ceilings live in the ratchet file, and limits live in the configuration. |
+| stale entry                       | A ratchet entry whose violation shrank or disappeared.                                                            |
+| exclude / ignore                  | "Ignore" for `.gitignore`-style files. "Exclude" for Sprawl Guard globs.                                          |
+| unreadable path                   | A file or directory that could not be read during the scan.                                                       |
+| whole repository / selected paths | What `check`, `update`, and `tighten` cover without or with path arguments.                                       |
+| preview / write                   | Showing a change versus saving it to disk.                                                                        |
+
+## Source files and languages
 
 Sprawl Guard uses the language table bundled with Tokei. Run `sprawl-guard languages` to list every
-supported language ID, extension, and exact filename. Run `sprawl-guard languages --detected` to
-see which languages own visible files in the repository.
+supported language, its key, and its extensions and filenames. Run `sprawl-guard languages
+--detected` to see which languages claim files in the repository.
 
-Discovery starts at the repository root or the supplied path scopes. Sprawl Guard applies standard
-ignore files, the hidden-path policy, and traversal safety limits. It then applies global file
-excludes and each language's bundled or configured paths and excludes. Globs match normalized
-repository-relative paths. Every bundled language is enabled by default, and a source file must
-belong to exactly one enabled language.
+The scan starts at the repository root, or at the selected paths. Sprawl Guard skips ignored files,
+hidden paths unless configured otherwise, the active config file, and the ratchet file. It then
+applies the global file excludes and each language's paths and excludes. Globs match paths relative
+to the repository root. Every bundled language is enabled by default, and a source file must belong
+to exactly one enabled language.
 
-## Test classification
+## Test files
 
-A source file is test code when it matches `[tests].globs` or its language's `test_globs`. Test
-files use the test line and fan-out limits; when `check_path_tests = false`, they are omitted.
+A source file is a test file when it matches `[tests].globs` or its language's `test_globs`. Test
+files use the test line and direct-file limits. When `[tests].check = false`, test files are not
+checked.
 
-For a production Rust file, `exclude_cfg_test = true` removes top-level items guarded by
-`cfg(test)` from every included line type. It does not turn the file into a test file. A parse
-failure counts the original source with the effective line types and adds a warning. A
-path-classified Rust test is not preprocessed.
+For a production Rust file, `exclude_cfg_test = true` makes Sprawl Guard skip top-level items marked
+`#[cfg(test)]`. The file stays a production file. If Sprawl Guard cannot parse the file, it counts
+every line and adds a warning. Rust test files are counted in full.
 
-## Measurements and violations
+## Lines, direct files, and violations
 
-Sprawl Guard uses Tokei to count configured logical lines of code (LOC). `code` always counts;
-`comments` and `blank_lines` are optional. Literate languages include comments automatically unless
-their language configuration replaces that selection. Sprawl Guard evaluates four measurements:
+Sprawl Guard uses Tokei to count lines. Code always counts; comments and blank lines count when
+`count_lines` includes them. In literate languages such as Markdown, Sprawl Guard also counts
+comments unless the language's settings replace that. Sprawl Guard measures four things:
 
-- configured LOC in each production file;
-- configured LOC in each path-classified test file;
-- direct production source files in each directory;
-- direct test source files in each directory.
+- lines in each production file;
+- lines in each test file;
+- direct production files in each directory;
+- direct test files in each directory.
 
-Directory fan-out is measured even when its effective limit is `"unlimited"`; unlimited disables
-the policy violation, not the measurement or its ratchet comparison. A matching path override can
-still replace an unlimited group limit with a finite one.
+`check` never fails on an `"unlimited"` limit. Sprawl Guard still counts the direct files under it
+and compares that count with any ratchet entry. A matching path override can replace an unlimited
+group limit with a finite one.
 
-Global limits apply first. Language-specific policy can replace file limits, and custom groups can
-replace directory limits. Matching path overrides apply last. A measurement above its effective
-limit is a current violation.
+Global limits apply first. Language settings can replace file limits, and custom groups can replace
+directory limits. Matching path overrides apply last. A measurement above its limit is a
+violation.
 
-### Directory fan-out example
+### Direct files example
 
-Directory fan-out is the number of included source files whose immediate parent is the directory
-being measured. It is not a recursive count. Production and test files have separate totals.
+Production and test files have separate counts.
 
 Suppose TypeScript and Python are enabled, `src/generated.ts` is excluded, and the repository
 contains:
@@ -64,71 +85,54 @@ src/
     └── model.py
 ```
 
-The resulting measurements are:
+The counts are:
 
-| Directory     | Production fan-out      | Test fan-out     |
-| ------------- | ----------------------- | ---------------- |
-| `src`         | 2: `app.ts`, `index.ts` | 1: `app.test.ts` |
-| `src/feature` | 2: `api.ts`, `model.py` | 0                |
+| Directory     | Direct production files | Direct test files |
+| ------------- | ----------------------- | ----------------- |
+| `src`         | 2: `app.ts`, `index.ts` | 1: `app.test.ts`  |
+| `src/feature` | 2: `api.ts`, `model.py` | 0                 |
 
 `src/generated.ts` does not count because it is excluded. Markdown belongs to the automatic
-documentation group, so `src/README.md` does not consume the source-group fan-out budget. Custom
-groups can likewise separate related languages from the source count. The `feature` directory
-itself does not count toward `src`; its files count only toward `src/feature`.
+documentation group, so `src/README.md` does not count against the source group's limit. Custom
+groups can likewise separate related languages. The `feature` directory itself does not count
+toward `src`; its files count only toward `src/feature`.
 
-An included source file counts even when it is empty or uses a facade name such as `index.ts`.
-Files from different enabled languages share the same total, as `api.ts` and `model.py` do above.
+A source file counts even when it is empty or is an index file such as `index.ts`. Files from
+different languages in the same group share one count, as `api.ts` and `model.py` do above.
 
-Ignored files, global or language-level exclusions, files in disabled languages, and unmatched
-files do not count. A path-classified test counts only toward test fan-out;
-when `[tests].check_path_tests = false`, it is omitted entirely.
+Ignored files, excluded files, files in disabled languages, and files no language claims do not
+count. A test file counts only toward its directory's direct test files. When
+`[tests].check = false`, it does not count at all.
 
-## Ratchet ceilings
+## Ratchet file
 
-The ratchet file records ceilings for current violations: the maximum permitted measurement for a
-path that already violates the policy. It stores only the allowed `max_loc` or `leaf_files` value,
-not Git history, ownership, reasons, languages, or configured limits.
+The ratchet file records a ceiling for each existing violation: the most lines, or direct files,
+that its path may have. Each entry stores only `max_lines` or `max_direct_files`. Reasons for
+permanent exceptions belong in `[[overrides]]`.
 
-File ceilings are keyed by path and production/test role. Directory ceilings are keyed by path,
+File entries are keyed by path and production or test role. Directory entries are keyed by path,
 role, and language group.
 
-Checks compare each measurement with both its configured limit and any ceiling:
+`check` compares each measurement with its limit and with any ceiling:
 
-- Without a ratchet entry, a measurement at or below its configured limit passes.
-- A ratcheted measurement passes only while it remains equal to its ceiling.
-- Above the ceiling, the ratchet fails because the violation grew.
-- An entry becomes stale when its measurement falls below the ceiling, no longer exceeds the
-  configured limit, or disappears. Stale entries fail by default so an explicit `tighten --write`
-  preserves the improvement.
+- With no ratchet entry, `check` accepts a measurement at or below its limit.
+- With a ratchet entry, `check` accepts a measurement only while it equals the ceiling.
+- Above the ceiling, the check fails because the violation grew.
+- An entry is stale when its measurement drops below the ceiling, no longer exceeds the limit, or
+  disappears. By default, `check` fails on stale entries. Record the improvement with
+  `tighten --write`.
 
-For an exploratory local check, `check --no-require-ratchet-current` allows stale entries. Setting
-`[ratchet].require_current = false` makes that behavior the default. Neither option permits growth
-above a ceiling.
+For a quick local check, `check --no-require-ratchet-current` allows stale entries. Setting
+`[ratchet].require_current = false` makes that the default. Neither allows growth above a ceiling.
 
-`update` adds ceilings for newly discovered violations while preserving existing ceilings. It may
-raise existing ceilings only with `--allow-increases`. `tighten` only lowers ceilings or removes
-stale entries.
+`update` adds ratchet entries for new violations and keeps existing ceilings. It raises a ceiling
+only with `--allow-increases`. `tighten` only lowers ceilings or removes stale entries.
 
-## Scopes
+## Selected paths
 
-Paths passed to `check`, `update`, or `tighten` form repository-relative scopes; absolute paths
-must still resolve under the repository root. A directory scope covers that directory and its
-descendants. A file scope covers the file, but does not create a ratchet entry for its containing
-directory's fan-out.
+Paths passed to `check`, `update`, or `tighten` select what they cover. Paths are relative to the
+repository root; absolute paths must still be inside it. A directory covers itself and everything
+under it. A file covers only itself, so `update` on a file never adds an entry for its directory.
 
-Scoped checks intentionally ignore measurements and stale entries outside their scopes. Use an
-unscoped `check` to enforce the complete repository, especially in CI.
-
-## Terminology
-
-| Term              | Meaning                                                                            |
-| ----------------- | ---------------------------------------------------------------------------------- |
-| Ceiling           | Recorded maximum for one existing violation.                                       |
-| Current violation | Measurement above its effective configured limit.                                  |
-| Directory fan-out | Direct source files in one directory, counted separately for production and tests. |
-| Production source | Source file not classified as a path-based test.                                   |
-| Ratchet           | Checked-in ceilings that allow existing violations but reject growth.              |
-| Stale entry       | Ceiling for a measurement that improved, disappeared, or satisfies policy.         |
-| Test source       | Source file matched by a global or language-specific test glob.                    |
-| Unscoped check    | `sprawl-guard check` with no path arguments.                                       |
-| Update            | Add entries for newly discovered violations without lowering existing ceilings.    |
+With selected paths, measurements and stale entries elsewhere are not reported. Run `check` with no
+paths to cover the whole repository, especially in CI.

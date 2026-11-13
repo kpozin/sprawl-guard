@@ -2,34 +2,30 @@ mod edit;
 mod preview;
 mod scope;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use sprawl_guard_lib::check::check_without_ratchet;
-use sprawl_guard_lib::config::{LoadOptions, load_resolved_config};
+use sprawl_guard_lib::config::load_resolved_config;
 use sprawl_guard_lib::{
-    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileRatchet, LocLimit,
-    RatchetFile, RatchetSchemaVersion, TraversalErrorPolicy,
+    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileRatchet, LineLimit,
+    RatchetFile, RatchetSchemaVersion, UnreadablePathPolicy,
 };
 
-use super::{RatchetFormat, TightenArgs, UpdateArgs};
+use super::{ProjectArgs, RatchetFormat, TightenArgs, UpdateArgs};
 use crate::error::{CliError, Result};
 use edit::{lower_ratchet_scope, update_ratchet};
 use scope::tighten_scope;
 
-pub(super) fn execute_update(
-    root: Option<PathBuf>,
-    config_path: Option<PathBuf>,
-    args: UpdateArgs,
-) -> Result<String> {
+pub(super) fn execute_update(default_root: PathBuf, args: UpdateArgs) -> Result<String> {
     let ceiling_update_policy = args.ceiling_update_policy();
-    let context = RatchetCommandContext::load(root, config_path)?;
+    let context = RatchetCommandContext::load(args.project, default_root)?;
     let ratchet_exists = context.ratchet_path.try_exists().map_err(|source| {
         sprawl_guard_lib::SprawlError::ReadFileType {
             path: context.ratchet_path.clone(),
             source,
         }
     })?;
-    let report = current_violation_report(&context, args.paths.clone())?;
+    let report = current_violation_report(&context, args.paths)?;
     let new_entries = ratchet_from_report(&report)?;
     let previous = if ratchet_exists {
         let mut previous = RatchetFile::read(&context.ratchet_path)?;
@@ -45,11 +41,11 @@ pub(super) fn execute_update(
     );
 
     finish_ratchet_command(
-        &context.ratchet_path,
+        &context,
         previous.as_ref(),
         &next,
         args.write,
-        args.format,
+        args.format.into(),
     )
 }
 
@@ -65,12 +61,8 @@ impl CeilingUpdatePolicy {
     }
 }
 
-pub(super) fn execute_tighten(
-    root: Option<PathBuf>,
-    config_path: Option<PathBuf>,
-    args: TightenArgs,
-) -> Result<String> {
-    let context = RatchetCommandContext::load(root, config_path)?;
+pub(super) fn execute_tighten(default_root: PathBuf, args: TightenArgs) -> Result<String> {
+    let context = RatchetCommandContext::load(args.project, default_root)?;
     if !context.ratchet_path.try_exists().map_err(|source| {
         sprawl_guard_lib::SprawlError::ReadFileType {
             path: context.ratchet_path.clone(),
@@ -94,11 +86,11 @@ pub(super) fn execute_tighten(
     let next = lower_ratchet_scope(previous.clone(), current, &scope)?;
 
     finish_ratchet_command(
-        &context.ratchet_path,
+        &context,
         Some(&previous),
         &next,
         args.write,
-        args.format,
+        args.format.into(),
     )
 }
 
@@ -109,17 +101,12 @@ struct RatchetCommandContext {
 }
 
 impl RatchetCommandContext {
-    fn load(root: Option<PathBuf>, config_path: Option<PathBuf>) -> Result<Self> {
-        let root = root.unwrap_or(
-            std::env::current_dir().map_err(|source| CliError::CurrentDirectory { source })?,
-        );
-        let loaded = load_resolved_config(&LoadOptions {
-            root: root.clone(),
-            config: config_path,
-        })?;
-        let ratchet_path = root.join(loaded.config.ratchet.file.as_str());
+    fn load(project: ProjectArgs, default_root: PathBuf) -> Result<Self> {
+        let options = project.load_options(default_root);
+        let loaded = load_resolved_config(&options)?;
+        let ratchet_path = options.root.join(loaded.config.ratchet.file.as_str());
         Ok(Self {
-            root,
+            root: options.root,
             loaded,
             ratchet_path,
         })
@@ -132,10 +119,10 @@ fn current_violation_report(
 ) -> Result<CheckReport> {
     Ok(check_without_ratchet(CheckOptions {
         root: context.root.clone(),
-        policy: context.loaded.resolved_policy(),
+        policy: context.loaded.resolved_config(),
         paths,
         require_ratchet_current: Some(false),
-        traversal_error_policy: Some(TraversalErrorPolicy::Fail),
+        unreadable_paths: Some(UnreadablePathPolicy::Fail),
     })?)
 }
 
@@ -147,20 +134,20 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
     };
     for violation in report.violations() {
         match violation {
-            CheckViolation::FileLoc(violation) => {
+            CheckViolation::FileLines(violation) => {
                 ratchet.files.push(FileRatchet {
                     path: violation.path.clone(),
                     role: violation.kind.role(),
-                    max_loc: LocLimit::new(violation.measurement.actual().get())
-                        .expect("violating file LOC must be positive"),
+                    max_lines: LineLimit::new(violation.measurement.actual().get())
+                        .expect("a violating file has at least one line"),
                 });
             }
-            CheckViolation::DirectoryFanout(violation) => {
+            CheckViolation::DirectoryDirectFiles(violation) => {
                 ratchet.directories.push(DirectoryRatchet {
                     path: violation.path.clone(),
                     role: violation.kind.role(),
                     group: violation.group.clone(),
-                    leaf_files: violation.actual,
+                    max_direct_files: violation.actual,
                 });
             }
             CheckViolation::Ratchet(_) => {}
@@ -171,12 +158,14 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
 }
 
 fn finish_ratchet_command(
-    path: &Path,
+    context: &RatchetCommandContext,
     previous: Option<&RatchetFile>,
     ratchet: &RatchetFile,
     write: bool,
     format: RatchetFormat,
 ) -> Result<String> {
+    let path = &context.ratchet_path;
+    let shown_path = super::display_path(&context.root, path);
     let stdout = match format {
         RatchetFormat::Toml => ratchet.to_toml()?,
         RatchetFormat::Human => {
@@ -184,15 +173,17 @@ fn finish_ratchet_command(
                 preview::render_changes(previous.unwrap_or(&RatchetFile::default()), ratchet)?;
             if changes.is_empty() {
                 match (previous, write) {
-                    (None, true) => format!("Created empty ratchet at {path:?}.\n"),
-                    (None, false) => format!(
-                        "No ceiling changes; --write will create an empty ratchet at {path:?}.\n"
-                    ),
+                    (None, true) => format!("Created empty ratchet file {shown_path}\n"),
+                    (None, false) => {
+                        format!(
+                            "No ratchet changes; --write will create an empty ratchet file {shown_path}\n"
+                        )
+                    }
                     (Some(_), _) => "No ratchet changes.\n".to_owned(),
                 }
             } else {
                 let action = if write {
-                    format!("Wrote {path:?}.\n")
+                    format!("Wrote {shown_path}\n")
                 } else {
                     "Preview only; use --write to apply.\n".to_owned()
                 };

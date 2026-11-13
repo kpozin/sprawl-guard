@@ -27,12 +27,12 @@ mod when_tightening_entries {
                 [[files]]
                 path = "src/improved.rs"
                 role = "production"
-                max_loc = 4
+                max_lines = 4
 
                 [[files]]
                 path = "src/obsolete.rs"
                 role = "production"
-                max_loc = 3
+                max_lines = 3
             "#},
         );
         write_file(
@@ -50,7 +50,7 @@ mod when_tightening_entries {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 1);
         let improved_file = production_file_ratchet_entry(&ratchet, "src/improved.rs").unwrap();
-        assert_eq!(improved_file.max_loc.get(), 2);
+        assert_eq!(improved_file.max_lines.get(), 2);
         assert!(production_file_ratchet_entry(&ratchet, "src/obsolete.rs").is_none());
         assert_eq!(stderr(&output), "");
     }
@@ -76,12 +76,12 @@ mod when_tightening_entries {
                 [[files]]
                 path = "checked/lib.rs"
                 role = "production"
-                max_loc = 4
+                max_lines = 4
 
                 [[files]]
                 path = "skipped/lib.rs"
                 role = "production"
-                max_loc = 4
+                max_lines = 4
             "#},
         );
         write_file(
@@ -111,9 +111,9 @@ mod when_tightening_entries {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 2);
         let checked_file = production_file_ratchet_entry(&ratchet, "checked/lib.rs").unwrap();
-        assert_eq!(checked_file.max_loc.get(), 2);
+        assert_eq!(checked_file.max_lines.get(), 2);
         let skipped_file = production_file_ratchet_entry(&ratchet, "skipped/lib.rs").unwrap();
-        assert_eq!(skipped_file.max_loc.get(), 4);
+        assert_eq!(skipped_file.max_lines.get(), 4);
         assert_eq!(stderr(&output), "");
     }
 
@@ -138,7 +138,7 @@ mod when_tightening_entries {
                 [[files]]
                 path = "deleted/lib.rs"
                 role = "production"
-                max_loc = 4
+                max_lines = 4
             "#},
         );
 
@@ -156,7 +156,7 @@ mod when_tightening_entries {
     #[test]
     fn it_lowers_each_group_when_directory_entries_share_a_path() {
         let root = TempDir::new().unwrap();
-        write_mixed_group_directory_fanout_fixture(&root);
+        write_mixed_group_directory_direct_files_fixture(&root);
         write_ratchet(
             &root,
             indoc! {r#"
@@ -166,13 +166,13 @@ mod when_tightening_entries {
                 path = "src"
                 role = "production"
                 group = "source"
-                leaf_files = 3
+                max_direct_files = 3
 
                 [[directories]]
                 path = "src"
                 role = "production"
                 group = "documentation"
-                leaf_files = 3
+                max_direct_files = 3
             "#},
         );
 
@@ -209,12 +209,12 @@ mod when_tightening_entries {
                 [[files]]
                 path = "src/lib.rs"
                 role = "production"
-                max_loc = 4
+                max_lines = 4
 
                 [[files]]
                 path = "src/lib.rs"
                 role = "test"
-                max_loc = 4
+                max_lines = 4
             "#},
         );
         write_rust_source_with_function_count(&root, "src/lib.rs", 2);
@@ -232,7 +232,7 @@ mod when_tightening_entries {
             ratchet.files[0].role,
             sprawl_guard_lib::classification::SourceKind::Test
         );
-        assert_eq!(ratchet.files[0].max_loc.get(), 2);
+        assert_eq!(ratchet.files[0].max_lines.get(), 2);
     }
 
     #[test]
@@ -247,7 +247,7 @@ mod when_tightening_entries {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 1);
         assert_eq!(ratchet.files[0].path.as_str(), "src/existing.rs");
-        assert_eq!(ratchet.files[0].max_loc.get(), 2);
+        assert_eq!(ratchet.files[0].max_lines.get(), 2);
         assert_eq!(stderr(&output), "");
     }
 
@@ -279,12 +279,12 @@ mod when_traversal_is_incomplete {
                 [limits.max_lines_per_file]
                 production = 1
 
-                [limits.max_leaf_files_per_directory]
+                [limits.max_direct_files_per_directory]
                 production = 1
 
                 [traversal]
                 follow_symlinks = "directories"
-                error_policy = "warn"
+                unreadable_paths = "warn"
 
                 [languages.rust]
                 enabled = true
@@ -297,13 +297,13 @@ mod when_traversal_is_incomplete {
             [[files]]
             path = "real/lib.rs"
             role = "production"
-            max_loc = 4
+            max_lines = 4
 
             [[directories]]
             path = "real"
             role = "production"
             group = "source"
-            leaf_files = 4
+            max_direct_files = 4
         "#};
         write_ratchet(&root, original);
 
@@ -337,7 +337,7 @@ mod when_traversal_is_incomplete {
 
                 [traversal]
                 follow_symlinks = "directories"
-                error_policy = "warn"
+                unreadable_paths = "warn"
 
                 [languages.rust]
                 enabled = true
@@ -352,12 +352,12 @@ mod when_traversal_is_incomplete {
                 [[files]]
                 path = "safe/lib.rs"
                 role = "production"
-                max_loc = 4
+                max_lines = 4
 
                 [[files]]
                 path = "real/lib.rs"
                 role = "production"
-                max_loc = 4
+                max_lines = 4
             "#},
         );
 
@@ -371,14 +371,14 @@ mod when_traversal_is_incomplete {
         assert_eq!(
             production_file_ratchet_entry(&ratchet, "safe/lib.rs")
                 .unwrap()
-                .max_loc
+                .max_lines
                 .get(),
             2
         );
         assert_eq!(
             production_file_ratchet_entry(&ratchet, "real/lib.rs")
                 .unwrap()
-                .max_loc
+                .max_lines
                 .get(),
             4
         );

@@ -16,13 +16,13 @@ pub struct TraversalConfig {
     pub same_file_system: bool,
     /// Maximum number of filesystem entries yielded during source discovery.
     pub max_entries: TraversalEntryLimit,
-    /// Maximum byte size for a source file before configured-LOC counting.
+    /// Maximum byte size for a source file before line counting.
     pub max_file_bytes: SourceFileByteLimit,
-    /// How recoverable descendant traversal errors affect `check`.
-    pub error_policy: TraversalErrorPolicy,
+    /// How unreadable paths below the root affect `check`.
+    pub unreadable_paths: UnreadablePathPolicy,
 }
 
-/// Symlink following policy for source discovery.
+/// Which symlinks source discovery follows.
 #[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SymlinkTraversal {
@@ -37,28 +37,28 @@ pub enum SymlinkTraversal {
 }
 
 impl SymlinkTraversal {
-    /// Returns whether the policy counts symlinked files as source files.
+    /// Returns whether symlinked files count as source files.
     pub const fn follows_files(self) -> bool {
         matches!(self, Self::Files | Self::FilesAndDirectories)
     }
 
-    /// Returns whether the policy follows symlinked directories during traversal.
+    /// Returns whether discovery follows symlinked directories.
     pub const fn follows_directories(self) -> bool {
         matches!(self, Self::Directories | Self::FilesAndDirectories)
     }
 }
 
-/// Policy for recoverable errors found while walking descendant paths.
+/// How the scan handles descendant paths it cannot read.
 ///
-/// This does not affect explicit root/scope failures or read/count failures for
+/// This does not affect failures to resolve the root or selected paths, or read and count failures for
 /// already-discovered source files. Those errors make the check result
 /// incomplete and remain operational failures.
 #[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum TraversalErrorPolicy {
-    /// Collect recoverable traversal incidents, then fail the run.
+pub enum UnreadablePathPolicy {
+    /// Collect recoverable unreadable paths, then fail the run.
     Fail,
-    /// Report recoverable traversal incidents as warnings and continue.
+    /// Report recoverable unreadable paths as warnings and continue.
     Warn,
 }
 
@@ -132,7 +132,7 @@ pub enum SourceFileByteLimitError {
     Zero,
 }
 
-/// Maximum source file size in bytes before configured-LOC counting.
+/// Maximum source file size in bytes before line counting.
 #[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
 pub struct SourceFileByteLimit(NonZeroU64);
@@ -188,8 +188,8 @@ pub(super) fn merge_traversal(config: &mut TraversalConfig, partial: PartialTrav
     if let Some(value) = partial.max_file_bytes {
         config.max_file_bytes = value;
     }
-    if let Some(value) = partial.error_policy {
-        config.error_policy = value;
+    if let Some(value) = partial.unreadable_paths {
+        config.unreadable_paths = value;
     }
 }
 
@@ -200,5 +200,5 @@ pub(super) struct PartialTraversalConfig {
     pub(super) same_file_system: Option<bool>,
     pub(super) max_entries: Option<TraversalEntryLimit>,
     pub(super) max_file_bytes: Option<SourceFileByteLimit>,
-    pub(super) error_policy: Option<TraversalErrorPolicy>,
+    pub(super) unreadable_paths: Option<UnreadablePathPolicy>,
 }

@@ -51,6 +51,7 @@ export default defineConfig({
             },
             { label: "Run in CI", slug: "run-in-ci" },
             { label: "Clean up violations", slug: "clean-up-violations" },
+            { label: "Check staged changes", slug: "check-staged-changes" },
             { label: "Troubleshoot", slug: "troubleshoot" },
           ],
         },

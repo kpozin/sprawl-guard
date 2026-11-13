@@ -55,7 +55,7 @@ mod when_an_ignore_file_has_a_malformed_inclusion {
         root
     }
 
-    mod and_check_uses_the_default_error_policy {
+    mod and_check_uses_the_default_unreadable_paths_setting {
         use super::*;
 
         #[test]
@@ -67,11 +67,16 @@ mod when_an_ignore_file_has_a_malformed_inclusion {
 
                 assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
                 assert_eq!(report["coverage"]["kind"], "partial");
-                let incident = &report["coverage"]["traversal_incidents"][0];
-                assert_eq!(incident["kind"], "ignore_parse_failed");
-                assert_eq!(incident["path"], *path);
-                assert_eq!(incident["severity"], "error");
-                assert!(incident["detail"].as_str().unwrap().contains("unclosed"));
+                let unreadable_path = &report["coverage"]["unreadable_paths"][0];
+                assert_eq!(unreadable_path["kind"], "ignore_parse_failed");
+                assert_eq!(unreadable_path["path"], *path);
+                assert_eq!(unreadable_path["severity"], "error");
+                assert!(
+                    unreadable_path["detail"]
+                        .as_str()
+                        .unwrap()
+                        .contains("unclosed")
+                );
             }
         }
     }
@@ -87,21 +92,15 @@ mod when_an_ignore_file_has_a_malformed_inclusion {
 
                 let (output, report) = run_json(
                     &root,
-                    &[
-                        "check",
-                        "--format",
-                        "json",
-                        "--traversal-error-policy",
-                        "warn",
-                    ],
+                    &["check", "--format", "json", "--unreadable-paths", "warn"],
                 );
 
                 assert_exit_code(&output, exit_codes::SUCCESS);
                 assert_eq!(report["coverage"]["kind"], "partial");
                 assert_eq!(report["summary"]["files_checked"], 1);
-                let incident = &report["coverage"]["traversal_incidents"][0];
-                assert_eq!(incident["path"], *path);
-                assert_eq!(incident["severity"], "warning");
+                let unreadable_path = &report["coverage"]["unreadable_paths"][0];
+                assert_eq!(unreadable_path["path"], *path);
+                assert_eq!(unreadable_path["severity"], "warning");
             }
         }
     }
@@ -113,7 +112,7 @@ mod when_an_ignore_file_has_a_malformed_inclusion {
         fn it_rejects_previews_and_writes_despite_warning_only_configuration() {
             for path in IGNORE_PATHS {
                 let root = fixture(path);
-                write_config(&root, "[traversal]\nerror_policy = \"warn\"\n");
+                write_config(&root, "[traversal]\nunreadable_paths = \"warn\"\n");
                 for command in ["update", "tighten"] {
                     for args in [vec![command], vec![command, "--write"]] {
                         let output = sprawl_guard(&root).args(args).output().unwrap();
@@ -191,30 +190,25 @@ mod when_ambient_ignore_rules_hide_a_ratchet_file {
                 [[files]]
                 path = "src/lib.rs"
                 role = "production"
-                max_loc = 2
+                max_lines = 2
             "#};
             write_file(&outer, "repo/sprawl-guard.ratchet.toml", ratchet);
-            let command = || {
-                let mut command = sprawl_guard_no_root();
-                command
+            let run = |args: &[&str]| {
+                sprawl_guard_no_root()
+                    .args(args)
                     .arg("--root")
                     .arg(outer.path().join("repo"))
                     .env("HOME", outer.path().join("home"))
                     .env("USERPROFILE", outer.path().join("home"))
-                    .env("XDG_CONFIG_HOME", outer.path().join("xdg"));
-                command
+                    .env("XDG_CONFIG_HOME", outer.path().join("xdg"))
+                    .output()
+                    .unwrap()
             };
-            let before = command()
-                .args(["check", "--format", "json"])
-                .output()
-                .unwrap();
+            let before = run(&["check", "--format", "json"]);
             write_file(&outer, ambient_path, "*.rs\n");
 
-            let after = command()
-                .args(["check", "--format", "json"])
-                .output()
-                .unwrap();
-            let tightened = command().args(["tighten", "--write"]).output().unwrap();
+            let after = run(&["check", "--format", "json"]);
+            let tightened = run(&["tighten", "--write"]);
             let written =
                 std::fs::read_to_string(outer.path().join("repo/sprawl-guard.ratchet.toml"))
                     .unwrap();
@@ -242,7 +236,7 @@ mod when_parent_ignore_files_are_malformed {
             indoc! {r#"
             schema_version = 2
             [files]
-            exclude = ["sprawl-guard.toml"]
+            extend_exclude = ["sprawl-guard.toml"]
             [traversal]
             max_entries = 4
         "#},
@@ -262,9 +256,9 @@ mod when_parent_ignore_files_are_malformed {
             vec!["tighten"],
         ] {
             let output = sprawl_guard_no_root()
+                .args(args)
                 .arg("--root")
                 .arg(root.path().join("repo"))
-                .args(args)
                 .output()
                 .unwrap();
 

@@ -3,7 +3,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{GlobPattern, LeafFileLimit, LocLimit};
+use crate::{DirectFileLimit, GlobPattern, LineLimit};
 
 /// Error returned when an override reason is invalid.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -114,21 +114,21 @@ pub struct OverrideLimits {
     /// Optional file line-count limits.
     #[serde(skip_serializing_if = "OverrideMaxLinesPerFileLimits::is_empty")]
     max_lines_per_file: OverrideMaxLinesPerFileLimits,
-    /// Optional directory fan-out limits.
-    #[serde(skip_serializing_if = "OverrideMaxLeafFilesPerDirectoryLimits::is_empty")]
-    max_leaf_files_per_directory: OverrideMaxLeafFilesPerDirectoryLimits,
+    /// Optional directory direct-file limits.
+    #[serde(skip_serializing_if = "OverrideMaxDirectFilesPerDirectoryLimits::is_empty")]
+    max_direct_files_per_directory: OverrideMaxDirectFilesPerDirectoryLimits,
 }
 
 /// Optional file line-count limits supplied by a path override.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 struct OverrideMaxLinesPerFileLimits {
-    /// Optional production configured-LOC limit.
+    /// Optional production line limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    production: Option<LocLimit>,
-    /// Optional test configured-LOC limit.
+    production: Option<LineLimit>,
+    /// Optional test line limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    test: Option<LocLimit>,
+    test: Option<LineLimit>,
 }
 
 impl OverrideMaxLinesPerFileLimits {
@@ -137,19 +137,19 @@ impl OverrideMaxLinesPerFileLimits {
     }
 }
 
-/// Optional directory fan-out limits supplied by a path override.
+/// Optional directory direct-file limits supplied by a path override.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct OverrideMaxLeafFilesPerDirectoryLimits {
-    /// Optional production leaf-file fan-out limit.
+struct OverrideMaxDirectFilesPerDirectoryLimits {
+    /// Optional production direct-file limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    production: Option<LeafFileLimit>,
-    /// Optional test-code leaf-file fan-out limit.
+    production: Option<DirectFileLimit>,
+    /// Optional test-code direct-file limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    test: Option<LeafFileLimit>,
+    test: Option<DirectFileLimit>,
 }
 
-impl OverrideMaxLeafFilesPerDirectoryLimits {
+impl OverrideMaxDirectFilesPerDirectoryLimits {
     fn is_empty(&self) -> bool {
         self.production.is_none() && self.test.is_none()
     }
@@ -158,35 +158,35 @@ impl OverrideMaxLeafFilesPerDirectoryLimits {
 impl OverrideLimits {
     fn new(
         max_lines_per_file: OverrideMaxLinesPerFileLimits,
-        max_leaf_files_per_directory: OverrideMaxLeafFilesPerDirectoryLimits,
+        max_direct_files_per_directory: OverrideMaxDirectFilesPerDirectoryLimits,
     ) -> Result<Self, OverrideLimitsError> {
-        if max_lines_per_file.is_empty() && max_leaf_files_per_directory.is_empty() {
+        if max_lines_per_file.is_empty() && max_direct_files_per_directory.is_empty() {
             return Err(OverrideLimitsError::Empty);
         }
         Ok(Self {
             max_lines_per_file,
-            max_leaf_files_per_directory,
+            max_direct_files_per_directory,
         })
     }
 
-    /// Returns the production configured-LOC override, when present.
-    pub fn production_loc_per_file(&self) -> Option<LocLimit> {
+    /// Returns the production line override, when present.
+    pub fn production_loc_per_file(&self) -> Option<LineLimit> {
         self.max_lines_per_file.production
     }
 
-    /// Returns the production directory fan-out override, when present.
-    pub fn production_leaf_files_per_directory(&self) -> Option<LeafFileLimit> {
-        self.max_leaf_files_per_directory.production
+    /// Returns the production directory direct-file override, when present.
+    pub fn production_direct_files_per_directory(&self) -> Option<DirectFileLimit> {
+        self.max_direct_files_per_directory.production
     }
 
-    /// Returns the test configured-LOC override, when present.
-    pub fn test_loc_per_file(&self) -> Option<LocLimit> {
+    /// Returns the test line override, when present.
+    pub fn test_loc_per_file(&self) -> Option<LineLimit> {
         self.max_lines_per_file.test
     }
 
-    /// Returns the test-code directory fan-out override, when present.
-    pub fn test_leaf_files_per_directory(&self) -> Option<LeafFileLimit> {
-        self.max_leaf_files_per_directory.test
+    /// Returns the test-code directory direct-file override, when present.
+    pub fn test_direct_files_per_directory(&self) -> Option<DirectFileLimit> {
+        self.max_direct_files_per_directory.test
     }
 }
 
@@ -197,10 +197,11 @@ impl<'de> Deserialize<'de> for OverrideLimits {
     {
         let partial = PartialOverrideLimits::deserialize(deserializer)?;
         let max_lines_per_file = partial.max_lines_per_file.unwrap_or_default();
-        let max_leaf_files_per_directory = partial.max_leaf_files_per_directory.unwrap_or_default();
+        let max_direct_files_per_directory =
+            partial.max_direct_files_per_directory.unwrap_or_default();
         Self::new(
             max_lines_per_file.into(),
-            max_leaf_files_per_directory.into(),
+            max_direct_files_per_directory.into(),
         )
         .map_err(serde::de::Error::custom)
     }
@@ -210,15 +211,15 @@ impl<'de> Deserialize<'de> for OverrideLimits {
 #[serde(deny_unknown_fields)]
 struct PartialOverrideLimits {
     max_lines_per_file: Option<PartialOverrideMaxLinesPerFileLimits>,
-    max_leaf_files_per_directory: Option<PartialOverrideMaxLeafFilesPerDirectoryLimits>,
+    max_direct_files_per_directory: Option<PartialOverrideMaxDirectFilesPerDirectoryLimits>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(extend("minProperties" = 1))]
 struct PartialOverrideMaxLinesPerFileLimits {
-    production: Option<LocLimit>,
-    test: Option<LocLimit>,
+    production: Option<LineLimit>,
+    test: Option<LineLimit>,
 }
 
 impl From<PartialOverrideMaxLinesPerFileLimits> for OverrideMaxLinesPerFileLimits {
@@ -233,15 +234,15 @@ impl From<PartialOverrideMaxLinesPerFileLimits> for OverrideMaxLinesPerFileLimit
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(extend("minProperties" = 1))]
-struct PartialOverrideMaxLeafFilesPerDirectoryLimits {
-    production: Option<LeafFileLimit>,
-    test: Option<LeafFileLimit>,
+struct PartialOverrideMaxDirectFilesPerDirectoryLimits {
+    production: Option<DirectFileLimit>,
+    test: Option<DirectFileLimit>,
 }
 
-impl From<PartialOverrideMaxLeafFilesPerDirectoryLimits>
-    for OverrideMaxLeafFilesPerDirectoryLimits
+impl From<PartialOverrideMaxDirectFilesPerDirectoryLimits>
+    for OverrideMaxDirectFilesPerDirectoryLimits
 {
-    fn from(value: PartialOverrideMaxLeafFilesPerDirectoryLimits) -> Self {
+    fn from(value: PartialOverrideMaxDirectFilesPerDirectoryLimits) -> Self {
         Self {
             production: value.production,
             test: value.test,
@@ -255,7 +256,7 @@ impl From<PartialOverrideMaxLeafFilesPerDirectoryLimits>
 #[schemars(extend(
     "anyOf" = [
         { "required": ["max_lines_per_file"] },
-        { "required": ["max_leaf_files_per_directory"] }
+        { "required": ["max_direct_files_per_directory"] }
     ]
 ))]
 pub struct PathOverride {

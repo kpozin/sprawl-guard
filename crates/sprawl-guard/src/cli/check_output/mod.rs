@@ -4,13 +4,13 @@ use std::path::Path;
 
 use sprawl_guard_lib::CheckReport;
 use sprawl_guard_lib::check::{
-    CheckErrorKind, CheckViolation, CheckWarning, CheckWarningKind, DirectoryFanoutViolation,
-    DirectoryViolationKind, FileLocViolation, FileViolationKind, RatchetViolation,
+    CheckErrorKind, CheckViolation, CheckWarning, CheckWarningKind, DirectoryDirectFilesViolation,
+    DirectoryViolationKind, FileLinesViolation, FileViolationKind, RatchetViolation,
     RatchetViolationKind,
 };
-use sprawl_guard_lib::{ConfigSource, TraversalIncident, TraversalIncidentKind};
+use sprawl_guard_lib::{ConfigSource, UnreadablePath, UnreadablePathKind};
 
-use super::CheckFormat;
+use super::{CheckFormat, display_relative};
 use crate::error::{CliError, Result};
 
 #[cfg(test)]
@@ -25,7 +25,7 @@ fn missing_directory_ratchet(
 
     CheckViolation::Ratchet(RatchetViolation::Stale(RatchetStaleViolation::Missing(
         RatchetStaleMissingViolation::Directory(DirectoryRatchetStaleMissingViolation {
-            kind: DirectoryViolationKind::DirectoryFanout,
+            kind: DirectoryViolationKind::DirectoryDirectFiles,
             path: sprawl_guard_lib::RelativePath::new("src").unwrap(),
             group,
             ratchet: RatchetCount::new(ratchet),
@@ -52,7 +52,7 @@ pub(super) fn render_check_report(
 pub(super) fn traversal_failure_json_value(
     root: &Path,
     config_source: &ConfigSource,
-    incidents: &[TraversalIncident],
+    unreadable_paths: &[UnreadablePath],
 ) -> serde_json::Value {
     serde_json::json!({
         "status": "error",
@@ -60,15 +60,12 @@ pub(super) fn traversal_failure_json_value(
         "config_source": config_source,
         "coverage": {
             "kind": "partial",
-            "traversal_incidents": incidents,
+            "unreadable_paths": unreadable_paths,
         },
         "warnings": [],
         "error": {
             "kind": CheckErrorKind::TraversalFailed,
-            "message": format!(
-                "traversal completed with {} incident(s)",
-                incidents.len()
-            ),
+            "message": format!("could not read {} path(s)", unreadable_paths.len()),
         },
         "violations": [],
     })
@@ -77,12 +74,12 @@ pub(super) fn traversal_failure_json_value(
 pub(super) fn render_traversal_failure_json(
     root: &Path,
     config_source: &ConfigSource,
-    incidents: &[TraversalIncident],
+    unreadable_paths: &[UnreadablePath],
 ) -> Result<String> {
     serde_json::to_string_pretty(&traversal_failure_json_value(
         root,
         config_source,
-        incidents,
+        unreadable_paths,
     ))
     .map(|output| format!("{output}\n"))
     .map_err(|source| CliError::RenderJson { source })
@@ -90,31 +87,31 @@ pub(super) fn render_traversal_failure_json(
 
 pub(super) fn render_traversal_failure_human(
     root: &Path,
-    incidents: &[TraversalIncident],
+    unreadable_paths: &[UnreadablePath],
 ) -> String {
-    traversal_failure_human(root, incidents)
+    traversal_failure_human(root, unreadable_paths)
 }
 
 pub(super) fn render_check_traversal_failure_human(
     root: &Path,
     config_source: &ConfigSource,
-    incidents: &[TraversalIncident],
+    unreadable_paths: &[UnreadablePath],
 ) -> String {
     let mut output = config_source_notice(config_source, root);
-    output.push_str(&traversal_failure_human(root, incidents));
+    output.push_str(&traversal_failure_human(root, unreadable_paths));
     output
 }
 
-fn traversal_failure_human(root: &Path, incidents: &[TraversalIncident]) -> String {
+fn traversal_failure_human(root: &Path, unreadable_paths: &[UnreadablePath]) -> String {
     let mut output = String::new();
     output.push_str(&format!(
-        "Traversal failed under {} with {} incident(s):\n\n",
-        root.display(),
-        incidents.len()
+        "Could not read {} path(s) under {}:\n\n",
+        unreadable_paths.len(),
+        root.display()
     ));
-    for incident in incidents {
+    for unreadable_path in unreadable_paths {
         output.push_str("  ");
-        output.push_str(&traversal_incident_message(incident));
+        output.push_str(&unreadable_path_message(unreadable_path));
         output.push('\n');
     }
     output
@@ -122,50 +119,51 @@ fn traversal_failure_human(root: &Path, incidents: &[TraversalIncident]) -> Stri
 
 fn human_check_report(report: &CheckReport, quiet: bool) -> String {
     let mut output = String::new();
+    if quiet && !report.has_violations() {
+        return output;
+    }
     write_config_source_notice(&mut output, report);
     if !quiet {
         write_warnings(&mut output, report);
     }
     if !report.has_violations() {
-        if report.scope().is_all() {
+        if report.selected_paths().is_all() {
             output.push_str("No sprawl-guard violations found.\n");
         } else {
-            output.push_str("No sprawl-guard violations found in the requested scope.\n");
+            output.push_str("No sprawl-guard violations found in the selected paths.\n");
         }
-        if !quiet {
-            write_scan_summary(&mut output, report);
-            write_traversal_incidents(&mut output, report);
-        }
+        write_scan_summary(&mut output, report);
+        write_unreadable_paths(&mut output, report);
         return output;
     }
 
     write_violation_group(
         &mut output,
-        "File size budget exceeded:",
+        "Files over the line limit:",
         report,
-        FileViolationKind::FileLoc,
+        FileViolationKind::FileLines,
     );
     write_violation_group(
         &mut output,
-        "Test file size budget exceeded:",
+        "Test files over the line limit:",
         report,
-        FileViolationKind::TestFileLoc,
+        FileViolationKind::TestFileLines,
     );
     write_directory_violation_group(
         &mut output,
-        "Directory fan-out budget exceeded:",
+        "Directories with too many direct files:",
         report,
-        DirectoryViolationKind::DirectoryFanout,
+        DirectoryViolationKind::DirectoryDirectFiles,
     );
     write_directory_violation_group(
         &mut output,
-        "Test directory fan-out budget exceeded:",
+        "Test directories with too many direct files:",
         report,
-        DirectoryViolationKind::TestDirectoryFanout,
+        DirectoryViolationKind::TestDirectoryDirectFiles,
     );
     write_ratchet_violation_group(&mut output, report);
     if !quiet {
-        write_traversal_incidents(&mut output, report);
+        write_unreadable_paths(&mut output, report);
     }
     output
 }
@@ -180,15 +178,13 @@ fn write_config_source_notice(output: &mut String, report: &CheckReport) {
 fn config_source_notice(config_source: &ConfigSource, root: &Path) -> String {
     match config_source {
         ConfigSource::BuiltIn => format!(
-            "Policy: built-in defaults (no authored config found under {}).\n\n",
+            "Configuration: built-in defaults (no sprawl-guard.toml in {})\n\n",
             root.display()
         ),
-        ConfigSource::Authored { path } => {
-            format!(
-                "Policy: authored config at {}.\n\n",
-                path.as_path().display()
-            )
-        }
+        ConfigSource::Authored { path } => format!(
+            "Configuration: {}\n\n",
+            super::display_path(root, path.as_path())
+        ),
     }
 }
 
@@ -206,9 +202,17 @@ fn write_scan_summary(output: &mut String, report: &CheckReport) {
         languages_detected,
         plural(languages_detected, "language", "languages"),
     ));
+    let ratchet_entries = summary.ratchet_entries.into_inner();
+    if ratchet_entries > 0 {
+        output.push_str(&format!(
+            "Passed with {ratchet_entries} ratchet {} remaining.\n",
+            plural(ratchet_entries, "entry", "entries"),
+        ));
+    }
 }
 
-fn plural<'word>(count: u32, singular: &'word str, plural: &'word str) -> &'word str {
+/// Picks the singular or plural form of a word for `count`.
+pub(super) fn plural<'word>(count: u32, singular: &'word str, plural: &'word str) -> &'word str {
     if count == 1 { singular } else { plural }
 }
 
@@ -228,48 +232,50 @@ fn write_warnings(output: &mut String, report: &CheckReport) {
 fn warning_message(warning: &CheckWarning) -> String {
     match warning.kind {
         CheckWarningKind::RustCfgTestParseFailed => format!(
-            "Rust cfg(test) preprocessing failed for {}; counted without cfg(test) exclusion: {}",
-            warning.path, warning.detail
+            "{}: could not parse Rust to leave out cfg(test) code, so all of it was counted: {}",
+            display_relative(warning.path.as_str()),
+            warning.detail
         ),
     }
 }
 
-fn write_traversal_incidents(output: &mut String, report: &CheckReport) {
-    if report.traversal_incidents().is_empty() {
+fn write_unreadable_paths(output: &mut String, report: &CheckReport) {
+    if report.unreadable_paths().is_empty() {
         return;
     }
     if !output.is_empty() && !output.ends_with("\n\n") {
         output.push('\n');
     }
-    output.push_str("Traversal warnings:\n\n");
-    for incident in report.traversal_incidents() {
+    output.push_str("Skipped unreadable paths:\n\n");
+    for unreadable_path in report.unreadable_paths() {
         output.push_str("  ");
-        output.push_str(&traversal_incident_message(incident));
+        output.push_str(&unreadable_path_message(unreadable_path));
         output.push('\n');
     }
 }
 
-fn traversal_incident_message(incident: &TraversalIncident) -> String {
-    let path = incident
-        .path
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_else(|| ".".to_owned());
+fn unreadable_path_message(unreadable_path: &UnreadablePath) -> String {
+    let path = display_relative(
+        unreadable_path
+            .path
+            .as_ref()
+            .map_or("", |path| path.as_str()),
+    );
     format!(
         "{} at {}: {}",
-        traversal_incident_kind_message(incident.kind),
+        unreadable_path_kind_message(unreadable_path.kind),
         path,
-        incident.detail
+        unreadable_path.detail
     )
 }
 
-fn traversal_incident_kind_message(kind: TraversalIncidentKind) -> &'static str {
+fn unreadable_path_kind_message(kind: UnreadablePathKind) -> &'static str {
     match kind {
-        TraversalIncidentKind::ReadDirFailed => "failed to read directory",
-        TraversalIncidentKind::FileTypeFailed => "failed to read file type",
-        TraversalIncidentKind::SymlinkLoop => "symlink loop found",
-        TraversalIncidentKind::BrokenSymlink => "broken symlink",
-        TraversalIncidentKind::IgnoreParseFailed => "failed to parse ignore rule",
+        UnreadablePathKind::ReadDirFailed => "failed to read directory",
+        UnreadablePathKind::FileTypeFailed => "failed to read file type",
+        UnreadablePathKind::SymlinkLoop => "symlink loop found",
+        UnreadablePathKind::BrokenSymlink => "broken symlink",
+        UnreadablePathKind::IgnoreParseFailed => "failed to parse ignore rule",
     }
 }
 
@@ -283,24 +289,23 @@ fn write_violation_group(
         .violations()
         .iter()
         .filter_map(|violation| match violation {
-            CheckViolation::FileLoc(violation) if violation.kind == kind => Some(violation),
-            CheckViolation::FileLoc(_)
-            | CheckViolation::DirectoryFanout(_)
+            CheckViolation::FileLines(violation) if violation.kind == kind => Some(violation),
+            CheckViolation::FileLines(_)
+            | CheckViolation::DirectoryDirectFiles(_)
             | CheckViolation::Ratchet(_) => None,
         })
         .collect::<Vec<_>>();
     write_non_empty_violation_group(output, header, violations, violation_message);
 }
 
-fn violation_message(violation: &FileLocViolation) -> String {
-    let metric = "configured LOC";
-    let included_line_types = violation.measurement.included_line_types();
+fn violation_message(violation: &FileLinesViolation) -> String {
     format!(
-        "  {}\n    language: {}\n    included line types: {included_line_types}\n    {metric}: {} / {}\n\n",
-        violation.path,
-        violation.language,
+        "  {}: {} lines (limit {})\n    language: {}, counting {}\n\n",
+        display_relative(violation.path.as_str()),
         violation.measurement.actual().get(),
-        violation.limit
+        violation.limit,
+        violation.language,
+        violation.measurement.count_lines(),
     )
 }
 
@@ -314,9 +319,11 @@ fn write_directory_violation_group(
         .violations()
         .iter()
         .filter_map(|violation| match violation {
-            CheckViolation::DirectoryFanout(violation) if violation.kind == kind => Some(violation),
-            CheckViolation::DirectoryFanout(_)
-            | CheckViolation::FileLoc(_)
+            CheckViolation::DirectoryDirectFiles(violation) if violation.kind == kind => {
+                Some(violation)
+            }
+            CheckViolation::DirectoryDirectFiles(_)
+            | CheckViolation::FileLines(_)
             | CheckViolation::Ratchet(_) => None,
         })
         .collect::<Vec<_>>();
@@ -349,7 +356,7 @@ fn write_ratchet_violation_group(output: &mut String, report: &CheckReport) {
         .iter()
         .filter_map(|violation| match violation {
             CheckViolation::Ratchet(violation) => Some(violation),
-            CheckViolation::FileLoc(_) | CheckViolation::DirectoryFanout(_) => None,
+            CheckViolation::FileLines(_) | CheckViolation::DirectoryDirectFiles(_) => None,
         })
         .collect::<Vec<_>>();
     if violations.is_empty() {
@@ -366,69 +373,66 @@ fn write_ratchet_violation_group(output: &mut String, report: &CheckReport) {
 }
 
 fn ratchet_violation_message(violation: &RatchetViolation) -> String {
+    let (description, unit) = ratchet_kind_message(violation.kind());
     let actual = violation
         .actual()
-        .map(|value| value.get().to_string())
-        .unwrap_or_else(|| "not measured".to_owned());
+        .map(|value| format!("now {} {unit}", value.get()))
+        .unwrap_or_else(|| "no current violation".to_owned());
     let limit = violation
         .limit()
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "none".to_owned());
+        .map(|value| format!(", limit {value}"))
+        .unwrap_or_default();
     let group = violation
         .group()
         .map(|group| format!("    group: {group}\n"))
         .unwrap_or_default();
-    let included_line_types = violation
-        .loc_measurement()
-        .map(|measurement| {
-            format!(
-                "    included line types: {}\n",
-                measurement.included_line_types()
-            )
-        })
+    let count_lines = violation
+        .line_measurement()
+        .map(|measurement| format!("    counting {}\n", measurement.count_lines()))
         .unwrap_or_default();
     format!(
-        "  {}\n    kind: {}\n{group}{included_line_types}    actual: {}\n    limit: {}\n    ratchet: {}\n\n",
-        violation.path(),
-        ratchet_kind_message(violation.kind()),
-        actual,
-        limit,
+        "  {}: {description}\n    {actual} (ceiling {}{limit})\n{group}{count_lines}\n",
+        display_relative(violation.path().as_str()),
         violation.ratchet().get()
     )
 }
 
-fn ratchet_kind_message(kind: RatchetViolationKind) -> &'static str {
+/// Describes a ratchet failure and names the unit of its measurement.
+fn ratchet_kind_message(kind: RatchetViolationKind) -> (&'static str, &'static str) {
     match kind {
-        RatchetViolationKind::FileLocIncreased => "file LOC increased",
-        RatchetViolationKind::TestFileLocIncreased => "test file LOC increased",
-        RatchetViolationKind::DirectoryFanoutIncreased => "directory fan-out increased",
-        RatchetViolationKind::TestDirectoryFanoutIncreased => "test directory fan-out increased",
-        RatchetViolationKind::FileLocStale => "file LOC ratchet is stale",
-        RatchetViolationKind::TestFileLocStale => "test file LOC ratchet is stale",
-        RatchetViolationKind::DirectoryFanoutStale => "directory fan-out ratchet is stale",
-        RatchetViolationKind::TestDirectoryFanoutStale => "test directory fan-out ratchet is stale",
+        RatchetViolationKind::FileLinesIncreased => ("lines rose above the ceiling", "lines"),
+        RatchetViolationKind::TestFileLinesIncreased => {
+            ("test file lines rose above the ceiling", "lines")
+        }
+        RatchetViolationKind::DirectoryDirectFilesIncreased => {
+            ("direct files rose above the ceiling", "direct files")
+        }
+        RatchetViolationKind::TestDirectoryDirectFilesIncreased => {
+            ("direct test files rose above the ceiling", "direct files")
+        }
+        RatchetViolationKind::FileLinesStale => ("stale ratchet entry", "lines"),
+        RatchetViolationKind::TestFileLinesStale => ("stale test file ratchet entry", "lines"),
+        RatchetViolationKind::DirectoryDirectFilesStale => {
+            ("stale directory ratchet entry", "direct files")
+        }
+        RatchetViolationKind::TestDirectoryDirectFilesStale => {
+            ("stale test directory ratchet entry", "direct files")
+        }
     }
 }
 
-fn directory_violation_message(violation: &DirectoryFanoutViolation) -> String {
-    let metric = match violation.kind {
-        DirectoryViolationKind::DirectoryFanout => "leaf source files",
-        DirectoryViolationKind::TestDirectoryFanout => "leaf test files",
-    };
-    let path = if violation.path.as_str().is_empty() {
-        "."
-    } else {
-        violation.path.as_str()
-    };
+fn directory_violation_message(violation: &DirectoryDirectFilesViolation) -> String {
     let files = violation
         .files
         .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("\n      ");
+        .map(|file| format!("    {}\n", display_relative(file.as_str())))
+        .collect::<String>();
     format!(
-        "  {}\n    group: {}\n    {metric}: {} / {}\n    files:\n      {files}\n\n",
-        path, violation.group, violation.actual, violation.limit
+        "  {}: {} direct files (limit {}), group {}\n{files}\n",
+        display_relative(violation.path.as_str()),
+        violation.actual,
+        violation.limit,
+        violation.group,
     )
 }
 
@@ -438,12 +442,12 @@ mod tests {
     use serde_json::json;
     use sprawl_guard_lib::{
         CheckViolation, CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
-        DetectedLanguageCount, DiagnosticDetail, DirectoryFanoutViolation,
-        DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind, FileLocViolation,
-        FileRatchetIncreasedViolation, LanguageGroupId, LeafFiles, LineCount, LocLimit,
-        NonEmptyTraversalIncidents, RatchetCount, RatchetIncreasedViolation, RatchetLimit,
-        RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetViolation, RelativePath,
-        ScanSummary, TraversalIncidentSeverity,
+        DetectedLanguageCount, DiagnosticDetail, DirectFiles, DirectoryDirectFilesViolation,
+        DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind, FileLinesViolation,
+        FileRatchetIncreasedViolation, LanguageGroupId, LineCount, LineLimit,
+        NonEmptyUnreadablePaths, RatchetCount, RatchetEntryCount, RatchetIncreasedViolation,
+        RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetViolation,
+        RelativePath, ScanSummary, UnreadablePathSeverity,
     };
 
     use super::*;
@@ -464,10 +468,11 @@ mod tests {
             CheckedFileCount::new(3),
             CheckedDirectoryCount::new(2),
             DetectedLanguageCount::new(1),
+            RatchetEntryCount::new(0),
         )
     }
 
-    fn report_with(violations: Vec<FileLocViolation>) -> CheckReport {
+    fn report_with(violations: Vec<FileLinesViolation>) -> CheckReport {
         CheckReport::complete(
             report_root(),
             ConfigSource::BuiltIn,
@@ -476,18 +481,18 @@ mod tests {
             vec![],
             violations
                 .into_iter()
-                .map(CheckViolation::FileLoc)
+                .map(CheckViolation::FileLines)
                 .collect(),
         )
     }
 
-    fn violation(kind: FileViolationKind, path: &str) -> FileLocViolation {
-        FileLocViolation {
+    fn violation(kind: FileViolationKind, path: &str) -> FileLinesViolation {
+        FileLinesViolation {
             kind,
             path: RelativePath::new(path).unwrap(),
             language: sprawl_guard_lib::LanguageId::new("Rust").unwrap(),
-            measurement: sprawl_guard_lib::code_line_counter::LocMeasurement::new(
-                sprawl_guard_lib::IncludedLineTypes::Code,
+            measurement: sprawl_guard_lib::code_line_counter::LineMeasurement::new(
+                sprawl_guard_lib::CountLines::Code,
                 sprawl_guard_lib::LineCounts::new(
                     LineCount::new(3),
                     LineCount::new(0),
@@ -495,18 +500,21 @@ mod tests {
                 ),
             )
             .unwrap(),
-            limit: LocLimit::new(2).unwrap(),
+            limit: LineLimit::new(2).unwrap(),
             ratchet: None,
         }
     }
 
-    fn directory_violation(kind: DirectoryViolationKind, path: &str) -> DirectoryFanoutViolation {
-        DirectoryFanoutViolation {
+    fn directory_violation(
+        kind: DirectoryViolationKind,
+        path: &str,
+    ) -> DirectoryDirectFilesViolation {
+        DirectoryDirectFilesViolation {
             kind,
             group: sprawl_guard_lib::LanguageGroupId::Source,
             path: RelativePath::new(path).unwrap(),
-            actual: LeafFiles::new(3).unwrap(),
-            limit: LeafFiles::new(2).unwrap(),
+            actual: DirectFiles::new(3).unwrap(),
+            limit: DirectFiles::new(2).unwrap(),
             ratchet: None,
             files: vec![
                 RelativePath::new(format!("{path}/a.rs")).unwrap(),
@@ -541,19 +549,24 @@ mod tests {
         #[test]
         fn it_groups_file_and_test_file_violations() {
             let report = report_with(vec![
-                violation(FileViolationKind::FileLoc, "src/lib.rs"),
-                violation(FileViolationKind::TestFileLoc, "tests/integration.rs"),
+                violation(FileViolationKind::FileLines, "src/lib.rs"),
+                violation(FileViolationKind::TestFileLines, "tests/integration.rs"),
             ]);
 
             let output = human_check_report(&report, false);
 
-            assert!(output.contains("File size budget exceeded:"));
-            assert!(output.contains("src/lib.rs"));
-            assert!(output.contains("included line types: code"));
-            assert!(output.contains("configured LOC: 3 / 2"));
-            assert!(output.contains("Test file size budget exceeded:"));
-            assert!(output.contains("tests/integration.rs"));
-            assert!(output.contains("configured LOC: 3 / 2"));
+            assert!(output.ends_with(indoc! {"
+                Files over the line limit:
+
+                  src/lib.rs: 3 lines (limit 2)
+                    language: Rust, counting code
+
+                Test files over the line limit:
+
+                  tests/integration.rs: 3 lines (limit 2)
+                    language: Rust, counting code
+
+            "}));
         }
 
         #[test]
@@ -565,12 +578,12 @@ mod tests {
                 scan_summary(),
                 vec![],
                 vec![
-                    CheckViolation::DirectoryFanout(directory_violation(
-                        DirectoryViolationKind::DirectoryFanout,
+                    CheckViolation::DirectoryDirectFiles(directory_violation(
+                        DirectoryViolationKind::DirectoryDirectFiles,
                         "src",
                     )),
-                    CheckViolation::DirectoryFanout(directory_violation(
-                        DirectoryViolationKind::TestDirectoryFanout,
+                    CheckViolation::DirectoryDirectFiles(directory_violation(
+                        DirectoryViolationKind::TestDirectoryDirectFiles,
                         "tests",
                     )),
                 ],
@@ -578,14 +591,22 @@ mod tests {
 
             let output = human_check_report(&report, false);
 
-            assert!(output.contains("Directory fan-out budget exceeded:"));
-            assert!(output.contains("src"));
-            assert!(output.contains("group: source"));
-            assert!(output.contains("leaf source files: 3 / 2"));
-            assert!(output.contains("src/a.rs"));
-            assert!(output.contains("Test directory fan-out budget exceeded:"));
-            assert!(output.contains("leaf test files: 3 / 2"));
-            assert!(output.contains("tests/a.rs"));
+            assert!(output.ends_with(indoc! {"
+                Directories with too many direct files:
+
+                  src: 3 direct files (limit 2), group source
+                    src/a.rs
+                    src/b.rs
+                    src/c.rs
+
+                Test directories with too many direct files:
+
+                  tests: 3 direct files (limit 2), group source
+                    tests/a.rs
+                    tests/b.rs
+                    tests/c.rs
+
+            "}));
         }
 
         #[test]
@@ -607,23 +628,17 @@ mod tests {
             assert_eq!(
                 output,
                 indoc! {"
-                    Policy: built-in defaults (no authored config found under /repo).
+                    Configuration: built-in defaults (no sprawl-guard.toml in /repo)
 
                     Ratchet failures:
 
-                      src
-                        kind: directory fan-out ratchet is stale
+                      src: stale directory ratchet entry
+                        no current violation (ceiling 4)
                         group: source
-                        actual: not measured
-                        limit: none
-                        ratchet: 4
 
-                      src
-                        kind: directory fan-out ratchet is stale
+                      src: stale directory ratchet entry
+                        no current violation (ceiling 5)
                         group: documentation
-                        actual: not measured
-                        limit: none
-                        ratchet: 5
 
                 "}
             );
@@ -640,7 +655,7 @@ mod tests {
                 vec![CheckViolation::Ratchet(RatchetViolation::Stale(
                     RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::Directory(
                         DirectoryRatchetStaleMeasuredViolation {
-                            kind: DirectoryViolationKind::DirectoryFanout,
+                            kind: DirectoryViolationKind::DirectoryDirectFiles,
                             path: RelativePath::new("docs").unwrap(),
                             group: LanguageGroupId::Documentation,
                             actual: RatchetCount::new(2),
@@ -653,12 +668,12 @@ mod tests {
 
             let output = human_check_report(&report, false);
 
-            assert!(output.contains("group: documentation"));
-            assert!(output.contains("limit: unlimited"));
+            assert!(output.contains("now 2 direct files (ceiling 3, limit unlimited)\n"));
+            assert!(output.contains("group: documentation\n"));
         }
 
         #[test]
-        fn it_reports_included_line_types_for_a_measured_file_ratchet() {
+        fn it_reports_count_lines_for_a_measured_file_ratchet() {
             let report = CheckReport::complete(
                 report_root(),
                 ConfigSource::BuiltIn,
@@ -667,10 +682,10 @@ mod tests {
                 vec![],
                 vec![CheckViolation::Ratchet(RatchetViolation::Increased(
                     RatchetIncreasedViolation::File(FileRatchetIncreasedViolation {
-                        kind: FileViolationKind::FileLoc,
+                        kind: FileViolationKind::FileLines,
                         path: RelativePath::new("src/lib.rs").unwrap(),
-                        measurement: sprawl_guard_lib::code_line_counter::LocMeasurement::new(
-                            sprawl_guard_lib::IncludedLineTypes::CodeAndComments,
+                        measurement: sprawl_guard_lib::code_line_counter::LineMeasurement::new(
+                            sprawl_guard_lib::CountLines::CodeAndComments,
                             sprawl_guard_lib::LineCounts::new(
                                 LineCount::new(3),
                                 LineCount::new(2),
@@ -686,8 +701,14 @@ mod tests {
 
             let output = human_check_report(&report, false);
 
-            assert!(output.contains("included line types: code, comments"));
-            assert!(output.contains("actual: 5"));
+            assert!(output.ends_with(indoc! {"
+                Ratchet failures:
+
+                  src/lib.rs: lines rose above the ceiling
+                    now 5 lines (ceiling 4, limit 2)
+                    counting code, comments
+
+            "}));
         }
 
         #[test]
@@ -697,11 +718,35 @@ mod tests {
             assert_eq!(
                 output,
                 concat!(
-                    "Policy: built-in defaults (no authored config found under /repo).\n\n",
+                    "Configuration: built-in defaults (no sprawl-guard.toml in /repo)\n\n",
                     "No sprawl-guard violations found.\n",
                     "Checked 3 source files in 2 directories across 1 language.\n",
                 )
             );
+        }
+
+        #[test]
+        fn it_reports_remaining_ratchet_entries_when_there_are_no_violations() {
+            let report = CheckReport::complete(
+                report_root(),
+                ConfigSource::BuiltIn,
+                counter_info(),
+                ScanSummary::new(
+                    CheckedFileCount::new(3),
+                    CheckedDirectoryCount::new(2),
+                    DetectedLanguageCount::new(1),
+                    RatchetEntryCount::new(3),
+                ),
+                vec![],
+                vec![],
+            );
+
+            let output = human_check_report(&report, false);
+
+            assert!(output.ends_with(concat!(
+                "Checked 3 source files in 2 directories across 1 language.\n",
+                "Passed with 3 ratchet entries remaining.\n",
+            )));
         }
 
         #[test]
@@ -713,11 +758,11 @@ mod tests {
             assert_eq!(
                 output,
                 indoc! {"
-                    Policy: built-in defaults (no authored config found under /repo).
+                    Configuration: built-in defaults (no sprawl-guard.toml in /repo)
 
                     Warnings:
 
-                      Rust cfg(test) preprocessing failed for src/lib.rs; counted without cfg(test) exclusion: expected identifier
+                      src/lib.rs: could not parse Rust to leave out cfg(test) code, so all of it was counted: expected identifier
 
                     No sprawl-guard violations found.
                     Checked 3 source files in 2 directories across 1 language.
@@ -726,31 +771,25 @@ mod tests {
         }
 
         #[test]
-        fn it_suppresses_warnings_when_quiet() {
+        fn it_prints_nothing_for_a_passing_check_when_quiet() {
             let report = report_with_rust_cfg_warning();
 
             let output = human_check_report(&report, true);
 
-            assert_eq!(
-                output,
-                concat!(
-                    "Policy: built-in defaults (no authored config found under /repo).\n\n",
-                    "No sprawl-guard violations found.\n",
-                )
-            );
+            assert_eq!(output, "");
         }
 
         #[test]
-        fn it_reports_traversal_incidents_after_the_success_status() {
+        fn it_reports_unreadable_paths_after_the_success_status() {
             let report = CheckReport::partial(
                 report_root(),
                 ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![],
-                NonEmptyTraversalIncidents::new(vec![TraversalIncident {
-                    kind: TraversalIncidentKind::ReadDirFailed,
-                    severity: TraversalIncidentSeverity::Warning,
+                NonEmptyUnreadablePaths::new(vec![UnreadablePath {
+                    kind: UnreadablePathKind::ReadDirFailed,
+                    severity: UnreadablePathSeverity::Warning,
                     path: Some(RelativePath::new("generated").unwrap()),
                     detail: DiagnosticDetail::new("permission denied"),
                 }])
@@ -763,12 +802,12 @@ mod tests {
             assert_eq!(
                 output,
                 indoc! {"
-                    Policy: built-in defaults (no authored config found under /repo).
+                    Configuration: built-in defaults (no sprawl-guard.toml in /repo)
 
                     No sprawl-guard violations found.
                     Checked 3 source files in 2 directories across 1 language.
 
-                    Traversal warnings:
+                    Skipped unreadable paths:
 
                       failed to read directory at generated: permission denied
                 "}
@@ -781,7 +820,7 @@ mod tests {
 
         #[test]
         fn it_uses_the_stable_report_schema() {
-            let report = report_with(vec![violation(FileViolationKind::FileLoc, "src/lib.rs")]);
+            let report = report_with(vec![violation(FileViolationKind::FileLines, "src/lib.rs")]);
 
             let output = serde_json::to_value(&report).unwrap();
 
@@ -790,7 +829,7 @@ mod tests {
                 json!({
                     "status": "failed",
                     "root": "/repo",
-                    "scope": { "kind": "all" },
+                    "paths": "all",
                     "config_source": { "kind": "built_in" },
                     "coverage": {
                         "kind": "complete"
@@ -798,7 +837,8 @@ mod tests {
                     "summary": {
                         "files_checked": 3,
                         "directories_checked": 2,
-                        "languages_detected": 1
+                        "languages_detected": 1,
+                        "ratchet_entries": 0
                     },
                     "counter": {
                         "backend": "tokei",
@@ -807,10 +847,10 @@ mod tests {
                     "warnings": [],
                     "violations": [
                         {
-                            "kind": "file_loc",
+                            "kind": "file_lines",
                             "path": "src/lib.rs",
                             "language": "Rust",
-                            "included_line_types": ["code"],
+                            "count_lines": [],
                             "line_counts": {
                                 "code": 3,
                                 "comments": 0,

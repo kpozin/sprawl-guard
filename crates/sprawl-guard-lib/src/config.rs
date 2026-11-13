@@ -27,7 +27,7 @@ pub use languages::{
     LanguageMaxLinesPerFileLimits, LanguageMode, LanguageSpecificConfig, RustCfgTestExclusion,
     RustLanguageConfig,
 };
-pub use limits::{Limits, MaxLeafFilesPerDirectoryLimits, MaxLinesPerFileLimits};
+pub use limits::{Limits, MaxDirectFilesPerDirectoryLimits, MaxLinesPerFileLimits};
 pub use load::{
     ConfigUpgrade, LoadOptions, LoadedConfig, MigratedAuthoredConfigDocument,
     PreparedConfigUpgrade, authored_config_json_schema, load_resolved_config,
@@ -43,6 +43,6 @@ pub use schema::ConfigSchemaVersion;
 pub use tests::TestsConfig;
 pub use traversal::{
     SourceFileByteLimit, SourceFileByteLimitError, SymlinkTraversal, TraversalConfig,
-    TraversalEntryLimit, TraversalEntryLimitError, TraversalErrorPolicy,
+    TraversalEntryLimit, TraversalEntryLimitError, UnreadablePathPolicy,
 };
-pub use types::{AuthoredConfigPath, Config, ConfigSource, ResolvedPolicy};
+pub use types::{AuthoredConfigPath, Config, ConfigSource, ResolvedConfig};

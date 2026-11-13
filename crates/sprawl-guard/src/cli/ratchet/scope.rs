@@ -18,10 +18,10 @@ impl RatchetScope {
     }
 }
 
-/// Splits a `tighten PATHS...` request into edit scope and measurement scope.
+/// Splits a `tighten PATHS...` request into the entries it may edit and the paths it measures.
 ///
 /// The returned `RatchetScope` controls which existing ratchet entries may change or be removed.
-/// The returned paths contain only scopes that still exist on disk and are measured by
+/// The returned paths contain only selected paths that still exist on disk and are measured by
 /// `check_without_ratchet`. Missing relative paths are accepted only when they cover existing
 /// ratchet entries. This permits `tighten deleted/path --write` to remove stale entries without
 /// silently accepting typos.
@@ -56,13 +56,13 @@ pub(super) fn tighten_scope(
         }
         if path.is_absolute() {
             return Err(
-                sprawl_guard_lib::SprawlError::MissingCheckScope { path: path.clone() }.into(),
+                sprawl_guard_lib::SprawlError::MissingSelectedPath { path: path.clone() }.into(),
             );
         }
         let scope = RelativePath::new(path)?;
         if !previous_paths.any_at_or_under(&scope) {
             return Err(
-                sprawl_guard_lib::SprawlError::MissingCheckScope { path: path.clone() }.into(),
+                sprawl_guard_lib::SprawlError::MissingSelectedPath { path: path.clone() }.into(),
             );
         }
         scopes.push(scope);

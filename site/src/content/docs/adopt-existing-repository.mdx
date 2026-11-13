@@ -5,50 +5,46 @@ description: Record existing violations without allowing them to grow.
 
 import { Steps } from "@astrojs/starlight/components";
 
-You can adopt Sprawl Guard without first fixing every file or directory that exceeds the desired
-limits.
-
-Adoption uses two files with different jobs. `sprawl-guard.toml` defines the policy. A second file
-records current measurements that exceed that policy so they may remain temporarily but cannot
-grow. Sprawl Guard calls this second file the ratchet.
+You can adopt Sprawl Guard without first fixing every file or directory that exceeds the limits you
+want. `sprawl-guard.toml` sets the limits. The ratchet file, `sprawl-guard.ratchet.toml`, records
+existing violations so they can shrink but not grow.
 
 The commands below use `sprawl-guard` directly. For a project-local Node dependency, run them
 through `npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
 
 <Steps>
 
-1. Create the policy configuration.
-
-   Preview the generated configuration, then create `sprawl-guard.toml`:
+1. Create the configuration.
 
    ```sh
-   sprawl-guard init --dry-run
-   sprawl-guard init
+   sprawl-guard init --write
    ```
 
-   Edit the generated file to [set the desired limits](/sprawl-guard/configure-checks/), not the repository's current maxima. Use `sprawl-guard config resolved` to review the complete policy.
+   Edit `sprawl-guard.toml` to [set the limits you want](/sprawl-guard/configure-checks/), not the
+   repository's current maxima. `sprawl-guard config resolved` shows the full configuration.
 
-2. Record existing violations.
-
-   After setting the policy, preview the proposed ratchet before writing it:
+2. Preview the ratchet entries.
 
    ```sh
    sprawl-guard update
-   sprawl-guard update --write
-   sprawl-guard check
    ```
-
-   A preview lists only the proposed changes:
 
    ```text
    Ratchet changes:
-   + add file src/large.py [production] max_loc: none -> 430
-   + add directory src/flat [production, source] leaf_files: none -> 12
+   + add src/large.py (production lines): none -> 430
+   + add src/flat (production direct files, group source): none -> 12
 
    Preview only; use --write to apply.
    ```
 
-   To inspect the complete TOML before writing, run `sprawl-guard update --format toml`. The resulting file looks like:
+   Keep entries only for maintained code that is expected to improve. Exclude generated or
+   third-party code, and use a documented override for a deliberate long-term exception.
+
+3. Write the ratchet file.
+
+   ```sh
+   sprawl-guard update --write
+   ```
 
    ```toml title="sprawl-guard.ratchet.toml"
    #:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.ratchet.schema.json
@@ -57,40 +53,46 @@ through `npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
    [[files]]
    path = "src/large.py"
    role = "production"
-   max_loc = 430
+   max_lines = 430
 
    [[directories]]
    path = "src/flat"
    role = "production"
    group = "source"
-   leaf_files = 12
+   max_direct_files = 12
    ```
 
-   File entries are identified by path and role. Directory entries are identified by path, role, and language group. The ratchet stores measured ceilings, not configuration limits or justifications.
+   Each entry stores only a ceiling. Limits stay in `sprawl-guard.toml`.
 
-3. Review and commit both files.
+4. Check the repository.
 
-   The write creates the ratchet file selected by `[ratchet].file` in `sprawl-guard.toml` and adds its editor schema directive. Its default path is `sprawl-guard.ratchet.toml`. Review every entry. Keep entries only for maintained code that is expected to improve. Exclude generated or third-party code, and use a documented override for a deliberate long-term exception.
+   ```sh
+   sprawl-guard check
+   ```
 
-   If a ratchet file already exists, `update` adds newly discovered entries and preserves existing ceilings. Pass paths to limit discovery to selected files or directories. Raising an existing ceiling requires `--allow-increases`; review any increase carefully.
+   ```text
+   Configuration: sprawl-guard.toml
 
-   Commit `sprawl-guard.toml` and `sprawl-guard.ratchet.toml` together. Confirm that the unchanged tree passes. Then temporarily increase one ratcheted measurement to verify that the ratchet rejects growth.
+   No sprawl-guard violations found.
+   Checked 14 source files in 2 directories across 1 language.
+   Passed with 2 ratchet entries remaining.
+   ```
+
+5. Commit `sprawl-guard.toml` and `sprawl-guard.ratchet.toml` together.
 
 </Steps>
 
-## Approve Later Exceptions
+## Approve later exceptions
 
-After adoption, scope deliberate approvals to the affected file or directory. For new temporary
-debt, preview `sprawl-guard update PATH`, review the added ceilings, then repeat with `--write`. To
-permit an existing violation to grow, use `sprawl-guard update PATH --allow-increases` for both
-preview and write; raised ceilings are marked `! raise`.
+To record a new violation, preview `sprawl-guard update PATH`, review the added entries, then repeat
+with `--write`. To let an existing violation grow, pass `--allow-increases` to both the preview and
+the write; raised ceilings are marked `! raise`.
 
-For a permanent policy exception, use a narrow
-[`[[overrides]]` entry](/sprawl-guard/configure-checks/) with a meaningful reason. Use [`tighten`](/sprawl-guard/clean-up-violations/) to record improvements; `update`
-never lowers or removes ceilings.
+For a permanent exception, use a narrow
+[`[[overrides]]` entry](/sprawl-guard/configure-checks/) with a reason. `update` never lowers or
+removes ceilings; [`tighten`](/sprawl-guard/clean-up-violations/) does.
 
-Run the full repository check after an approval and commit the source and ratchet changes together.
-Unchanged entries are omitted from the human summary, but remain in the ratchet and in
-`--format toml` output.
+Run `check` on the whole repository after an approval, and commit the source and ratchet changes
+together.
 
-Next, [run an unscoped check in CI](/sprawl-guard/run-in-ci/).
+Next, [run the check in CI](/sprawl-guard/run-in-ci/).

@@ -3,7 +3,7 @@
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 
-use crate::code_line_counter::LocMeasurement;
+use crate::code_line_counter::LineMeasurement;
 use crate::ratchet::RatchetCount;
 use crate::{LanguageGroupId, RelativePath};
 
@@ -73,14 +73,14 @@ impl RatchetViolation {
     pub fn actual(&self) -> Option<RatchetCount> {
         match self {
             Self::Increased(RatchetIncreasedViolation::File(violation)) => Some(
-                RatchetCount::from_counted_loc(violation.measurement.actual()),
+                RatchetCount::from_counted_lines(violation.measurement.actual()),
             ),
             Self::Increased(RatchetIncreasedViolation::Directory(violation)) => {
                 Some(violation.actual)
             }
             Self::Stale(RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
                 violation,
-            ))) => Some(RatchetCount::from_counted_loc(
+            ))) => Some(RatchetCount::from_counted_lines(
                 violation.measurement.actual(),
             )),
             Self::Stale(RatchetStaleViolation::Measured(
@@ -151,8 +151,8 @@ impl RatchetViolation {
         }
     }
 
-    /// Returns the configured-LOC measurement for a measured file diagnostic.
-    pub fn loc_measurement(&self) -> Option<&LocMeasurement> {
+    /// Returns the line measurement for a measured file diagnostic.
+    pub fn line_measurement(&self) -> Option<&LineMeasurement> {
         match self {
             Self::Increased(RatchetIncreasedViolation::File(violation)) => {
                 Some(&violation.measurement)
@@ -181,8 +181,8 @@ impl Serialize for RatchetViolation {
             violation.serialize_field("group", group)?;
         }
         violation.serialize_field("actual", &self.actual())?;
-        if let Some(measurement) = self.loc_measurement() {
-            violation.serialize_field("included_line_types", &measurement.included_line_types())?;
+        if let Some(measurement) = self.line_measurement() {
+            violation.serialize_field("count_lines", &measurement.count_lines())?;
             violation.serialize_field("line_counts", &measurement.line_counts())?;
         }
         violation.serialize_field("limit", &self.limit())?;
@@ -194,31 +194,31 @@ impl Serialize for RatchetViolation {
 /// Ratchet increase with a current measured value and finite configured limit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RatchetIncreasedViolation {
-    /// File LOC ratchet increase.
+    /// File line ratchet increase.
     File(FileRatchetIncreasedViolation),
-    /// Directory fan-out ratchet increase.
+    /// Directory direct-file count ratchet increase.
     Directory(DirectoryRatchetIncreasedViolation),
 }
 
-/// File LOC ratchet increase with a current measurement.
+/// File line ratchet increase with a current measurement.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileRatchetIncreasedViolation {
-    /// File role whose LOC ratchet increased.
+    /// File role whose line ratchet increased.
     pub kind: FileViolationKind,
     /// Repository-relative file path.
     pub path: RelativePath,
-    /// Current configured-LOC measurement.
-    pub measurement: LocMeasurement,
+    /// Current line measurement.
+    pub measurement: LineMeasurement,
     /// Current configured limit.
     pub limit: RatchetCount,
     /// Stored ratchet ceiling.
     pub ratchet: RatchetCount,
 }
 
-/// Directory fan-out ratchet increase with a current grouped measurement.
+/// Directory direct-file count ratchet increase with a current grouped measurement.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryRatchetIncreasedViolation {
-    /// Directory role whose fan-out ratchet increased.
+    /// Directory role whose direct-file count ratchet increased.
     pub kind: DirectoryViolationKind,
     /// Repository-relative directory path.
     pub path: RelativePath,
@@ -244,21 +244,21 @@ pub enum RatchetStaleViolation {
 /// Stale ratchet entry for a path that is still measured.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RatchetStaleMeasuredViolation {
-    /// Stale file LOC measurement.
+    /// Stale file line measurements.
     File(FileRatchetStaleMeasuredViolation),
-    /// Stale directory fan-out measurement.
+    /// Stale directory direct-file measurement.
     Directory(DirectoryRatchetStaleMeasuredViolation),
 }
 
 /// Stale ratchet entry for a file that is still measured.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileRatchetStaleMeasuredViolation {
-    /// File role whose LOC ratchet became stale.
+    /// File role whose line ratchet became stale.
     pub kind: FileViolationKind,
     /// Repository-relative file path.
     pub path: RelativePath,
-    /// Current configured-LOC measurement.
-    pub measurement: LocMeasurement,
+    /// Current line measurement.
+    pub measurement: LineMeasurement,
     /// Current configured limit.
     pub limit: RatchetCount,
     /// Stored ratchet ceiling.
@@ -268,7 +268,7 @@ pub struct FileRatchetStaleMeasuredViolation {
 /// Stale ratchet entry for a directory that is still measured.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryRatchetStaleMeasuredViolation {
-    /// Directory role whose fan-out ratchet became stale.
+    /// Directory role whose direct-file count ratchet became stale.
     pub kind: DirectoryViolationKind,
     /// Repository-relative directory path.
     pub path: RelativePath,
@@ -285,16 +285,16 @@ pub struct DirectoryRatchetStaleMeasuredViolation {
 /// Stale ratchet entry for a file or grouped directory that is no longer measured.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RatchetStaleMissingViolation {
-    /// Missing file LOC measurement.
+    /// Missing file line measurements.
     File(FileRatchetStaleMissingViolation),
-    /// Missing grouped directory fan-out measurement.
+    /// Missing grouped directory direct-file measurement.
     Directory(DirectoryRatchetStaleMissingViolation),
 }
 
 /// Stale file ratchet whose path is no longer measured.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FileRatchetStaleMissingViolation {
-    /// File role whose LOC ratchet became stale.
+    /// File role whose line ratchet became stale.
     pub kind: FileViolationKind,
     /// Repository-relative file path.
     pub path: RelativePath,
@@ -305,7 +305,7 @@ pub struct FileRatchetStaleMissingViolation {
 /// Stale directory ratchet whose group and path are no longer measured.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DirectoryRatchetStaleMissingViolation {
-    /// Directory role whose fan-out ratchet became stale.
+    /// Directory role whose direct-file count ratchet became stale.
     pub kind: DirectoryViolationKind,
     /// Repository-relative directory path.
     pub path: RelativePath,

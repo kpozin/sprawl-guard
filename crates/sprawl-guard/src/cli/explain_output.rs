@@ -1,22 +1,36 @@
 use sprawl_guard_lib::classification::{PathClassification, SourceExplanation, SourceKind};
-use sprawl_guard_lib::{MatchedOverride, RustCfgTestStatus, SourceResolvedLimits};
+use sprawl_guard_lib::{MatchedOverride, RelativePath, RustCfgTestStatus};
 
+use super::check_output::plural;
+use super::display_relative;
+
+/// Renders the human `explain` output for one classified path.
 pub(super) fn explain_message(classification: &PathClassification) -> String {
+    let shown = |path: &RelativePath| display_relative(path.as_str());
     match classification {
         PathClassification::Ignored { path } => {
-            format!("{path}: ignored by standard ignore handling")
+            format!("{}: ignored by standard ignore handling", shown(path))
         }
         PathClassification::GloballyExcluded { path } => {
-            format!("{path}: excluded by global file config")
+            format!("{}: excluded by the global file excludes", shown(path))
         }
         PathClassification::RatchetExcluded { path } => {
-            format!("{path}: excluded because it is the configured ratchet file")
+            format!("{}: excluded because it is the ratchet file", shown(path))
+        }
+        PathClassification::ConfigExcluded { path } => {
+            format!(
+                "{}: excluded because it is the active configuration file",
+                shown(path)
+            )
         }
         PathClassification::NonFile { path } => {
-            format!("{path}: not a regular file")
+            format!("{}: not a regular file", shown(path))
         }
         PathClassification::NotSource { path } => {
-            format!("{path}: not a source file for any enabled language")
+            format!(
+                "{}: not a source file for any enabled language",
+                shown(path)
+            )
         }
         PathClassification::AmbiguousLanguage { path, languages } => {
             let languages = languages
@@ -24,10 +38,13 @@ pub(super) fn explain_message(classification: &PathClassification) -> String {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{path}: ambiguous language match ({languages})")
+            format!("{}: ambiguous language match ({languages})", shown(path))
         }
         PathClassification::LanguageExcluded { path, language } => {
-            format!("{path}: excluded by {language} language config")
+            format!(
+                "{}: excluded by the {language} language settings",
+                shown(path)
+            )
         }
         PathClassification::LanguagesExcluded { path, languages } => {
             let languages = languages
@@ -35,70 +52,90 @@ pub(super) fn explain_message(classification: &PathClassification) -> String {
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{path}: excluded by all matching language configs ({languages})")
+            format!(
+                "{}: excluded by the settings of every matching language ({languages})",
+                shown(path)
+            )
         }
         PathClassification::TestExcluded { path, language } => {
-            format!("{path}: excluded because path is classified as test code ({language})")
+            format!(
+                "{}: excluded because test files are not checked ({language})",
+                shown(path)
+            )
         }
         PathClassification::Source(source) => source_message(source),
     }
 }
 
+/// Renders a source path as a heading followed by one indented, labeled line per fact.
 fn source_message(explanation: &SourceExplanation) -> String {
     let source = explanation.source();
     let kind = match source.kind {
         SourceKind::Production => "production source",
-        SourceKind::Test => "test code",
+        SourceKind::Test => "test source",
     };
-    let mut message = format!(
-        "{}: {kind} ({}; group: {})",
-        source.path,
-        source.language(),
-        source.group()
-    );
-    if let SourceExplanation::Measured {
-        resolved_limits,
-        measurement,
-        rust_cfg_test,
-        ..
-    } = explanation
-    {
-        message.push_str(&resolved_limits_message(resolved_limits));
-        let counts = measurement.line_counts();
-        message.push_str(&format!(
-            "; configured LOC: {} (code: {}, comments: {}, blank lines: {})",
-            measurement.actual().get(),
-            counts.code,
-            counts.comments,
-            counts.blank_lines
-        ));
-        if let Some(rust_cfg_test) = rust_cfg_test {
-            message.push_str(&format!(
-                "; rust cfg(test): {}; excluded top-level items: {}",
-                rust_cfg_test_status_message(rust_cfg_test.status),
-                rust_cfg_test.excluded_items.get()
+    let mut lines = vec![
+        display_relative(source.path.as_str()),
+        format!("  kind: {kind}"),
+        format!("  language: {}", source.language()),
+        format!("  group: {}", source.group()),
+    ];
+    match explanation {
+        SourceExplanation::NotFound { .. } => {
+            lines.push("  state: not found, so classified by its path only".to_owned());
+        }
+        SourceExplanation::Measured {
+            resolved_limits,
+            measurement,
+            rust_cfg_test,
+            ..
+        } => {
+            let counts = measurement.line_counts();
+            lines.push(format!(
+                "  lines: {} (limit {}, counting {})",
+                measurement.actual().get(),
+                resolved_limits.file.value,
+                resolved_limits.file.count_lines
             ));
+            lines.push(format!(
+                "  line counts: {} code, {} comments, {} blank",
+                counts.code, counts.comments, counts.blank_lines
+            ));
+            lines.push(format!(
+                "  direct files limit for its directory: {}",
+                resolved_limits.directory.value
+            ));
+            push_overrides(
+                &mut lines,
+                "line limit overrides",
+                &resolved_limits.file.matched_overrides,
+            );
+            push_overrides(
+                &mut lines,
+                "direct files overrides",
+                &resolved_limits.directory.matched_overrides,
+            );
+            if let Some(rust_cfg_test) = rust_cfg_test {
+                let excluded = rust_cfg_test.excluded_items.get();
+                lines.push(format!(
+                    "  Rust cfg(test): {}, {excluded} top-level {} not counted",
+                    rust_cfg_test_status_message(rust_cfg_test.status),
+                    plural(excluded, "item", "items")
+                ));
+            }
         }
     }
-    message
+    lines.join("\n")
 }
 
-fn resolved_limits_message(limits: &SourceResolvedLimits) -> String {
-    let mut message = format!(
-        "; file LOC limit: {}; included line types: {}; directory leaf-file limit: {}",
-        limits.file.value, limits.file.included_line_types, limits.directory.value
-    );
-    let file_overrides = matching_overrides_message(&limits.file.matched_overrides);
-    if !file_overrides.is_empty() {
-        message.push_str("; matched file overrides: ");
-        message.push_str(&file_overrides);
+/// Adds a labeled line listing matched overrides, when there are any.
+fn push_overrides(lines: &mut Vec<String>, label: &str, overrides: &[MatchedOverride]) {
+    if !overrides.is_empty() {
+        lines.push(format!(
+            "  {label}: {}",
+            matching_overrides_message(overrides)
+        ));
     }
-    let directory_overrides = matching_overrides_message(&limits.directory.matched_overrides);
-    if !directory_overrides.is_empty() {
-        message.push_str("; matched directory overrides: ");
-        message.push_str(&directory_overrides);
-    }
-    message
 }
 
 fn matching_overrides_message(overrides: &[MatchedOverride]) -> String {
@@ -118,10 +155,10 @@ fn matching_overrides_message(overrides: &[MatchedOverride]) -> String {
 fn rust_cfg_test_status_message(status: RustCfgTestStatus) -> &'static str {
     match status {
         RustCfgTestStatus::Disabled => "disabled",
-        RustCfgTestStatus::PathClassifiedTest => "not applied to path-classified test code",
-        RustCfgTestStatus::PrefilterSkipped => "skipped by prefilter",
+        RustCfgTestStatus::PathClassifiedTest => "not applied to test files",
+        RustCfgTestStatus::PrefilterSkipped => "skipped because the file never mentions cfg(test)",
         RustCfgTestStatus::Parsed => "parsed",
-        RustCfgTestStatus::ParseFailed => "parse failed; counted without exclusion",
+        RustCfgTestStatus::ParseFailed => "could not parse, so all code was counted",
     }
 }
 
@@ -129,10 +166,11 @@ fn rust_cfg_test_status_message(status: RustCfgTestStatus) -> &'static str {
 mod tests {
     use sprawl_guard_lib::classification::ClassifiedSource;
     use sprawl_guard_lib::{
-        ExcludedItemCount, IncludedLineTypes, LanguageId, LeafFileLimit, LocLimit, MatchedOverride,
-        RelativePath, ResolvedFileLocLimit, ResolvedLeafFileLimit, RustCfgTestInfo,
-        SourceResolvedLimits,
+        CountLines, DirectFileLimit, ExcludedItemCount, LanguageId, LineLimit, RelativePath,
+        ResolvedDirectFileLimit, ResolvedFileLinesLimit, RustCfgTestInfo, SourceResolvedLimits,
     };
+
+    use indoc::indoc;
 
     use super::*;
 
@@ -142,7 +180,7 @@ mod tests {
 
     fn source(path: &str, language: &str, kind: SourceKind) -> SourceExplanation {
         let language = LanguageId::new(language).unwrap();
-        SourceExplanation::Classified {
+        SourceExplanation::NotFound {
             source: ClassifiedSource::new(
                 RelativePath::new(path).unwrap(),
                 language,
@@ -184,6 +222,24 @@ mod tests {
             }
         }
 
+        mod when_the_source_path_does_not_exist {
+            use super::*;
+
+            #[test]
+            fn it_says_the_path_was_classified_by_path_only() {
+                let message = explain_message(&PathClassification::Source(source(
+                    "src/planned.rs",
+                    "rust",
+                    SourceKind::Production,
+                )));
+
+                assert_eq!(
+                    message,
+                    "src/planned.rs\n  kind: production source\n  language: Rust\n  group: source\n  state: not found, so classified by its path only"
+                );
+            }
+        }
+
         mod when_path_classified_tests_are_disabled {
             use super::*;
 
@@ -196,7 +252,24 @@ mod tests {
 
                 assert_eq!(
                     message,
-                    "tests/integration.rs: excluded because path is classified as test code (Rust)"
+                    "tests/integration.rs: excluded because test files are not checked (Rust)"
+                );
+            }
+        }
+
+        #[cfg(unix)]
+        mod when_the_path_contains_terminal_controls {
+            use super::*;
+
+            #[test]
+            fn it_escapes_them() {
+                let message = explain_message(&PathClassification::NotSource {
+                    path: path("src/\u{1b}[2J.txt"),
+                });
+
+                assert_eq!(
+                    message,
+                    r"src/\u{1b}[2J.txt: not a source file for any enabled language"
                 );
             }
         }
@@ -216,7 +289,7 @@ mod tests {
 
                 assert_eq!(
                     message,
-                    "src/shared: excluded by all matching language configs (Rust, Go)"
+                    "src/shared: excluded by the settings of every matching language (Rust, Go)"
                 );
             }
         }
@@ -232,18 +305,18 @@ mod tests {
                 let explanation = SourceExplanation::Measured {
                     source,
                     resolved_limits: SourceResolvedLimits {
-                        file: ResolvedFileLocLimit {
-                            included_line_types: IncludedLineTypes::Code,
-                            value: LocLimit::new(400).unwrap(),
+                        file: ResolvedFileLinesLimit {
+                            count_lines: CountLines::Code,
+                            value: LineLimit::new(400).unwrap(),
                             matched_overrides: vec![],
                         },
-                        directory: ResolvedLeafFileLimit {
-                            value: LeafFileLimit::Unlimited,
+                        directory: ResolvedDirectFileLimit {
+                            value: DirectFileLimit::Unlimited,
                             matched_overrides: vec![],
                         },
                     },
-                    measurement: sprawl_guard_lib::code_line_counter::LocMeasurement::new(
-                        IncludedLineTypes::Code,
+                    measurement: sprawl_guard_lib::code_line_counter::LineMeasurement::new(
+                        CountLines::Code,
                         sprawl_guard_lib::LineCounts::new(
                             sprawl_guard_lib::LineCount::new(1),
                             sprawl_guard_lib::LineCount::new(0),
@@ -261,7 +334,15 @@ mod tests {
 
                 assert_eq!(
                     message,
-                    "src/lib.rs: production source (Rust; group: source); file LOC limit: 400; included line types: code; directory leaf-file limit: unlimited; configured LOC: 1 (code: 1, comments: 0, blank lines: 0); rust cfg(test): parsed; excluded top-level items: 2"
+                    indoc! {"
+                        src/lib.rs
+                          kind: production source
+                          language: Rust
+                          group: source
+                          lines: 1 (limit 400, counting code)
+                          line counts: 1 code, 0 comments, 0 blank
+                          direct files limit for its directory: unlimited
+                          Rust cfg(test): parsed, 2 top-level items not counted"}
                 );
             }
         }
@@ -277,37 +358,7 @@ mod tests {
 
                 assert_eq!(
                     message,
-                    "docs/guide.md: production source (Markdown; group: documentation)"
-                );
-            }
-        }
-    }
-
-    mod resolved_limits_message_tests {
-        use super::*;
-
-        mod when_the_directory_limit_is_unlimited {
-            use super::*;
-
-            #[test]
-            fn it_reports_the_explicit_limit() {
-                let limits = SourceResolvedLimits {
-                    file: ResolvedFileLocLimit {
-                        included_line_types: IncludedLineTypes::CodeAndComments,
-                        value: LocLimit::new(400).unwrap(),
-                        matched_overrides: Vec::<MatchedOverride>::new(),
-                    },
-                    directory: ResolvedLeafFileLimit {
-                        value: LeafFileLimit::Unlimited,
-                        matched_overrides: Vec::new(),
-                    },
-                };
-
-                let message = resolved_limits_message(&limits);
-
-                assert_eq!(
-                    message,
-                    "; file LOC limit: 400; included line types: code, comments; directory leaf-file limit: unlimited"
+                    "docs/guide.md\n  kind: production source\n  language: Markdown\n  group: documentation\n  state: not found, so classified by its path only"
                 );
             }
         }

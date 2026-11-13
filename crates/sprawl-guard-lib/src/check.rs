@@ -1,6 +1,6 @@
-//! Policy checks over classified and measured sources.
+//! Checks over classified and measured sources.
 
-mod directory_fanout;
+mod directory_direct_files;
 mod ratchet;
 mod report;
 mod runner;
@@ -8,15 +8,16 @@ mod runner;
 pub use report::{
     AnalysisCoverage, CheckErrorKind, CheckReport, CheckStatus, CheckViolation, CheckWarning,
     CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, CounterInfo, DetectedLanguageCount,
-    DirectoryFanoutViolation, DirectoryRatchetIncreasedViolation,
+    DirectoryDirectFilesViolation, DirectoryRatchetIncreasedViolation,
     DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
-    DirectoryViolationKind, FileLocViolation, FileRatchetIncreasedViolation,
+    DirectoryViolationKind, FileLinesViolation, FileRatchetIncreasedViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
-    NonEmptyTraversalIncidents, RatchetIncreasedViolation, RatchetLimit,
+    NonEmptyUnreadablePaths, RatchetEntryCount, RatchetIncreasedViolation, RatchetLimit,
     RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
     RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError, ScanSummary,
 };
 pub(crate) use runner::measure_source;
 pub use runner::{
-    CheckOptions, CheckScope, NonEmptyCheckPaths, check, check_with_counter, check_without_ratchet,
+    CheckOptions, NonEmptyCheckPaths, SelectedPaths, check, check_with_counter,
+    check_without_ratchet,
 };

@@ -643,10 +643,10 @@ jobs:
           test "$(npm --prefix install-native exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
           test "$(npm --prefix install-wasi exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
           npm --prefix install-wasi exec -- sprawl-guard --help
-          npm --prefix install-native exec -- sprawl-guard --root "${PWD}/scan-fixture" \
-            languages --detected --format json > native-languages.json
-          npm --prefix install-wasi exec -- sprawl-guard --root "${PWD}/scan-fixture" \
-            languages --detected --format json > wasi-languages.json
+          npm --prefix install-native exec -- sprawl-guard languages --detected --format json \
+            --root "${PWD}/scan-fixture" > native-languages.json
+          npm --prefix install-wasi exec -- sprawl-guard languages --detected --format json \
+            --root "${PWD}/scan-fixture" > wasi-languages.json
           node --eval '
             const report = require("./wasi-languages.json");
             if (report.mode !== "detected") process.exit(1);
@@ -904,8 +904,8 @@ jobs:
         run: |
           test "$(cargo-install/bin/sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
           cargo-install/bin/sprawl-guard --help
-          cargo-install/bin/sprawl-guard --root scan-fixture \
-            languages --detected --format json > cargo-languages.json
+          cargo-install/bin/sprawl-guard languages --detected --format json \
+            --root scan-fixture > cargo-languages.json
           node --eval '
             const report = require("./cargo-languages.json");
             if (report.mode !== "detected") process.exit(1);
@@ -1055,10 +1055,10 @@ jobs:
           test "$(npm --prefix install-native exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
           test "$(npm --prefix install-wasi exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
           npm --prefix install-wasi exec -- sprawl-guard --help
-          npm --prefix install-native exec -- sprawl-guard --root "${PWD}/scan-fixture" \
-            languages --detected --format json > native-languages.json
-          npm --prefix install-wasi exec -- sprawl-guard --root "${PWD}/scan-fixture" \
-            languages --detected --format json > wasi-languages.json
+          npm --prefix install-native exec -- sprawl-guard languages --detected --format json \
+            --root "${PWD}/scan-fixture" > native-languages.json
+          npm --prefix install-wasi exec -- sprawl-guard languages --detected --format json \
+            --root "${PWD}/scan-fixture" > wasi-languages.json
           node --eval '
             const report = require("./wasi-languages.json");
             if (report.mode !== "detected") process.exit(1);

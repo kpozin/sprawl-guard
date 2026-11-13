@@ -1,6 +1,6 @@
 ---
 title: Configure checks
-description: Match Sprawl Guard's source classification and limits to a repository.
+description: Choose which files count as source files and test files, and set their limits.
 ---
 
 import { TabItem, Tabs } from "@astrojs/starlight/components";
@@ -12,7 +12,7 @@ Every root configuration starts with its editor schema and schema version:
 schema_version = 2
 ```
 
-Add only the sections needed to customize the built-in policy.
+Add only the sections needed to change the built-in defaults.
 
 ## Select source files
 
@@ -26,59 +26,64 @@ enabled = false
 
 [languages.typescript]
 include = ["src/**/*.ts"]
-additional_globs = ["generated/**/*.ts"]
+extend_include = ["generated/**/*.ts"]
 exclude = ["src/generated/**"]
 ```
 
-`[files].exclude` removes paths before language classification. `include` replaces a language's
-bundled paths, `additional_globs` extends them, and `exclude` removes matching candidates. Avoid
-overlapping matches: a file owned by more than one enabled language is ambiguous.
+`[files].extend_exclude` removes paths before any language claims them. `include` replaces a
+language's bundled paths, `extend_include` extends them, and `exclude` removes matching paths from
+that language. A file that more than one enabled language claims is an error; disable one language
+or narrow its paths.
 
 ## Set limits and classify tests
 
 ```toml title="sprawl-guard.toml"
 [limits.max_lines_per_file]
-included_line_types = ["code"]
+count_lines = []
 production = 400
 test = 800
 
-[limits.max_leaf_files_per_directory]
+[limits.max_direct_files_per_directory]
 production = 10
 test = 10
 
 [tests]
-check_path_tests = true
+check = true
 globs = ["tests/**", "**/*.test.*"]
 ```
 
-Global and language-specific test globs classify whole files as test code. Test files use the `test`
-limits; production files use `production`. File limits count the selected line types. Literate
-languages include comments automatically, so Markdown prose counts by default; a language-specific
-`included_line_types` value can replace that behavior. Setting `check_path_tests` to `false` omits
-path-classified tests. For production Rust files, Sprawl Guard can also exclude top-level
-`cfg(test)` items from the configured line count.
+A file that matches a global or language-specific test glob is a test file. Test files use the
+`test` limits, and production files use `production`. Setting `[tests].check` to `false` skips test
+files.
+
+Code lines always count, and `count_lines` adds comments or blank lines. In literate languages such
+as Markdown, Sprawl Guard also counts comments, so prose counts by default. A language-specific
+`count_lines` value replaces this.
+
+For production Rust files, Sprawl Guard can also stop counting top-level `cfg(test)` items.
 
 ## Group related languages for directory limits
 
-By default, non-literate languages share the `source` directory count, while literate languages
-use the unlimited `documentation` count. Define a custom group when a set of related languages
-should share its own fan-out budget:
+Languages outside custom groups share the automatic `source` group's direct-file count. Literate
+languages such as Markdown go to the `documentation` group, which is unlimited by default. Define a
+custom group when a set of related languages should share its own direct-file limit:
 
 ```toml title="sprawl-guard.toml"
 [language_groups.frontend]
 languages = ["javascript", "typescript", "jsx", "tsx"]
 
-[language_groups.frontend.limits.max_leaf_files_per_directory]
+[language_groups.frontend.limits.max_direct_files_per_directory]
 production = 12
 ```
 
-Omitted custom-group limits inherit the global values. Path overrides still apply last, so the same
-path-based exception can refine file and directory limits without naming a language group.
+Omitted custom-group limits inherit the global values. Path overrides apply after group limits. One
+override can change both file and directory limits for matching paths without naming a language
+group.
 
 ## Add overrides
 
-Overrides apply in declaration order. Each matching override changes only the limit fields it
-sets, so a later match wins for those fields.
+Overrides apply in declaration order, and each one changes only the limit fields it sets. When two
+matching overrides set the same field, the later one wins.
 
 ```toml title="sprawl-guard.toml"
 [[overrides]]
@@ -92,7 +97,7 @@ max_lines_per_file = { production = 500 }
 reason = "Smaller legacy modules"
 ```
 
-Inspect the effective policy and a specific path before running the check:
+Inspect the resolved configuration and a specific path before running the check:
 
 <Tabs syncKey="package-manager">
   <TabItem label="Cargo">
@@ -122,5 +127,5 @@ pnpm exec sprawl-guard explain src/example.rs
 </Tabs>
 
 See the [configuration reference](/sprawl-guard/reference/configuration/) for every field and
-default. Once the policy matches the repository,
+default. Once the limits match the repository,
 [record existing violations](/sprawl-guard/adopt-existing-repository/).

@@ -26,9 +26,8 @@ mod when_a_check_succeeds {
         assert_eq!(
             stdout(&output),
             format!(
-                "Policy: authored config at {}.\n\n{}{}",
-                root.path().join("sprawl-guard.toml").display(),
-                "No sprawl-guard violations found.\n",
+                "{}No sprawl-guard violations found.\n{}",
+                AUTHORED_CONFIG_HEADER,
                 "Checked 2 source files in 2 directories across 2 languages.\n",
             ),
         );
@@ -49,13 +48,14 @@ mod when_a_check_succeeds {
                 "files_checked": 2,
                 "directories_checked": 2,
                 "languages_detected": 2,
+                "ratchet_entries": 0,
             }),
         );
         assert_eq!(
             report["config_source"],
             json!({
                 "kind": "authored",
-                "path": root.path().join("sprawl-guard.toml").display().to_string(),
+                "path": root.path().canonicalize().unwrap().join("sprawl-guard.toml").display().to_string(),
             })
         );
         assert_eq!(stderr(&output), "");
@@ -65,7 +65,7 @@ mod when_a_check_succeeds {
 mod when_the_working_directory_changes {
     use super::*;
 
-    fn write_root_policy_fixture(root: &TempDir) {
+    fn write_root_config_fixture(root: &TempDir) {
         write_rust_file_limit_config(root, 1);
         write_rust_source_with_function_count(root, "src/lib.rs", 2);
     }
@@ -73,7 +73,7 @@ mod when_the_working_directory_changes {
     #[test]
     fn it_makes_built_in_fallback_visible_from_a_nested_directory() {
         let root = TempDir::new().unwrap();
-        write_root_policy_fixture(&root);
+        write_root_config_fixture(&root);
         let nested = root.path().join("src");
 
         let output = sprawl_guard_no_root()
@@ -94,20 +94,28 @@ mod when_the_working_directory_changes {
             nested.canonicalize().unwrap().display().to_string()
         );
         assert_eq!(report["config_source"], json!({"kind": "built_in"}));
-        assert!(stdout(&human).contains("Policy: built-in defaults"));
+        assert!(
+            stdout(&human).contains("Configuration: built-in defaults (no sprawl-guard.toml in ")
+        );
     }
 
     #[test]
     fn it_honors_an_explicit_root_and_config_from_a_nested_directory() {
         let root = TempDir::new().unwrap();
-        write_root_policy_fixture(&root);
+        write_root_config_fixture(&root);
         let nested = root.path().join("src");
 
         let output = sprawl_guard_no_root()
             .current_dir(&nested)
-            .arg("--root")
+            .args([
+                "check",
+                "--format",
+                "json",
+                "--config",
+                "sprawl-guard.toml",
+                "--root",
+            ])
             .arg(root.path())
-            .args(["--config", "sprawl-guard.toml", "check", "--format", "json"])
             .output()
             .unwrap();
         let report = json_stdout(&output);
@@ -121,7 +129,7 @@ mod when_the_working_directory_changes {
             report["config_source"],
             json!({
                 "kind": "authored",
-                "path": root.path().join("sprawl-guard.toml").display().to_string(),
+                "path": root.path().canonicalize().unwrap().join("sprawl-guard.toml").display().to_string(),
             })
         );
     }
@@ -129,7 +137,7 @@ mod when_the_working_directory_changes {
     #[test]
     fn it_selects_an_intentional_nested_project_config() {
         let root = TempDir::new().unwrap();
-        write_root_policy_fixture(&root);
+        write_root_config_fixture(&root);
         let nested = root.path().join("src");
         write_file(
             &root,
@@ -157,7 +165,7 @@ mod when_the_working_directory_changes {
             report["config_source"],
             json!({
                 "kind": "authored",
-                "path": nested.join("sprawl-guard.toml").display().to_string(),
+                "path": nested.canonicalize().unwrap().join("sprawl-guard.toml").display().to_string(),
             })
         );
     }
@@ -166,11 +174,11 @@ mod when_the_working_directory_changes {
 mod when_a_check_is_scoped {
     use super::*;
 
-    fn write_sibling_fanout_fixture(root: &TempDir) {
+    fn write_sibling_direct_files_fixture(root: &TempDir) {
         write_config(
             root,
             indoc! {r#"
-                [limits.max_leaf_files_per_directory]
+                [limits.max_direct_files_per_directory]
                 production = 1
 
                 [languages.rust]
@@ -185,7 +193,7 @@ mod when_a_check_is_scoped {
     #[test]
     fn it_distinguishes_scoped_success_from_a_failing_full_repository_check() {
         let root = TempDir::new().unwrap();
-        write_sibling_fanout_fixture(&root);
+        write_sibling_direct_files_fixture(&root);
 
         let (scoped_output, scoped) =
             run_json(&root, &["check", "safe/lib.rs", "--format", "json"]);
@@ -196,22 +204,19 @@ mod when_a_check_is_scoped {
             .unwrap();
 
         assert_exit_code(&scoped_output, exit_codes::SUCCESS);
-        assert_eq!(
-            scoped["scope"],
-            json!({"kind": "paths", "paths": ["safe/lib.rs"]})
-        );
+        assert_eq!(scoped["paths"], json!(["safe/lib.rs"]));
         assert_exit_code(&full_output, exit_codes::CHECK_FAILURE);
-        assert_eq!(full["scope"], json!({"kind": "all"}));
-        assert_eq!(full["violations"][0]["kind"], "directory_fanout");
+        assert_eq!(full["paths"], json!("all"));
+        assert_eq!(full["violations"][0]["kind"], "directory_direct_files");
         assert_exit_code(&human, exit_codes::SUCCESS);
-        assert!(stdout(&human).contains("Policy: authored config at"));
+        assert!(stdout(&human).starts_with(AUTHORED_CONFIG_HEADER));
         assert!(
-            stdout(&human).contains("No sprawl-guard violations found in the requested scope.\n")
+            stdout(&human).contains("No sprawl-guard violations found in the selected paths.\n")
         );
     }
 }
 
-mod when_file_loc_is_reported_as_json {
+mod when_file_lines_is_reported_as_json {
     use super::*;
 
     #[test]
@@ -221,7 +226,7 @@ mod when_file_loc_is_reported_as_json {
             &root,
             indoc! {r#"
                 [limits.max_lines_per_file]
-                included_line_types = ["code", "comments"]
+                count_lines = ["comments"]
                 production = 1
                 test = 1
             "#},
@@ -243,16 +248,13 @@ mod when_file_loc_is_reported_as_json {
             .filter(|violation| {
                 matches!(
                     violation["kind"].as_str(),
-                    Some("file_loc" | "test_file_loc")
+                    Some("file_lines" | "test_file_lines")
                 )
             })
             .collect::<Vec<_>>();
         assert_eq!(file_violations.len(), 2);
         for violation in file_violations {
-            assert_eq!(
-                violation["included_line_types"],
-                json!(["code", "comments"])
-            );
+            assert_eq!(violation["count_lines"], json!(["comments"]));
             assert_eq!(
                 violation["line_counts"],
                 json!({"code": 2, "comments": 1, "blank_lines": 0})
@@ -290,13 +292,13 @@ mod when_a_measured_file_ratchet_is_reported_as_json {
         assert_eq!(
             json!({
                 "kind": violation["kind"],
-                "included_line_types": violation["included_line_types"],
+                "count_lines": violation["count_lines"],
                 "line_counts": violation["line_counts"],
                 "actual": violation["actual"],
             }),
             json!({
-                "kind": "file_loc_increased",
-                "included_line_types": ["code"],
+                "kind": "file_lines_increased",
+                "count_lines": [],
                 "line_counts": {"code": 2, "comments": 1, "blank_lines": 0},
                 "actual": 2,
             })
@@ -312,13 +314,13 @@ mod when_a_measured_file_ratchet_is_reported_as_json {
         assert_eq!(
             json!({
                 "kind": violation["kind"],
-                "included_line_types": violation["included_line_types"],
+                "count_lines": violation["count_lines"],
                 "line_counts": violation["line_counts"],
                 "actual": violation["actual"],
             }),
             json!({
-                "kind": "file_loc_stale",
-                "included_line_types": ["code"],
+                "kind": "file_lines_stale",
+                "count_lines": [],
                 "line_counts": {"code": 2, "comments": 1, "blank_lines": 0},
                 "actual": 2,
             })
@@ -340,13 +342,13 @@ mod when_a_dependency_lockfile_has_existing_ratchet_entries {
         let violations = report["violations"].as_array().unwrap();
         let file = violations
             .iter()
-            .find(|violation| violation["kind"] == "file_loc_stale")
+            .find(|violation| violation["kind"] == "file_lines_stale")
             .unwrap();
         assert_eq!(file["path"], "src/pnpm-lock.yaml");
         assert_eq!(file["actual"], serde_json::Value::Null);
         let directory = violations
             .iter()
-            .find(|violation| violation["kind"] == "directory_fanout_stale")
+            .find(|violation| violation["kind"] == "directory_direct_files_stale")
             .unwrap();
         assert_eq!(directory["path"], "src");
         assert_eq!(directory["actual"], 1);
@@ -357,7 +359,7 @@ mod when_rust_production_source_has_file_wide_cfg_test {
     use super::*;
 
     #[test]
-    fn it_excludes_the_file_from_production_loc() {
+    fn it_excludes_the_file_from_production_lines() {
         let root = TempDir::new().unwrap();
         write_config(
             &root,
@@ -386,10 +388,8 @@ mod when_rust_production_source_has_file_wide_cfg_test {
         assert_eq!(
             stdout(&output),
             format!(
-                "Policy: authored config at {}.\n\n{}{}",
-                root.path().join("sprawl-guard.toml").display(),
-                "No sprawl-guard violations found.\n",
-                "Checked 1 source file in 1 directory across 1 language.\n",
+                "{}No sprawl-guard violations found.\n{}",
+                AUTHORED_CONFIG_HEADER, "Checked 1 source file in 1 directory across 1 language.\n",
             )
         );
         assert_eq!(stderr(&output), "");
@@ -440,7 +440,7 @@ mod when_rust_cfg_test_preprocessing_fails {
 }
 
 #[cfg(unix)]
-mod when_traversal_error_policy_is_overridden {
+mod when_unreadable_paths_is_overridden {
     use super::*;
 
     #[test]
@@ -450,13 +450,7 @@ mod when_traversal_error_policy_is_overridden {
 
         let (output, json) = run_json(
             &root,
-            &[
-                "check",
-                "--format",
-                "json",
-                "--traversal-error-policy",
-                "warn",
-            ],
+            &["check", "--format", "json", "--unreadable-paths", "warn"],
         );
 
         assert_exit_code(&output, exit_codes::SUCCESS);
@@ -464,7 +458,7 @@ mod when_traversal_error_policy_is_overridden {
             json["coverage"],
             json!({
                 "kind": "partial",
-                "traversal_incidents": [{
+                "unreadable_paths": [{
                     "detail": "symlink loop found",
                     "kind": "symlink_loop",
                     "path": "real/cycle",
@@ -477,11 +471,11 @@ mod when_traversal_error_policy_is_overridden {
 }
 
 #[cfg(unix)]
-mod when_default_traversal_error_policy_fails {
+mod when_default_unreadable_paths_fails {
     use super::*;
 
     #[test]
-    fn it_serializes_collected_incidents_for_json_output() {
+    fn it_serializes_collected_unreadable_paths_for_json_output() {
         let root = TempDir::new().unwrap();
         write_directory_symlink_loop_fixture(&root);
 
@@ -495,11 +489,11 @@ mod when_default_traversal_error_policy_fails {
                 "root": root.path().canonicalize().unwrap().display().to_string(),
                 "config_source": {
                     "kind": "authored",
-                    "path": root.path().join("sprawl-guard.toml").display().to_string(),
+                    "path": root.path().canonicalize().unwrap().join("sprawl-guard.toml").display().to_string(),
                 },
                 "coverage": {
                     "kind": "partial",
-                    "traversal_incidents": [{
+                    "unreadable_paths": [{
                         "detail": "symlink loop found",
                         "kind": "symlink_loop",
                         "path": "real/cycle",
@@ -509,7 +503,7 @@ mod when_default_traversal_error_policy_fails {
                 "warnings": [],
                 "error": {
                     "kind": "traversal_failed",
-                    "message": "traversal completed with 1 incident(s)",
+                    "message": "could not read 1 path(s)",
                 },
                 "violations": [],
             })
@@ -518,7 +512,7 @@ mod when_default_traversal_error_policy_fails {
     }
 
     #[test]
-    fn it_prints_collected_incidents_for_human_output() {
+    fn it_prints_collected_unreadable_paths_for_human_output() {
         let root = TempDir::new().unwrap();
         write_directory_symlink_loop_fixture(&root);
 
@@ -527,19 +521,19 @@ mod when_default_traversal_error_policy_fails {
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
         assert_eq!(stdout(&output), "");
-        assert!(stderr.contains("Policy: authored config at"));
-        assert!(stderr.contains("Traversal failed under"));
+        assert!(stderr.starts_with(AUTHORED_CONFIG_HEADER));
+        assert!(stderr.contains("Could not read 1 path(s) under "));
         assert!(stderr.contains("symlink loop found at real/cycle"));
     }
 }
 
-mod when_production_directory_exceeds_the_leaf_file_limit {
+mod when_production_directory_exceeds_the_direct_file_limit {
     use super::*;
 
     #[test]
     fn it_serializes_a_directory_violation_in_json_output() {
         let root = TempDir::new().unwrap();
-        write_rust_directory_fanout_fixture(&root);
+        write_rust_directory_direct_files_fixture(&root);
 
         let (output, json) = run_check_json(&root);
 
@@ -547,7 +541,7 @@ mod when_production_directory_exceeds_the_leaf_file_limit {
         assert_eq!(
             json["violations"][0],
             json!({
-                "kind": "directory_fanout",
+                "kind": "directory_direct_files",
                 "group": "source",
                 "path": "src",
                 "actual": 2,
@@ -598,12 +592,12 @@ mod when_sarif_output_is_requested {
                         },
                     }],
                     "message": {
-                        "text": "src/lib.rs has 2 configured LOC (included line types: code), exceeding limit 1.",
+                        "text": "src/lib.rs has 2 lines (counting code), over the limit of 1.",
                     },
                     "properties": {
                         "actual": 2,
-                        "included_line_types": ["code"],
-                        "kind": "file_loc",
+                        "count_lines": [],
+                        "kind": "file_lines",
                         "language": "Rust",
                         "line_counts": {
                             "code": 2,
@@ -614,10 +608,129 @@ mod when_sarif_output_is_requested {
                         "path": "src/lib.rs",
                         "ratchet": null,
                     },
-                    "ruleId": "sprawl-guard/file-loc",
+                    "ruleId": "sprawl-guard/file-lines",
                 },
             })
         );
         assert_eq!(stderr(&output), "");
+    }
+}
+
+mod when_the_config_file_is_under_the_root {
+    use super::*;
+
+    const CONFIG: &str = "schema_version = 2\n\n[limits.max_lines_per_file]\nproduction = 1\n";
+
+    #[test]
+    fn it_does_not_check_the_default_config_as_source() {
+        let root = TempDir::new().unwrap();
+        write_file(&root, "sprawl-guard.toml", CONFIG);
+
+        let (output, report) = run_json(&root, &["check", "--format", "json"]);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(report["summary"]["files_checked"], json!(0));
+    }
+
+    #[test]
+    fn it_does_not_check_an_explicit_config_as_source() {
+        let root = TempDir::new().unwrap();
+        write_file(&root, "config/custom.toml", CONFIG);
+
+        let (output, report) = run_json(
+            &root,
+            &[
+                "check",
+                "--format",
+                "json",
+                "--config",
+                "config/custom.toml",
+            ],
+        );
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(report["summary"]["files_checked"], json!(0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn it_does_not_check_a_symlinked_config_as_source() {
+        let root = TempDir::new().unwrap();
+        let shared = TempDir::new().unwrap();
+        write_file(
+            &shared,
+            "shared.toml",
+            &format!("{CONFIG}\n[traversal]\nfollow_symlinks = \"files\"\n"),
+        );
+        std::os::unix::fs::symlink(
+            shared.path().join("shared.toml"),
+            root.path().join("sprawl-guard.toml"),
+        )
+        .unwrap();
+
+        let (output, report) = run_json(&root, &["check", "--format", "json"]);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(report["summary"]["files_checked"], json!(0));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn it_does_not_check_a_config_under_a_symlinked_directory_as_source() {
+        let root = TempDir::new().unwrap();
+        let shared = TempDir::new().unwrap();
+        write_file(
+            &shared,
+            "sprawl.toml",
+            &format!("{CONFIG}\n[traversal]\nfollow_symlinks = \"directories\"\n"),
+        );
+        std::os::unix::fs::symlink(shared.path(), root.path().join("shared")).unwrap();
+
+        let (output, report) = run_json(
+            &root,
+            &[
+                "check",
+                "--config",
+                "shared/sprawl.toml",
+                "--format",
+                "json",
+            ],
+        );
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(report["summary"]["files_checked"], json!(0));
+    }
+
+    #[test]
+    fn explain_reports_the_config_exclusion() {
+        let root = TempDir::new().unwrap();
+        write_file(&root, "sprawl-guard.toml", CONFIG);
+
+        let (output, report) =
+            run_json(&root, &["explain", "--format", "json", "sprawl-guard.toml"]);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(report["kind"], "config_excluded");
+    }
+}
+
+mod when_a_check_passes_with_ratchet_entries {
+    use super::*;
+
+    #[test]
+    fn it_reports_how_many_entries_remain() {
+        let root = TempDir::new().unwrap();
+        write_config(&root, "[limits.max_lines_per_file]\nproduction = 1\n");
+        write_file(&root, "src/lib.rs", "fn first() {}\nfn second() {}\n");
+        let update = sprawl_guard(&root)
+            .args(["update", "--write"])
+            .output()
+            .unwrap();
+        assert_exit_code(&update, exit_codes::SUCCESS);
+
+        let output = sprawl_guard(&root).arg("check").output().unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert!(stdout(&output).ends_with("Passed with 1 ratchet entry remaining.\n"));
     }
 }

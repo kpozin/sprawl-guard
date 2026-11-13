@@ -5,7 +5,10 @@ use std::process::Output;
 use super::common::*;
 
 fn assert_init_writes_config(root: &TempDir, expected: toml::Table) -> Output {
-    let output = sprawl_guard(root).arg("init").output().unwrap();
+    let output = sprawl_guard(root)
+        .args(["init", "--write"])
+        .output()
+        .unwrap();
     let authored_config = read_config(root);
     let config = read_config_toml(root);
 
@@ -49,7 +52,7 @@ mod when_config_path_is_explicit {
         write_file(&root, "src/lib.rs", "fn main() {}\n");
 
         let output = sprawl_guard(&root)
-            .args(["--config", "custom-sprawl.toml", "init"])
+            .args(["init", "--write", "--config", "custom-sprawl.toml"])
             .output()
             .unwrap();
 
@@ -71,7 +74,7 @@ mod when_config_path_is_explicit {
         write_file(&root, "src/lib.rs", "fn main() {}\n");
 
         let output = sprawl_guard(&root)
-            .args(["--config", "alternate.toml", "init"])
+            .args(["init", "--write", "--config", "alternate.toml"])
             .output()
             .unwrap();
 
@@ -91,7 +94,7 @@ mod when_config_path_is_explicit {
         write_file(&root, "src/lib.rs", "fn main() {}\n");
 
         let output = sprawl_guard(&root)
-            .args(["--config", "alternate.toml", "init"])
+            .args(["init", "--write", "--config", "alternate.toml"])
             .output()
             .unwrap();
 
@@ -124,22 +127,20 @@ mod when_language_selection_flags_are_supplied {
     }
 }
 
-mod when_dry_run_is_used {
+mod when_write_is_omitted {
     use super::*;
 
     #[test]
     fn it_prints_the_config_without_writing_it() {
         let root = TempDir::new().unwrap();
 
-        let output = sprawl_guard(&root)
-            .args(["init", "--dry-run"])
-            .output()
-            .unwrap();
+        let output = sprawl_guard(&root).arg("init").output().unwrap();
         let config_path = root.child("sprawl-guard.toml");
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert!(!config_path.path().exists());
         assert!(stdout(&output).contains("Would write "));
+        assert!(stdout(&output).contains("Preview only; use --write to create it."));
         assert!(stdout(&output).contains(concat!(
             "#:schema https://kpozin.github.io/sprawl-guard/schemas/v2/",
             "sprawl-guard.schema.json\n"
@@ -155,17 +156,28 @@ mod when_dry_run_is_used {
     }
 
     #[test]
-    fn it_reports_that_a_real_write_would_refuse_an_existing_config() {
+    fn it_rejects_the_removed_dry_run_option() {
         let root = TempDir::new().unwrap();
-        write_config(&root, "[languages.rust]\nenabled = true\n");
 
         let output = sprawl_guard(&root)
             .args(["init", "--dry-run"])
             .output()
             .unwrap();
 
+        assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+        assert!(stderr(&output).contains("unexpected argument"));
+        assert!(!root.child("sprawl-guard.toml").path().exists());
+    }
+
+    #[test]
+    fn it_reports_that_a_write_would_be_refused_for_an_existing_config() {
+        let root = TempDir::new().unwrap();
+        write_config(&root, "[languages.rust]\nenabled = true\n");
+
+        let output = sprawl_guard(&root).arg("init").output().unwrap();
+
         assert_exit_code(&output, exit_codes::SUCCESS);
-        assert!(stdout(&output).contains("A real write would be refused"));
+        assert!(stdout(&output).contains("--write would be refused"));
         assert_eq!(stderr(&output), "");
     }
 }
@@ -178,7 +190,10 @@ mod when_config_already_exists {
         let root = TempDir::new().unwrap();
         write_config(&root, "[languages.rust]\nenabled = true\n");
 
-        let output = sprawl_guard(&root).arg("init").output().unwrap();
+        let output = sprawl_guard(&root)
+            .args(["init", "--write"])
+            .output()
+            .unwrap();
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
         assert!(stderr(&output).contains("config file already exists:"));
@@ -193,7 +208,10 @@ mod when_config_already_exists {
             "schema_version = 1\n[languages.rust]\nenabled = true\n",
         );
 
-        let output = sprawl_guard(&root).arg("init").output().unwrap();
+        let output = sprawl_guard(&root)
+            .args(["init", "--write"])
+            .output()
+            .unwrap();
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert!(root.child("sprawl-guard.toml").path().exists());
@@ -228,7 +246,10 @@ mod when_repository_sources_cannot_be_counted {
         let root = TempDir::new().unwrap();
         write_oversized_rust_source(&root, "src/huge.rs");
 
-        let output = sprawl_guard(&root).arg("init").output().unwrap();
+        let output = sprawl_guard(&root)
+            .args(["init", "--write"])
+            .output()
+            .unwrap();
 
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert!(root.child("sprawl-guard.toml").path().exists());

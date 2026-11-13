@@ -54,9 +54,9 @@ impl RelativePath {
         &self.0
     }
 
-    /// Returns whether this path is exactly the scope or under it.
+    /// Returns whether this path is exactly the selected path or under it.
     ///
-    /// Empty scopes represent the repository root.
+    /// An empty selected path represents the repository root.
     pub fn is_at_or_under(&self, scope: &Self) -> bool {
         scope.as_str().is_empty()
             || self.as_str() == scope.as_str()

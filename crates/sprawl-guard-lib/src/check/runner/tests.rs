@@ -11,7 +11,7 @@ use crate::test_support::{
     assert_symlink_loop_error, load_config, write_config, write_rust_enabled_config,
 };
 use crate::{
-    CheckStatus, CheckWarningKind, DirectoryFanoutViolation, RatchetViolation, RelativePath,
+    CheckStatus, CheckWarningKind, DirectoryDirectFilesViolation, RatchetViolation, RelativePath,
 };
 
 fn write_ratchet(root: &Path, contents: &str) {
@@ -44,12 +44,12 @@ fn write_rust_source_with_function_count(root: &Path, path: &str, function_count
     write_file(root, path, &contents);
 }
 
-fn write_rust_directory_fanout_fixture(root: &Path) {
+fn write_rust_directory_direct_files_fixture(root: &Path) {
     write_config(
         root,
         indoc! {r#"
             [limits]
-            max_leaf_files_per_directory = { production = 1 }
+            max_direct_files_per_directory = { production = 1 }
 
             [languages.rust]
             enabled = true
@@ -64,7 +64,7 @@ fn check_root(root: &Path) -> Result<CheckReport> {
     check_with_config(root, &config, vec![], None, None)
 }
 
-fn check_scopes(root: &Path, paths: Vec<PathBuf>) -> Result<CheckReport> {
+fn check_selected_paths(root: &Path, paths: Vec<PathBuf>) -> Result<CheckReport> {
     let config = load_config(root);
     check_with_config(root, &config, paths, None, None)
 }
@@ -72,10 +72,10 @@ fn check_scopes(root: &Path, paths: Vec<PathBuf>) -> Result<CheckReport> {
 fn check_with_traversal_policy(
     root: &Path,
     paths: Vec<PathBuf>,
-    traversal_error_policy: crate::config::TraversalErrorPolicy,
+    unreadable_paths: crate::config::UnreadablePathPolicy,
 ) -> Result<CheckReport> {
     let config = load_config(root);
-    check_with_config(root, &config, paths, None, Some(traversal_error_policy))
+    check_with_config(root, &config, paths, None, Some(unreadable_paths))
 }
 
 fn check_with_ratchet_current(root: &Path, require_ratchet_current: bool) -> Result<CheckReport> {
@@ -88,25 +88,25 @@ fn check_with_config(
     config: &Config,
     paths: Vec<PathBuf>,
     require_ratchet_current: Option<bool>,
-    traversal_error_policy: Option<crate::config::TraversalErrorPolicy>,
+    unreadable_paths: Option<crate::config::UnreadablePathPolicy>,
 ) -> Result<CheckReport> {
     check(CheckOptions {
         root: root.to_path_buf(),
-        policy: crate::config::ResolvedPolicy::built_in(config),
+        policy: crate::config::ResolvedConfig::built_in(config),
         paths,
         require_ratchet_current,
-        traversal_error_policy,
+        unreadable_paths,
     })
 }
 
 fn count_rust_production_source(root: &Path, source_text: &str) -> CountedSource {
-    count_rust_production_source_with_line_types(root, source_text, IncludedLineTypes::Code)
+    count_rust_production_source_with_line_types(root, source_text, CountLines::Code)
 }
 
 fn count_rust_production_source_with_line_types(
     root: &Path,
     source_text: &str,
-    included_line_types: IncludedLineTypes,
+    count_lines: CountLines,
 ) -> CountedSource {
     const SOURCE_PATH: &str = "src/lib.rs";
 
@@ -124,29 +124,29 @@ fn count_rust_production_source_with_line_types(
         &TokeiCodeLineCounter,
         &source,
         &root.join(SOURCE_PATH),
-        included_line_types,
+        count_lines,
     )
     .unwrap()
 }
 
-fn file_violations(report: &CheckReport) -> Vec<&FileLocViolation> {
+fn file_violations(report: &CheckReport) -> Vec<&FileLinesViolation> {
     report
         .violations()
         .iter()
         .filter_map(|violation| match violation {
-            CheckViolation::FileLoc(violation) => Some(violation),
-            CheckViolation::DirectoryFanout(_) | CheckViolation::Ratchet(_) => None,
+            CheckViolation::FileLines(violation) => Some(violation),
+            CheckViolation::DirectoryDirectFiles(_) | CheckViolation::Ratchet(_) => None,
         })
         .collect()
 }
 
-fn directory_violations(report: &CheckReport) -> Vec<&DirectoryFanoutViolation> {
+fn directory_violations(report: &CheckReport) -> Vec<&DirectoryDirectFilesViolation> {
     report
         .violations()
         .iter()
         .filter_map(|violation| match violation {
-            CheckViolation::DirectoryFanout(violation) => Some(violation),
-            CheckViolation::FileLoc(_) | CheckViolation::Ratchet(_) => None,
+            CheckViolation::DirectoryDirectFiles(violation) => Some(violation),
+            CheckViolation::FileLines(_) | CheckViolation::Ratchet(_) => None,
         })
         .collect()
 }
@@ -157,7 +157,7 @@ fn ratchet_violations(report: &CheckReport) -> Vec<&RatchetViolation> {
         .iter()
         .filter_map(|violation| match violation {
             CheckViolation::Ratchet(violation) => Some(violation),
-            CheckViolation::FileLoc(_) | CheckViolation::DirectoryFanout(_) => None,
+            CheckViolation::FileLines(_) | CheckViolation::DirectoryDirectFiles(_) => None,
         })
         .collect()
 }
@@ -165,7 +165,7 @@ fn ratchet_violations(report: &CheckReport) -> Vec<&RatchetViolation> {
 fn single_failed_file_violation(
     report: &CheckReport,
     kind: FileViolationKind,
-) -> &FileLocViolation {
+) -> &FileLinesViolation {
     let violations = file_violations(report);
     assert_eq!(report.status(), CheckStatus::Failed);
     assert_eq!(violations.len(), 1);
@@ -173,7 +173,7 @@ fn single_failed_file_violation(
     violations[0]
 }
 
-fn single_directory_violation(report: &CheckReport) -> &DirectoryFanoutViolation {
+fn single_directory_violation(report: &CheckReport) -> &DirectoryDirectFilesViolation {
     let violations = directory_violations(report);
     assert_eq!(violations.len(), 1);
     violations[0]
@@ -187,8 +187,8 @@ impl CodeLineCounter for MismatchedLineTypeCounter {
         &self,
         _path: &Path,
         _language: crate::LanguageId,
-        _included_line_types: IncludedLineTypes,
-    ) -> Result<LocMeasurement> {
+        _count_lines: CountLines,
+    ) -> Result<LineMeasurement> {
         mismatched_measurement()
     }
 
@@ -196,8 +196,8 @@ impl CodeLineCounter for MismatchedLineTypeCounter {
         &self,
         _source: &str,
         _language: crate::LanguageId,
-        _included_line_types: IncludedLineTypes,
-    ) -> Result<LocMeasurement> {
+        _count_lines: CountLines,
+    ) -> Result<LineMeasurement> {
         mismatched_measurement()
     }
 
@@ -210,9 +210,9 @@ impl CodeLineCounter for MismatchedLineTypeCounter {
     }
 }
 
-fn mismatched_measurement() -> Result<LocMeasurement> {
-    Ok(LocMeasurement::new(
-        IncludedLineTypes::Code,
+fn mismatched_measurement() -> Result<LineMeasurement> {
+    Ok(LineMeasurement::new(
+        CountLines::Code,
         crate::LineCounts::new(
             crate::LineCount::new(1),
             crate::LineCount::new(2),
@@ -232,7 +232,7 @@ mod when_an_injected_counter_reports_a_different_aggregate_policy {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                included_line_types = ["code", "comments"]
+                count_lines = ["comments"]
                 production = 1
             "#},
         );
@@ -242,19 +242,19 @@ mod when_an_injected_counter_reports_a_different_aggregate_policy {
         let report = check_with_counter(
             CheckOptions {
                 root: tempdir.path().to_path_buf(),
-                policy: crate::config::ResolvedPolicy::built_in(&config),
+                policy: crate::config::ResolvedConfig::built_in(&config),
                 paths: vec![],
                 require_ratchet_current: None,
-                traversal_error_policy: None,
+                unreadable_paths: None,
             },
             &MismatchedLineTypeCounter,
         )
         .unwrap();
 
-        let violation = single_failed_file_violation(&report, FileViolationKind::FileLoc);
+        let violation = single_failed_file_violation(&report, FileViolationKind::FileLines);
         assert_eq!(
-            violation.measurement.included_line_types(),
-            IncludedLineTypes::CodeAndComments
+            violation.measurement.count_lines(),
+            CountLines::CodeAndComments
         );
         assert_eq!(violation.measurement.actual().get(), 3);
     }
@@ -264,7 +264,7 @@ mod when_source_exceeds_the_production_file_limit {
     use super::*;
 
     #[test]
-    fn it_reports_a_file_loc_violation() {
+    fn it_reports_a_file_lines_violation() {
         let tempdir = tempfile::tempdir().unwrap();
         write_config(
             tempdir.path(),
@@ -276,7 +276,7 @@ mod when_source_exceeds_the_production_file_limit {
                 enabled = true
 
                 [traversal]
-                error_policy = "warn"
+                unreadable_paths = "warn"
             "#},
         );
         write_rust_source_with_function_count(tempdir.path(), "src/lib.rs", 3);
@@ -286,7 +286,7 @@ mod when_source_exceeds_the_production_file_limit {
         let violations = file_violations(&report);
         assert_eq!(report.status(), CheckStatus::Failed);
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].kind, FileViolationKind::FileLoc);
+        assert_eq!(violations[0].kind, FileViolationKind::FileLines);
         assert_eq!(violations[0].measurement.actual().get(), 3);
     }
 }
@@ -343,12 +343,12 @@ mod when_source_exceeds_the_byte_size_limit {
 mod when_recoverable_traversal_errors_occur {
     use std::os::unix::fs::symlink;
 
-    use crate::classification::TraversalIncidentSeverity;
+    use crate::classification::UnreadablePathSeverity;
 
     use super::*;
 
     #[test]
-    fn it_collects_incidents_before_failing_in_fail_mode() {
+    fn it_collects_unreadable_paths_before_failing_in_fail_mode() {
         let tempdir = tempfile::tempdir().unwrap();
         write_config(
             tempdir.path(),
@@ -376,7 +376,7 @@ mod when_recoverable_traversal_errors_occur {
             indoc! {r#"
                 [traversal]
                 follow_symlinks = "directories"
-                error_policy = "warn"
+                unreadable_paths = "warn"
 
                 [languages.rust]
                 enabled = true
@@ -389,10 +389,10 @@ mod when_recoverable_traversal_errors_occur {
 
         assert_eq!(report.status(), CheckStatus::Passed);
         assert!(!report.analysis_complete());
-        assert_eq!(report.traversal_incidents().len(), 1);
+        assert_eq!(report.unreadable_paths().len(), 1);
         assert_eq!(
-            report.traversal_incidents()[0].severity,
-            TraversalIncidentSeverity::Warning
+            report.unreadable_paths()[0].severity,
+            UnreadablePathSeverity::Warning
         );
     }
 }
@@ -401,7 +401,7 @@ mod when_test_code_exceeds_the_test_file_limit {
     use super::*;
 
     #[test]
-    fn it_reports_a_test_file_loc_violation() {
+    fn it_reports_a_test_file_lines_violation() {
         let tempdir = tempfile::tempdir().unwrap();
         write_config(
             tempdir.path(),
@@ -425,7 +425,7 @@ mod when_test_code_exceeds_the_test_file_limit {
 
         let report = check_root(tempdir.path()).unwrap();
 
-        let violation = single_failed_file_violation(&report, FileViolationKind::TestFileLoc);
+        let violation = single_failed_file_violation(&report, FileViolationKind::TestFileLines);
         assert_eq!(violation.measurement.actual().get(), 3);
     }
 }
@@ -463,7 +463,7 @@ mod when_rust_production_source_contains_cfg_test_items {
 
         let report = check_root(tempdir.path()).unwrap();
 
-        let violation = single_failed_file_violation(&report, FileViolationKind::FileLoc);
+        let violation = single_failed_file_violation(&report, FileViolationKind::FileLines);
         assert_eq!(violation.measurement.actual().get(), 2);
     }
 
@@ -492,7 +492,7 @@ mod when_rust_production_source_contains_cfg_test_items {
 
         let report = check_root(tempdir.path()).unwrap();
 
-        let violation = single_failed_file_violation(&report, FileViolationKind::FileLoc);
+        let violation = single_failed_file_violation(&report, FileViolationKind::FileLines);
         assert!(violation.measurement.actual().get() > 1);
     }
 
@@ -537,7 +537,7 @@ mod when_rust_production_source_contains_cfg_test_items {
                     fn fixture() {}
                 }
             "#},
-            IncludedLineTypes::All,
+            CountLines::All,
         );
 
         assert_eq!(
@@ -579,7 +579,7 @@ mod when_rust_test_source_contains_cfg_test_items {
 
         let report = check_root(tempdir.path()).unwrap();
 
-        let violation = single_failed_file_violation(&report, FileViolationKind::TestFileLoc);
+        let violation = single_failed_file_violation(&report, FileViolationKind::TestFileLines);
         assert!(violation.measurement.actual().get() > 1);
     }
 }
@@ -594,7 +594,7 @@ mod when_rust_cfg_test_preprocessing_fails {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                included_line_types = ["code", "comments"]
+                count_lines = ["comments"]
                 production = 1
 
                 [languages.rust]
@@ -620,7 +620,7 @@ mod when_rust_cfg_test_preprocessing_fails {
         assert_eq!(report.warnings()[0].path.as_str(), "src/lib.rs");
         assert!(!report.warnings()[0].detail.is_empty());
         assert_eq!(report.status(), CheckStatus::Failed);
-        let violation = single_failed_file_violation(&report, FileViolationKind::FileLoc);
+        let violation = single_failed_file_violation(&report, FileViolationKind::FileLines);
         assert_eq!(violation.measurement.actual().get(), 2);
     }
 
@@ -653,7 +653,7 @@ mod when_rust_cfg_test_preprocessing_fails {
     }
 }
 
-mod when_checking_directory_fan_out {
+mod when_checking_directory_direct_files {
     use super::*;
 
     mod when_languages_share_a_custom_group {
@@ -665,13 +665,13 @@ mod when_checking_directory_fan_out {
             write_config(
                 tempdir.path(),
                 indoc! {r#"
-                    [limits.max_leaf_files_per_directory]
+                    [limits.max_direct_files_per_directory]
                     production = 1
 
                     [language_groups.frontend]
                     languages = ["javascript", "typescript", "jsx", "tsx"]
 
-                    [language_groups.frontend.limits.max_leaf_files_per_directory]
+                    [language_groups.frontend.limits.max_direct_files_per_directory]
                     production = 3
                 "#},
             );
@@ -713,7 +713,7 @@ mod when_checking_directory_fan_out {
                     [language_groups.frontend]
                     languages = ["typescript"]
 
-                    [language_groups.frontend.limits.max_leaf_files_per_directory]
+                    [language_groups.frontend.limits.max_direct_files_per_directory]
                     production = 2
                     test = 1
                 "#},
@@ -726,7 +726,10 @@ mod when_checking_directory_fan_out {
             let report = check_root(tempdir.path()).unwrap();
 
             let violation = single_directory_violation(&report);
-            assert_eq!(violation.kind, DirectoryViolationKind::TestDirectoryFanout);
+            assert_eq!(
+                violation.kind,
+                DirectoryViolationKind::TestDirectoryDirectFiles
+            );
             assert_eq!(
                 violation.group,
                 crate::LanguageGroupId::custom("frontend").unwrap()
@@ -745,18 +748,18 @@ mod when_checking_directory_fan_out {
             write_config(
                 tempdir.path(),
                 indoc! {r#"
-                    [limits.max_leaf_files_per_directory]
+                    [limits.max_direct_files_per_directory]
                     production = 8
 
                     [language_groups.frontend]
                     languages = ["typescript"]
 
-                    [language_groups.frontend.limits.max_leaf_files_per_directory]
+                    [language_groups.frontend.limits.max_direct_files_per_directory]
                     production = 1
 
                     [[overrides]]
                     paths = ["src/**"]
-                    max_leaf_files_per_directory = { production = 2 }
+                    max_direct_files_per_directory = { production = 2 }
                     reason = "frontend modules are colocated"
                 "#},
             );
@@ -786,7 +789,7 @@ mod when_checking_directory_fan_out {
                 tempdir.path(),
                 indoc! {r#"
                     [limits]
-                    max_leaf_files_per_directory = { production = 1 }
+                    max_direct_files_per_directory = { production = 1 }
 
                     [languages.markdown]
                     enabled = true
@@ -812,11 +815,11 @@ mod when_checking_directory_fan_out {
                 tempdir.path(),
                 indoc! {r#"
                     [limits]
-                    max_leaf_files_per_directory = { production = 8 }
+                    max_direct_files_per_directory = { production = 8 }
 
                     [[overrides]]
                     paths = ["docs/**"]
-                    max_leaf_files_per_directory = { production = 1 }
+                    max_direct_files_per_directory = { production = 1 }
                     reason = "keep documentation directories focused"
 
                     [languages.markdown]
@@ -842,7 +845,7 @@ mod when_checking_directory_fan_out {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [languages.rust]
                 enabled = true
@@ -857,7 +860,10 @@ mod when_checking_directory_fan_out {
         assert_eq!(report.status(), CheckStatus::Failed);
         assert!(file_violations(&report).is_empty());
         assert_eq!(violations.len(), 1);
-        assert_eq!(violations[0].kind, DirectoryViolationKind::DirectoryFanout);
+        assert_eq!(
+            violations[0].kind,
+            DirectoryViolationKind::DirectoryDirectFiles
+        );
         assert_eq!(violations[0].actual.get(), 2);
         assert_eq!(
             violations[0]
@@ -876,7 +882,7 @@ mod when_checking_directory_fan_out {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [languages.rust]
                 enabled = true
@@ -902,7 +908,7 @@ mod when_checking_directory_fan_out {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [languages.rust]
                 enabled = true
@@ -928,7 +934,7 @@ mod when_checking_directory_fan_out {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1, test = 1 }
+                max_direct_files_per_directory = { production = 1, test = 1 }
 
                 [languages.rust]
                 enabled = true
@@ -943,7 +949,7 @@ mod when_checking_directory_fan_out {
         assert!(
             violations
                 .iter()
-                .all(|violation| violation.kind == DirectoryViolationKind::TestDirectoryFanout)
+                .all(|violation| violation.kind == DirectoryViolationKind::TestDirectoryDirectFiles)
         );
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].path.as_str(), "tests");
@@ -956,11 +962,11 @@ mod when_checking_directory_fan_out {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [[overrides]]
                 paths = ["src/**"]
-                max_leaf_files_per_directory = { production = 2 }
+                max_direct_files_per_directory = { production = 2 }
                 reason = "generated fan-out is tracked separately"
 
                 [languages.rust]
@@ -982,11 +988,11 @@ mod when_checking_directory_fan_out {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [[overrides]]
                 paths = ["src/*"]
-                max_leaf_files_per_directory = { production = 2 }
+                max_direct_files_per_directory = { production = 2 }
                 reason = "single child exception"
 
                 [languages.rust]
@@ -1010,11 +1016,11 @@ mod when_checking_directory_fan_out {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { test = 1 }
+                max_direct_files_per_directory = { test = 1 }
 
                 [[overrides]]
                 paths = ["tests/**"]
-                max_leaf_files_per_directory = { test = 2 }
+                max_direct_files_per_directory = { test = 2 }
                 reason = "integration fixture fan-out"
 
                 [languages.rust]
@@ -1036,7 +1042,7 @@ mod when_checking_directory_fan_out {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1, test = 1 }
+                max_direct_files_per_directory = { production = 1, test = 1 }
 
                 [languages.rust]
                 enabled = true
@@ -1055,8 +1061,8 @@ mod when_checking_directory_fan_out {
             .violations()
             .iter()
             .filter_map(|violation| match violation {
-                CheckViolation::DirectoryFanout(violation) => Some(violation),
-                CheckViolation::FileLoc(_) | CheckViolation::Ratchet(_) => None,
+                CheckViolation::DirectoryDirectFiles(violation) => Some(violation),
+                CheckViolation::FileLines(_) | CheckViolation::Ratchet(_) => None,
             })
             .map(|violation| violation.path.as_str())
             .collect::<Vec<_>>();
@@ -1083,7 +1089,7 @@ mod when_resolving_limits {
             tempdir.path(),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                included_line_types = ["code", "comments"]
+                count_lines = ["comments"]
                 production = 1
             "#},
         );
@@ -1131,7 +1137,7 @@ mod when_resolving_limits {
                 production = 1
 
                 [languages.markdown.limits.max_lines_per_file]
-                included_line_types = ["code"]
+                count_lines = []
             "#},
         );
         write_file(
@@ -1242,14 +1248,14 @@ mod when_resolving_limits {
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [languages.rust]
                 enabled = true
 
                 [[overrides]]
                 paths = ["src/**"]
-                max_leaf_files_per_directory = { production = 2 }
+                max_direct_files_per_directory = { production = 2 }
                 reason = "module fan-out exception"
 
                 [[overrides]]
@@ -1268,13 +1274,13 @@ mod when_resolving_limits {
     }
 
     #[test]
-    fn it_does_not_apply_language_file_limits_to_directory_fan_out() {
+    fn it_does_not_apply_language_file_limits_to_directory_direct_files() {
         let tempdir = tempfile::tempdir().unwrap();
         write_config(
             tempdir.path(),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [languages.rust]
                 enabled = true
@@ -1289,7 +1295,7 @@ mod when_resolving_limits {
         let report = check_root(tempdir.path()).unwrap();
 
         let violation = single_directory_violation(&report);
-        assert_eq!(violation.kind, DirectoryViolationKind::DirectoryFanout);
+        assert_eq!(violation.kind, DirectoryViolationKind::DirectoryDirectFiles);
         assert_eq!(violation.limit.get(), 1);
     }
 }
@@ -1320,7 +1326,7 @@ mod when_check_is_path_scoped {
         write_rust_source_with_function_count(tempdir.path(), "checked/lib.rs", 2);
         write_rust_source_with_function_count(tempdir.path(), "skipped/lib.rs", 2);
 
-        let report = check_scopes(tempdir.path(), vec![PathBuf::from("checked")]).unwrap();
+        let report = check_selected_paths(tempdir.path(), vec![PathBuf::from("checked")]).unwrap();
 
         let violations = file_violations(&report);
         assert_eq!(violations.len(), 1);
@@ -1336,11 +1342,11 @@ mod when_check_is_path_scoped {
         let error = check_with_traversal_policy(
             tempdir.path(),
             vec![PathBuf::from("missing")],
-            crate::config::TraversalErrorPolicy::Warn,
+            crate::config::UnreadablePathPolicy::Warn,
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("check scope does not exist"));
+        assert!(error.to_string().contains("selected path does not exist"));
     }
 
     #[cfg(unix)]
@@ -1394,7 +1400,7 @@ mod when_check_is_path_scoped {
         write_rust_source_with_function_count(tempdir.path(), "checked/lib.rs", 2);
         write_file(tempdir.path(), "ambiguous", "fn a() {}\n");
 
-        let report = check_scopes(tempdir.path(), vec![PathBuf::from("checked")]).unwrap();
+        let report = check_selected_paths(tempdir.path(), vec![PathBuf::from("checked")]).unwrap();
 
         let violations = file_violations(&report);
         assert_eq!(violations.len(), 1);
@@ -1405,7 +1411,7 @@ mod when_check_is_path_scoped {
 mod when_checking_with_a_ratchet_file {
     use super::*;
 
-    fn write_file_ratchet(root: &Path, path: &str, loc: u32) {
+    fn write_file_ratchet(root: &Path, path: &str, lines: u32) {
         write_ratchet(
             root,
             &formatdoc! {r#"
@@ -1414,17 +1420,17 @@ mod when_checking_with_a_ratchet_file {
                 [[files]]
                 path = "{path}"
                 role = "production"
-                max_loc = {loc}
+                max_lines = {lines}
             "#},
         );
     }
 
-    fn write_rust_directory_ratchet_fixture(root: &Path, leaf_files: u32) {
+    fn write_rust_directory_ratchet_fixture(root: &Path, max_direct_files: u32) {
         write_config(
             root,
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [languages.rust]
                 enabled = true
@@ -1439,7 +1445,7 @@ mod when_checking_with_a_ratchet_file {
                 path = "src"
                 role = "production"
                 group = "source"
-                leaf_files = {leaf_files}
+                max_direct_files = {max_direct_files}
             "#},
         );
         write_file(root, "src/a.rs", "fn a() {}\n");
@@ -1476,7 +1482,7 @@ mod when_checking_with_a_ratchet_file {
         assert_eq!(ratchet_violations.len(), 1);
         assert_eq!(
             ratchet_violations[0].kind(),
-            RatchetViolationKind::FileLocIncreased
+            RatchetViolationKind::FileLinesIncreased
         );
     }
 
@@ -1494,7 +1500,7 @@ mod when_checking_with_a_ratchet_file {
         assert_eq!(ratchet_violations.len(), 1);
         assert_eq!(
             ratchet_violations[0].kind(),
-            RatchetViolationKind::FileLocStale
+            RatchetViolationKind::FileLinesStale
         );
         assert_eq!(ratchet_violations[0].actual().unwrap().get(), 2);
     }
@@ -1526,7 +1532,7 @@ mod when_checking_with_a_ratchet_file {
         assert_eq!(ratchet_violations.len(), 1);
         assert_eq!(
             ratchet_violations[0].kind(),
-            RatchetViolationKind::FileLocStale
+            RatchetViolationKind::FileLinesStale
         );
     }
 
@@ -1570,17 +1576,17 @@ mod when_checking_with_a_ratchet_file {
                 [[files]]
                 path = "checked/lib.rs"
                 role = "production"
-                max_loc = 2
+                max_lines = 2
 
                 [[files]]
                 path = "skipped/deleted.rs"
                 role = "production"
-                max_loc = 2
+                max_lines = 2
             "#},
         );
         write_rust_source_with_function_count(tempdir.path(), "checked/lib.rs", 2);
 
-        let report = check_scopes(tempdir.path(), vec![PathBuf::from("checked")]).unwrap();
+        let report = check_selected_paths(tempdir.path(), vec![PathBuf::from("checked")]).unwrap();
 
         assert_eq!(report.status(), CheckStatus::Passed);
         assert!(report.violations().is_empty());
@@ -1603,7 +1609,7 @@ mod when_checking_with_a_ratchet_file {
         #[test]
         fn it_does_not_cover_the_source_measurement_at_the_same_path() {
             let tempdir = tempfile::tempdir().unwrap();
-            write_rust_directory_fanout_fixture(tempdir.path());
+            write_rust_directory_direct_files_fixture(tempdir.path());
             write_ratchet(
                 tempdir.path(),
                 indoc! {r#"
@@ -1613,7 +1619,7 @@ mod when_checking_with_a_ratchet_file {
                     path = "src"
                     role = "production"
                     group = "documentation"
-                    leaf_files = 2
+                    max_direct_files = 2
                 "#},
             );
 
@@ -1680,7 +1686,7 @@ mod when_checking_with_a_ratchet_file {
                     path = "docs"
                     role = "production"
                     group = "documentation"
-                    leaf_files = 3
+                    max_direct_files = 3
                 "#},
             );
             write_file(tempdir.path(), "docs/a.md", "# A\n");
@@ -1719,11 +1725,11 @@ mod when_path_classified_tests_are_disabled {
             tempdir.path(),
             indoc! {r#"
                 [tests]
-                check_path_tests = false
+                check = false
 
                 [limits]
                 max_lines_per_file = { test = 1 }
-                max_leaf_files_per_directory = { test = 1 }
+                max_direct_files_per_directory = { test = 1 }
             "#},
         );
         write_ratchet(
@@ -1734,13 +1740,13 @@ mod when_path_classified_tests_are_disabled {
                 [[files]]
                 path = "tests/integration.rs"
                 role = "test"
-                max_loc = 2
+                max_lines = 2
 
                 [[directories]]
                 path = "tests"
                 role = "test"
                 group = "source"
-                leaf_files = 1
+                max_direct_files = 1
             "#},
         );
         write_file(

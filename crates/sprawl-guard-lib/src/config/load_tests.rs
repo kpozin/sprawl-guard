@@ -9,11 +9,10 @@ use tokei::LanguageType;
 use super::*;
 use crate::config::{
     ConfigSchemaVersion, LanguageConfig, SourceFileByteLimit, SymlinkTraversal,
-    TraversalEntryLimit, TraversalErrorPolicy,
+    TraversalEntryLimit, UnreadablePathPolicy,
 };
 use crate::{
-    CustomLanguageGroupId, GlobPattern, IncludedLineTypes, LanguageGroupId, LeafFileLimit,
-    LeafFiles,
+    CountLines, CustomLanguageGroupId, DirectFileLimit, DirectFiles, GlobPattern, LanguageGroupId,
 };
 
 fn load_config_fixture(root: &Path) -> Result<LoadedConfig> {
@@ -195,7 +194,7 @@ mod when_config_is_minimal {
     use super::*;
 
     #[test]
-    fn it_uses_the_default_directory_fanout_limits() {
+    fn it_uses_the_default_directory_direct_files_limits() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
@@ -205,13 +204,17 @@ mod when_config_is_minimal {
 
         let loaded = load_raw_config(tempdir.path()).unwrap();
 
-        let expected = LeafFileLimit::Finite(LeafFiles::new(10).unwrap());
+        let expected = DirectFileLimit::Finite(DirectFiles::new(10).unwrap());
         assert_eq!(
-            loaded.config.limits.max_leaf_files_per_directory.production,
+            loaded
+                .config
+                .limits
+                .max_direct_files_per_directory
+                .production,
             expected
         );
         assert_eq!(
-            loaded.config.limits.max_leaf_files_per_directory.test,
+            loaded.config.limits.max_direct_files_per_directory.test,
             expected
         );
     }
@@ -233,7 +236,7 @@ mod when_config_is_minimal {
 
         assert!(rust.is_enabled());
         assert_eq!(rust.common().include, None);
-        assert!(rust.common().additional_globs.is_empty());
+        assert!(rust.common().extend_include.is_empty());
         assert_patterns(&rust.common().test_globs, &["benches/**"]);
         assert_patterns(
             &loaded.config.tests.globs,
@@ -318,7 +321,7 @@ mod when_a_ratchet_document_is_used_as_config {
                 [[files]]
                 path = "src/lib.rs"
                 role = "production"
-                max_loc = 2
+                max_lines = 2
             "#},
         )
         .unwrap();
@@ -378,7 +381,7 @@ mod when_language_config_is_partial {
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [languages.rust]
-                additional_globs = ["generated/**/*.rust"]
+                extend_include = ["generated/**/*.rust"]
             "#},
         )
         .unwrap();
@@ -387,7 +390,7 @@ mod when_language_config_is_partial {
         let rust = language(&loaded.config, "rust").common();
 
         assert_eq!(rust.include, None);
-        assert_patterns(&rust.additional_globs, &["generated/**/*.rust"]);
+        assert_patterns(&rust.extend_include, &["generated/**/*.rust"]);
     }
 
     #[test]
@@ -397,7 +400,7 @@ mod when_language_config_is_partial {
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [languages.rust.limits.max_lines_per_file]
-                included_line_types = ["code", "comments"]
+                count_lines = ["comments"]
                 production = 500
                 test = 1000
             "#},
@@ -410,10 +413,7 @@ mod when_language_config_is_partial {
             .limits
             .max_lines_per_file;
 
-        assert_eq!(
-            limits.included_line_types,
-            Some(IncludedLineTypes::CodeAndComments)
-        );
+        assert_eq!(limits.count_lines, Some(CountLines::CodeAndComments));
         assert_eq!(limits.production.unwrap().get(), 500);
         assert_eq!(limits.test.unwrap().get(), 1000);
     }
@@ -492,7 +492,7 @@ mod when_tests_config_is_partial {
             &loaded.config.tests.globs,
             &["custom-tests/**", "**/*.fixture.*"],
         );
-        assert!(loaded.config.tests.check_path_tests);
+        assert!(loaded.config.tests.check);
     }
 }
 
@@ -510,7 +510,7 @@ mod when_traversal_config_is_partial {
                 same_file_system = false
                 max_entries = 1234
                 max_file_bytes = 4096
-                error_policy = "warn"
+                unreadable_paths = "warn"
             "#},
         )
         .unwrap();
@@ -531,8 +531,8 @@ mod when_traversal_config_is_partial {
             SourceFileByteLimit::new(4096).unwrap()
         );
         assert_eq!(
-            loaded.config.traversal.error_policy,
-            TraversalErrorPolicy::Warn
+            loaded.config.traversal.unreadable_paths,
+            UnreadablePathPolicy::Warn
         );
     }
 }
@@ -547,7 +547,7 @@ mod when_limits_config_is_partial {
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [limits.max_lines_per_file]
-                included_line_types = ["blank_lines", "code", "comments"]
+                count_lines = ["blank_lines", "comments"]
                 production = 500
                 test = 900
             "#},
@@ -562,19 +562,19 @@ mod when_limits_config_is_partial {
         );
         assert_eq!(loaded.config.limits.max_lines_per_file.test.get(), 900);
         assert_eq!(
-            loaded.config.limits.max_lines_per_file.included_line_types,
-            IncludedLineTypes::All
+            loaded.config.limits.max_lines_per_file.count_lines,
+            CountLines::All
         );
     }
 
     #[test]
-    fn it_merges_directory_fanout_limits() {
+    fn it_merges_directory_direct_files_limits() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 10, test = 20 }
+                max_direct_files_per_directory = { production = 10, test = 20 }
             "#},
         )
         .unwrap();
@@ -582,23 +582,27 @@ mod when_limits_config_is_partial {
         let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(
-            loaded.config.limits.max_leaf_files_per_directory.production,
-            LeafFileLimit::Finite(LeafFiles::new(10).unwrap())
+            loaded
+                .config
+                .limits
+                .max_direct_files_per_directory
+                .production,
+            DirectFileLimit::Finite(DirectFiles::new(10).unwrap())
         );
         assert_eq!(
-            loaded.config.limits.max_leaf_files_per_directory.test,
-            LeafFileLimit::Finite(LeafFiles::new(20).unwrap())
+            loaded.config.limits.max_direct_files_per_directory.test,
+            DirectFileLimit::Finite(DirectFiles::new(20).unwrap())
         );
     }
 
     #[test]
-    fn it_accepts_unlimited_fanout_for_both_roles() {
+    fn it_accepts_unlimited_direct_files_for_both_roles() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = "unlimited", test = "unlimited" }
+                max_direct_files_per_directory = { production = "unlimited", test = "unlimited" }
             "#},
         )
         .unwrap();
@@ -606,12 +610,16 @@ mod when_limits_config_is_partial {
         let loaded = load_config_fixture(tempdir.path()).unwrap();
 
         assert_eq!(
-            loaded.config.limits.max_leaf_files_per_directory.production,
-            LeafFileLimit::Unlimited
+            loaded
+                .config
+                .limits
+                .max_direct_files_per_directory
+                .production,
+            DirectFileLimit::Unlimited
         );
         assert_eq!(
-            loaded.config.limits.max_leaf_files_per_directory.test,
-            LeafFileLimit::Unlimited
+            loaded.config.limits.max_direct_files_per_directory.test,
+            DirectFileLimit::Unlimited
         );
     }
 
@@ -624,7 +632,7 @@ mod when_limits_config_is_partial {
                 [[overrides]]
                 paths = ["packages/web/**"]
                 max_lines_per_file = { production = 600, test = 1200 }
-                max_leaf_files_per_directory = { production = 20, test = "unlimited" }
+                max_direct_files_per_directory = { production = 20, test = "unlimited" }
                 reason = "The web package colocates route modules"
             "#},
         )
@@ -636,12 +644,12 @@ mod when_limits_config_is_partial {
         assert_eq!(limits.production_loc_per_file().unwrap().get(), 600);
         assert_eq!(limits.test_loc_per_file().unwrap().get(), 1200);
         assert_eq!(
-            limits.production_leaf_files_per_directory(),
-            Some(LeafFileLimit::Finite(LeafFiles::new(20).unwrap()))
+            limits.production_direct_files_per_directory(),
+            Some(DirectFileLimit::Finite(DirectFiles::new(20).unwrap()))
         );
         assert_eq!(
-            limits.test_leaf_files_per_directory(),
-            Some(LeafFileLimit::Unlimited)
+            limits.test_direct_files_per_directory(),
+            Some(DirectFileLimit::Unlimited)
         );
     }
 }
@@ -655,14 +663,14 @@ mod when_language_groups_are_configured {
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
-                [limits.max_leaf_files_per_directory]
+                [limits.max_direct_files_per_directory]
                 production = 10
                 test = 20
 
                 [language_groups.frontend]
                 languages = ["javascript", "typescript", "jsx", "tsx"]
 
-                [language_groups.frontend.limits.max_leaf_files_per_directory]
+                [language_groups.frontend.limits.max_direct_files_per_directory]
                 production = 12
             "#},
         )
@@ -678,10 +686,10 @@ mod when_language_groups_are_configured {
             .unwrap();
 
         assert_eq!(
-            group.limits.max_leaf_files_per_directory,
-            crate::config::MaxLeafFilesPerDirectoryLimits {
-                production: LeafFileLimit::Finite(LeafFiles::new(12).unwrap()),
-                test: LeafFileLimit::Finite(LeafFiles::new(20).unwrap()),
+            group.limits.max_direct_files_per_directory,
+            crate::config::MaxDirectFilesPerDirectoryLimits {
+                production: DirectFileLimit::Finite(DirectFiles::new(12).unwrap()),
+                test: DirectFileLimit::Finite(DirectFiles::new(20).unwrap()),
             }
         );
         for language in ["javascript", "typescript", "jsx", "tsx"] {
@@ -735,7 +743,7 @@ mod when_language_groups_are_configured {
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
-                [language_groups.documentation.limits.max_leaf_files_per_directory]
+                [language_groups.documentation.limits.max_direct_files_per_directory]
                 production = 20
             "#},
         )
@@ -749,10 +757,10 @@ mod when_language_groups_are_configured {
                 .language_groups()
                 .documentation()
                 .limits
-                .max_leaf_files_per_directory,
-            crate::config::MaxLeafFilesPerDirectoryLimits {
-                production: LeafFileLimit::Finite(LeafFiles::new(20).unwrap()),
-                test: LeafFileLimit::Unlimited,
+                .max_direct_files_per_directory,
+            crate::config::MaxDirectFilesPerDirectoryLimits {
+                production: DirectFileLimit::Finite(DirectFiles::new(20).unwrap()),
+                test: DirectFileLimit::Unlimited,
             }
         );
         assert_eq!(
@@ -824,7 +832,7 @@ mod when_config_values_are_invalid {
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [files]
-                exclude = ["["]
+                extend_exclude = ["["]
             "#},
         )
         .unwrap();
@@ -874,13 +882,13 @@ mod when_config_values_are_invalid {
     }
 
     #[test]
-    fn it_rejects_unknown_test_fanout_keywords() {
+    fn it_rejects_unknown_test_direct_files_keywords() {
         let tempdir = tempfile::tempdir().unwrap();
         fs::write(
             tempdir.path().join(PRIMARY_CONFIG_FILE),
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { test = "many" }
+                max_direct_files_per_directory = { test = "many" }
             "#},
         )
         .unwrap();
@@ -891,24 +899,24 @@ mod when_config_values_are_invalid {
     }
 
     #[test]
-    fn it_rejects_missing_code_in_included_line_types() {
+    fn it_rejects_code_in_count_lines_because_code_always_counts() {
         assert_config_error_contains(
             indoc! {r#"
                 [limits.max_lines_per_file]
-                included_line_types = ["comments"]
+                count_lines = ["code"]
             "#},
-            "included_line_types must include code",
+            "unknown variant `code`",
         );
     }
 
     #[test]
-    fn it_rejects_duplicate_included_line_types() {
+    fn it_rejects_duplicate_count_lines() {
         assert_config_error_contains(
             indoc! {r#"
                 [limits.max_lines_per_file]
-                included_line_types = ["code", "comments", "code"]
+                count_lines = ["comments", "comments"]
             "#},
-            "included_line_types contains duplicate code",
+            "count_lines contains duplicate comments",
         );
     }
 
@@ -1049,7 +1057,7 @@ mod when_config_values_are_invalid {
 
         assert!(error.to_string().contains("Rust"));
         assert!(error.to_string().contains("include"));
-        assert!(error.to_string().contains("additional_globs"));
+        assert!(error.to_string().contains("extend_include"));
     }
 
     #[test]
@@ -1104,7 +1112,7 @@ mod when_config_values_are_invalid {
             indoc! {r#"
                 [[overrides]]
                 paths = ["generated/**"]
-                max_leaf_files_per_directory = {}
+                max_direct_files_per_directory = {}
                 reason = "generated sources"
             "#},
         )
@@ -1145,15 +1153,15 @@ mod when_config_values_are_invalid {
     }
 
     #[test]
-    fn it_rejects_included_line_types_in_path_overrides() {
+    fn it_rejects_count_lines_in_path_overrides() {
         assert_config_error_contains(
             indoc! {r#"
                 [[overrides]]
                 paths = ["generated/**"]
-                max_lines_per_file = { included_line_types = ["code"] }
+                max_lines_per_file = { count_lines = [] }
                 reason = "generated sources"
             "#},
-            "unknown field `included_line_types`",
+            "unknown field `count_lines`",
         );
     }
 
@@ -1205,7 +1213,7 @@ mod when_config_values_are_invalid {
                 "unknown field `unknown`",
             ),
             (
-                "[language_groups.frontend]\nlanguages = [\"rust\"]\n[language_groups.frontend.limits.max_leaf_files_per_directory]\nproduction = 10\nunknown = 20\n",
+                "[language_groups.frontend]\nlanguages = [\"rust\"]\n[language_groups.frontend.limits.max_direct_files_per_directory]\nproduction = 10\nunknown = 20\n",
                 "unknown field `unknown`",
             ),
         ];

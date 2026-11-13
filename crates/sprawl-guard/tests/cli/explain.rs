@@ -32,7 +32,7 @@ mod when_explaining_the_configured_ratchet {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(
             stdout(&output),
-            "nested/ratchet.toml: excluded because it is the configured ratchet file\n"
+            "nested/ratchet.toml: excluded because it is the ratchet file\n"
         );
     }
 
@@ -91,7 +91,14 @@ mod when_explaining_rust_cfg_test_preprocessing {
         assert_eq!(
             stdout(&output),
             indoc! {"
-                src/lib.rs: production source (Rust; group: source); file LOC limit: 400; included line types: code; directory leaf-file limit: 10; configured LOC: 1 (code: 1, comments: 0, blank lines: 1); rust cfg(test): parsed; excluded top-level items: 1
+                src/lib.rs
+                  kind: production source
+                  language: Rust
+                  group: source
+                  lines: 1 (limit 400, counting code)
+                  line counts: 1 code, 0 comments, 1 blank
+                  direct files limit for its directory: 10
+                  Rust cfg(test): parsed, 1 top-level item not counted
             "}
         );
         assert_eq!(stderr(&output), "");
@@ -109,14 +116,14 @@ mod when_explaining_rust_cfg_test_preprocessing {
             serde_json::json!({
                 "kind": json["kind"],
                 "state": json["state"],
-                "included_line_types": json["measurement"]["included_line_types"],
+                "count_lines": json["measurement"]["count_lines"],
                 "line_counts": json["measurement"]["line_counts"],
                 "actual": json["measurement"]["actual"],
             }),
             serde_json::json!({
                 "kind": "source",
                 "state": "measured",
-                "included_line_types": ["code"],
+                "count_lines": [],
                 "line_counts": {"code": 1, "comments": 1, "blank_lines": 0},
                 "actual": 1,
             })
@@ -135,7 +142,7 @@ mod when_explaining_matching_overrides {
             indoc! {r#"
                 [limits]
                 max_lines_per_file = { production = 1 }
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [languages.rust]
                 enabled = true
@@ -143,7 +150,7 @@ mod when_explaining_matching_overrides {
                 [[overrides]]
                 paths = ["src/**"]
                 max_lines_per_file = { production = 2 }
-                max_leaf_files_per_directory = { production = 3 }
+                max_direct_files_per_directory = { production = 3 }
                 reason = "package exception"
 
                 [[overrides]]
@@ -164,7 +171,16 @@ mod when_explaining_matching_overrides {
         assert_eq!(
             stdout(&output),
             indoc! {"
-                src/legacy/lib.rs: production source (Rust; group: source); file LOC limit: 4; included line types: code; directory leaf-file limit: 3; matched file overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]; matched directory overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]; configured LOC: 1 (code: 1, comments: 0, blank lines: 0); rust cfg(test): skipped by prefilter; excluded top-level items: 0
+                src/legacy/lib.rs
+                  kind: production source
+                  language: Rust
+                  group: source
+                  lines: 1 (limit 4, counting code)
+                  line counts: 1 code, 0 comments, 0 blank
+                  direct files limit for its directory: 3
+                  line limit overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]
+                  direct files overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]
+                  Rust cfg(test): skipped because the file never mentions cfg(test), 0 top-level items not counted
             "}
         );
         assert_eq!(stderr(&output), "");
@@ -177,14 +193,14 @@ mod when_explaining_matching_overrides {
             &root,
             indoc! {r#"
                 [limits]
-                max_leaf_files_per_directory = { production = 1 }
+                max_direct_files_per_directory = { production = 1 }
 
                 [languages.rust]
                 enabled = true
 
                 [[overrides]]
                 paths = ["src"]
-                max_leaf_files_per_directory = { production = 3 }
+                max_direct_files_per_directory = { production = 3 }
                 reason = "small module hub"
             "#},
         );
@@ -200,9 +216,47 @@ mod when_explaining_matching_overrides {
         assert_eq!(
             stdout(&output),
             indoc! {"
-                src/lib.rs: production source (Rust; group: source); file LOC limit: 400; included line types: code; directory leaf-file limit: 3; matched directory overrides: #1 paths=[src]; configured LOC: 1 (code: 1, comments: 0, blank lines: 0); rust cfg(test): skipped by prefilter; excluded top-level items: 0
+                src/lib.rs
+                  kind: production source
+                  language: Rust
+                  group: source
+                  lines: 1 (limit 400, counting code)
+                  line counts: 1 code, 0 comments, 0 blank
+                  direct files limit for its directory: 3
+                  direct files overrides: #1 paths=[src]
+                  Rust cfg(test): skipped because the file never mentions cfg(test), 0 top-level items not counted
             "}
         );
         assert_eq!(stderr(&output), "");
+    }
+}
+
+mod when_explaining_a_missing_path {
+    use super::*;
+
+    #[test]
+    fn it_says_the_path_was_classified_by_path_only() {
+        let root = TempDir::new().unwrap();
+
+        let output = sprawl_guard(&root)
+            .args(["explain", "src/planned.rs"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert!(stdout(&output).contains("state: not found, so classified by its path only"));
+        assert_eq!(stderr(&output), "");
+    }
+
+    #[test]
+    fn it_reports_the_not_found_state_as_structured_output() {
+        let root = TempDir::new().unwrap();
+
+        let (output, json) = run_json(&root, &["explain", "--format", "json", "src/planned.rs"]);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(json["kind"], "source");
+        assert_eq!(json["state"], "not_found");
+        assert!(json.get("measurement").is_none());
     }
 }

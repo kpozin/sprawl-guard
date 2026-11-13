@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { describe, test } from "node:test";
 import { Result } from "better-result";
 import { MissingFlagValueError, RuntimeFailureError } from "./errors.js";
@@ -6,68 +7,62 @@ import { buildWasiInvocation } from "./wasi-invocation.js";
 
 describe("buildWasiInvocation", () => {
   describe("when root is omitted", () => {
-    test("it mounts the current directory and injects the guest root", () => {
+    test("it mounts the current directory and passes the arguments unchanged", () => {
       const result = buildWasiInvocation(["check", "src"]);
 
       assert.ok(Result.isOk(result));
-      assert.deepEqual(result.value.args, [
-        "sprawl-guard",
-        "--root",
-        "/workspace",
-        "check",
-        "src",
-      ]);
+      assert.deepEqual(result.value.args, ["sprawl-guard", "check", "src"]);
+      assert.equal(result.value.hostRoot, path.resolve(process.cwd()));
     });
   });
 
-  describe("when root is the leading argument", () => {
-    test("it consumes the host path and passes repository-relative operands through", () => {
+  describe("when root follows the subcommand", () => {
+    test("it mounts the host path and rewrites the option in place", () => {
       const result = buildWasiInvocation([
+        "check",
         "--root",
-        ".",
+        "fixture",
         "--config",
         "config/custom.toml",
-        "check",
         "src",
       ]);
 
       assert.ok(Result.isOk(result));
       assert.deepEqual(result.value.args, [
         "sprawl-guard",
+        "check",
         "--root",
-        "/workspace",
+        "/",
         "--config",
         "config/custom.toml",
-        "check",
         "src",
       ]);
+      assert.equal(result.value.hostRoot, path.resolve("fixture"));
     });
 
     test("it accepts the equals form", () => {
-      const result = buildWasiInvocation(["--root=.", "check"]);
+      const result = buildWasiInvocation(["config", "resolved", "--root=fixture"]);
 
       assert.ok(Result.isOk(result));
-      assert.deepEqual(result.value.args, [
-        "sprawl-guard",
-        "--root",
-        "/workspace",
-        "check",
-      ]);
+      assert.deepEqual(result.value.args, ["sprawl-guard", "config", "resolved", "--root", "/"]);
+      assert.equal(result.value.hostRoot, path.resolve("fixture"));
     });
   });
 
   describe("when root has no value", () => {
-    test("it returns the wrapper flag error", () => {
-      const result = buildWasiInvocation(["--root"]);
+    for (const args of [["check", "--root"], ["check", "--root="]]) {
+      test(`it returns the wrapper flag error for ${args.join(" ")}`, () => {
+        const result = buildWasiInvocation(args);
 
-      assert.ok(Result.isError(result));
-      assert.ok(result.error instanceof MissingFlagValueError);
-    });
+        assert.ok(Result.isError(result));
+        assert.ok(result.error instanceof MissingFlagValueError);
+      });
+    }
   });
 
-  describe("when root appears after another option", () => {
-    test("it rejects the unsupported host-path placement", () => {
-      const result = buildWasiInvocation(["--quiet", "--root", ".", "check"]);
+  describe("when root is repeated", () => {
+    test("it rejects the ambiguous host path", () => {
+      const result = buildWasiInvocation(["check", "--root", "a", "--root=b"]);
 
       assert.ok(Result.isError(result));
       assert.ok(result.error instanceof RuntimeFailureError);
@@ -80,14 +75,7 @@ describe("buildWasiInvocation", () => {
       const result = buildWasiInvocation(["check", "--", "--root"]);
 
       assert.ok(Result.isOk(result));
-      assert.deepEqual(result.value.args, [
-        "sprawl-guard",
-        "--root",
-        "/workspace",
-        "check",
-        "--",
-        "--root",
-      ]);
+      assert.deepEqual(result.value.args, ["sprawl-guard", "check", "--", "--root"]);
     });
   });
 });

@@ -1,4 +1,4 @@
-//! Resolved policy limits after applying language and path overrides.
+//! Resolved limits after applying language and path overrides.
 
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -9,7 +9,7 @@ use serde::Serialize;
 use crate::classification::{ClassifiedSource, SourceKind};
 use crate::config::{Config, OverrideLimits, OverridePaths, OverrideReason};
 use crate::{
-    IncludedLineTypes, LanguageGroupId, LeafFileLimit, LocLimit, RelativePath, Result, SprawlError,
+    CountLines, DirectFileLimit, LanguageGroupId, LineLimit, RelativePath, Result, SprawlError,
 };
 
 const DIRECTORY_OVERRIDE_DESCENDANT_PROBE: &str = "__sprawl_guard_directory_metric__";
@@ -48,22 +48,22 @@ pub struct MatchedOverride {
     pub reason: OverrideReason,
 }
 
-/// Resolved configured-LOC policy for one file metric.
+/// Resolved line-limit configuration for one file metric.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ResolvedFileLocLimit {
-    /// Logical line categories included in the measurement.
-    pub included_line_types: IncludedLineTypes,
-    /// Final configured-LOC limit after precedence is applied.
-    pub value: LocLimit,
+pub struct ResolvedFileLinesLimit {
+    /// Line types counted in the measurement.
+    pub count_lines: CountLines,
+    /// Final line limit after precedence is applied.
+    pub value: LineLimit,
     /// Overrides whose path globs matched the file path.
     pub matched_overrides: Vec<MatchedOverride>,
 }
 
-/// Resolved leaf-file limit for one directory metric.
+/// Resolved direct-file limit for one directory metric.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ResolvedLeafFileLimit {
-    /// Final direct leaf-file limit after precedence is applied.
-    pub value: LeafFileLimit,
+pub struct ResolvedDirectFileLimit {
+    /// Final direct-file limit after precedence is applied.
+    pub value: DirectFileLimit,
     /// Overrides whose path globs matched the directory metric path.
     ///
     /// A trailing `/**` pattern also matches the prefix directory itself for
@@ -75,10 +75,10 @@ pub struct ResolvedLeafFileLimit {
 /// Resolved file and directory limits for an included source path.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SourceResolvedLimits {
-    /// Resolved file LOC limit for the source's production/test kind.
-    pub file: ResolvedFileLocLimit,
-    /// Resolved directory fan-out limit for the source's parent directory.
-    pub directory: ResolvedLeafFileLimit,
+    /// Resolved file line limit for the source's production/test kind.
+    pub file: ResolvedFileLinesLimit,
+    /// Resolved directory direct-file limit for the source's parent directory.
+    pub directory: ResolvedDirectFileLimit,
 }
 
 /// Resolves configured limits for concrete file and directory metrics.
@@ -112,8 +112,8 @@ impl<'config> LimitResolver<'config> {
     /// Resolves both file and parent-directory limits for one included source.
     pub(crate) fn source_limits(&self, source: &ClassifiedSource) -> Result<SourceResolvedLimits> {
         Ok(SourceResolvedLimits {
-            file: self.file_loc_limit(source),
-            directory: self.directory_leaf_files(
+            file: self.file_lines_limit(source),
+            directory: self.directory_direct_files(
                 source.kind,
                 source.group(),
                 &source_parent_directory(&source.path)?,
@@ -121,12 +121,12 @@ impl<'config> LimitResolver<'config> {
         })
     }
 
-    /// Resolves the file LOC limit for one included source.
-    pub(crate) fn file_loc_limit(&self, source: &ClassifiedSource) -> ResolvedFileLocLimit {
+    /// Resolves the file line limit for one included source.
+    pub(crate) fn file_lines_limit(&self, source: &ClassifiedSource) -> ResolvedFileLinesLimit {
         let language_limits = self
             .config
             .effective_language_file_limits(source.language());
-        let included_line_types = language_limits.included_line_types;
+        let count_lines = language_limits.count_lines;
         let mut limit = match source.kind {
             SourceKind::Production => language_limits.production,
             SourceKind::Test => language_limits.test,
@@ -152,20 +152,20 @@ impl<'config> LimitResolver<'config> {
             }
         }
 
-        ResolvedFileLocLimit {
-            included_line_types,
+        ResolvedFileLinesLimit {
+            count_lines,
             value: limit,
             matched_overrides,
         }
     }
 
-    /// Resolves the direct leaf-file limit for one directory metric.
-    pub(crate) fn directory_leaf_files(
+    /// Resolves the direct-file limit for one directory metric.
+    pub(crate) fn directory_direct_files(
         &self,
         kind: SourceKind,
         group: &LanguageGroupId,
         path: &RelativePath,
-    ) -> ResolvedLeafFileLimit {
+    ) -> ResolvedDirectFileLimit {
         let group_limits = self.config.effective_language_group_directory_limits(group);
         let mut limit = match kind {
             SourceKind::Production => group_limits.production,
@@ -180,20 +180,22 @@ impl<'config> LimitResolver<'config> {
             matched_overrides.push(override_entry.matched_override());
             match kind {
                 SourceKind::Production => {
-                    if let Some(value) = override_entry.limits.production_leaf_files_per_directory()
+                    if let Some(value) = override_entry
+                        .limits
+                        .production_direct_files_per_directory()
                     {
                         limit = value;
                     }
                 }
                 SourceKind::Test => {
-                    if let Some(value) = override_entry.limits.test_leaf_files_per_directory() {
+                    if let Some(value) = override_entry.limits.test_direct_files_per_directory() {
                         limit = value;
                     }
                 }
             }
         }
 
-        ResolvedLeafFileLimit {
+        ResolvedDirectFileLimit {
             value: limit,
             matched_overrides,
         }

@@ -6,7 +6,7 @@ use std::path::Path;
 use indoc::indoc;
 
 use super::{discover_sources, discover_sources_report};
-use crate::classification::{SourceKind, TraversalIncidentKind, TraversalIncidentSeverity};
+use crate::classification::{SourceKind, UnreadablePathKind, UnreadablePathSeverity};
 use crate::config::SymlinkTraversal;
 use crate::test_support::{
     assert_symlink_loop_error, load_config, source_paths, write_config, write_rust_enabled_config,
@@ -97,7 +97,7 @@ mod discover_sources {
                 tempdir.path(),
                 indoc! {r#"
                     [languages.markdown]
-                    additional_globs = ["**/*.guide"]
+                    extend_include = ["**/*.guide"]
                 "#},
             );
             write_source_file(tempdir.path(), "docs/start.guide");
@@ -326,8 +326,7 @@ mod discover_sources {
         }
 
         #[test]
-        fn it_reports_collected_traversal_incidents_for_cycles_when_directory_symlinks_are_enabled()
-        {
+        fn it_reports_collected_unreadable_paths_for_cycles_when_directory_symlinks_are_enabled() {
             let tempdir = tempfile::tempdir().unwrap();
             write_rust_symlink_traversal_config(tempdir.path(), SymlinkTraversal::Directories);
             write_source_file(tempdir.path(), "real/lib.rs");
@@ -339,7 +338,7 @@ mod discover_sources {
         }
 
         #[test]
-        fn it_returns_warning_incidents_when_error_policy_is_warn() {
+        fn it_returns_warnings_when_unreadable_paths_is_warn() {
             let tempdir = tempfile::tempdir().unwrap();
             write_rust_symlink_traversal_warn_config(tempdir.path(), SymlinkTraversal::Directories);
             write_source_file(tempdir.path(), "real/lib.rs");
@@ -350,14 +349,14 @@ mod discover_sources {
                     .unwrap();
 
             assert_eq!(source_paths(&report.sources), vec!["real/lib.rs"]);
-            assert_eq!(report.traversal_incidents.len(), 1);
+            assert_eq!(report.unreadable_paths.len(), 1);
             assert_eq!(
-                report.traversal_incidents[0].kind,
-                TraversalIncidentKind::SymlinkLoop
+                report.unreadable_paths[0].kind,
+                UnreadablePathKind::SymlinkLoop
             );
             assert_eq!(
-                report.traversal_incidents[0].severity,
-                TraversalIncidentSeverity::Warning
+                report.unreadable_paths[0].severity,
+                UnreadablePathSeverity::Warning
             );
         }
     }
@@ -498,7 +497,7 @@ mod discover_sources {
                 tempdir.path(),
                 indoc! {r#"
                     [files]
-                    exclude = ["generated/**"]
+                    extend_exclude = ["generated/**"]
 
                     [languages.rust]
                     enabled = true
@@ -545,7 +544,7 @@ mod discover_sources {
                 tempdir.path(),
                 indoc! {r#"
                     [tests]
-                    check_path_tests = false
+                    check = false
 
                     [languages.rust]
                     enabled = true

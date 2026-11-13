@@ -8,50 +8,52 @@ use crate::check::report::{DirectoryViolationKind, FileViolationKind};
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RatchetViolationKind {
-    /// Production file LOC rose above its ratchet ceiling.
-    FileLocIncreased,
-    /// Path-classified test file LOC rose above its ratchet ceiling.
-    TestFileLocIncreased,
-    /// Production directory fan-out rose above its ratchet ceiling.
-    DirectoryFanoutIncreased,
-    /// Path-classified test directory fan-out rose above its ratchet ceiling.
-    TestDirectoryFanoutIncreased,
-    /// Production file LOC improved or no longer violates policy.
-    FileLocStale,
-    /// Path-classified test file LOC improved or no longer violates policy.
-    TestFileLocStale,
-    /// Production directory fan-out improved or no longer violates policy.
-    DirectoryFanoutStale,
-    /// Path-classified test directory fan-out improved or no longer violates policy.
-    TestDirectoryFanoutStale,
+    /// Production file line count rose above its ratchet ceiling.
+    FileLinesIncreased,
+    /// Test file line count rose above its ratchet ceiling.
+    TestFileLinesIncreased,
+    /// Production directory direct-file count rose above its ratchet ceiling.
+    DirectoryDirectFilesIncreased,
+    /// Test direct-file count rose above its ratchet ceiling.
+    TestDirectoryDirectFilesIncreased,
+    /// Production file line count improved or no longer exceeds its limit.
+    FileLinesStale,
+    /// Test file line count improved or no longer exceeds its limit.
+    TestFileLinesStale,
+    /// Production directory direct-file count improved or no longer exceeds its limit.
+    DirectoryDirectFilesStale,
+    /// Test direct-file count improved or no longer exceeds its limit.
+    TestDirectoryDirectFilesStale,
 }
 
 impl RatchetViolationKind {
     pub(super) const fn increased_file(kind: FileViolationKind) -> Self {
         match kind {
-            FileViolationKind::FileLoc => Self::FileLocIncreased,
-            FileViolationKind::TestFileLoc => Self::TestFileLocIncreased,
+            FileViolationKind::FileLines => Self::FileLinesIncreased,
+            FileViolationKind::TestFileLines => Self::TestFileLinesIncreased,
         }
     }
 
     pub(super) const fn increased_directory(kind: DirectoryViolationKind) -> Self {
         match kind {
-            DirectoryViolationKind::DirectoryFanout => Self::DirectoryFanoutIncreased,
-            DirectoryViolationKind::TestDirectoryFanout => Self::TestDirectoryFanoutIncreased,
+            DirectoryViolationKind::DirectoryDirectFiles => Self::DirectoryDirectFilesIncreased,
+            DirectoryViolationKind::TestDirectoryDirectFiles => {
+                Self::TestDirectoryDirectFilesIncreased
+            }
         }
     }
 
     pub(super) const fn stale_file(kind: FileViolationKind) -> Self {
         match kind {
-            FileViolationKind::FileLoc => Self::FileLocStale,
-            FileViolationKind::TestFileLoc => Self::TestFileLocStale,
+            FileViolationKind::FileLines => Self::FileLinesStale,
+            FileViolationKind::TestFileLines => Self::TestFileLinesStale,
         }
     }
 
     pub(super) const fn stale_directory(kind: DirectoryViolationKind) -> Self {
         match kind {
-            DirectoryViolationKind::DirectoryFanout => Self::DirectoryFanoutStale,
-            DirectoryViolationKind::TestDirectoryFanout => Self::TestDirectoryFanoutStale,
+            DirectoryViolationKind::DirectoryDirectFiles => Self::DirectoryDirectFilesStale,
+            DirectoryViolationKind::TestDirectoryDirectFiles => Self::TestDirectoryDirectFilesStale,
         }
     }
 }

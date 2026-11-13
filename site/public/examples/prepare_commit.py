@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import argparse
-from enum import StrEnum
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import tomllib
+from enum import StrEnum
+from pathlib import Path
 
+import tomllib
 
 # Payload read size, independent of the total blob size.
 BLOB_COPY_BUFFER_BYTES = 64 * 1024
@@ -98,15 +98,21 @@ def run(action: Action, command: list[str]) -> int:
     with tempfile.TemporaryDirectory(prefix="sprawl-guard-index-") as temporary:
         snapshot = Path(temporary)
         materialize(root, tree, snapshot)
-        cli = [*command, "--root", str(snapshot), "--config", "sprawl-guard.toml"]
-        subprocess.run([*cli, "config", "upgrade", "--check"], cwd=root, check=True)
-        resolved = subprocess.check_output([*cli, "config", "resolved"], cwd=root)
+        options = ["--root", str(snapshot), "--config", "sprawl-guard.toml"]
+        subprocess.run(
+            [*command, "config", "upgrade", "--check", *options], cwd=root, check=True
+        )
+        resolved = subprocess.check_output(
+            [*command, "config", "resolved", *options], cwd=root
+        )
         ratchet_path = Path(tomllib.loads(resolved.decode())["ratchet"]["file"])
         staged = snapshot / ratchet_path
         before = staged.read_bytes()
         if action is Action.PREPARE:
-            subprocess.run([*cli, "tighten", "--write"], cwd=root, check=True)
-        subprocess.run([*cli, "check"], cwd=root, check=True)
+            subprocess.run(
+                [*command, "tighten", "--write", *options], cwd=root, check=True
+            )
+        subprocess.run([*command, "check", *options], cwd=root, check=True)
         if git(root, "write-tree").decode().strip() != tree:
             raise SnapshotError("The index changed during verification; retry.")
         after = staged.read_bytes()

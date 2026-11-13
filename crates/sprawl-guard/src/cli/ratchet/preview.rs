@@ -3,6 +3,7 @@ use std::fmt::Display;
 
 use sprawl_guard_lib::{RatchetFile, RatchetLookup};
 
+use crate::cli::display_relative;
 use crate::error::Result;
 
 /// Describes changed ceilings by their complete metric identities.
@@ -10,19 +11,19 @@ pub(super) fn render_changes(previous: &RatchetFile, next: &RatchetFile) -> Resu
     let previous = RatchetLookup::try_from(previous.clone())?;
     let next = RatchetLookup::try_from(next.clone())?;
     let mut output = render_map_changes(previous.files(), next.files(), |key| {
-        format!("file {:?} [{}] max_loc", key.path().as_str(), key.role())
+        format!(
+            "{} ({} lines)",
+            display_relative(key.path().as_str()),
+            key.role()
+        )
     });
     output.push_str(&render_map_changes(
         previous.directories(),
         next.directories(),
         |key| {
-            let path = if key.path().as_str().is_empty() {
-                "."
-            } else {
-                key.path().as_str()
-            };
             format!(
-                "directory {path:?} [{}, {}] leaf_files",
+                "{} ({} direct files, group {})",
+                display_relative(key.path().as_str()),
                 key.role(),
                 key.group()
             )

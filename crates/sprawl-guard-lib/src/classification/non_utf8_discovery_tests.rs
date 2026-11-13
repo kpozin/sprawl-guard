@@ -6,7 +6,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::path::PathBuf;
 
 use crate::classification::discover_sources_report;
-use crate::config::TraversalErrorPolicy;
+use crate::config::UnreadablePathPolicy;
 use crate::test_support::{load_config, write_rust_enabled_config};
 use crate::{RelativePath, SprawlError};
 
@@ -28,7 +28,7 @@ mod when_scoped_discovery_encounters_a_non_utf8_repository_entry {
             tempdir.path(),
             &load_config(tempdir.path()),
             &[scope],
-            Some(TraversalErrorPolicy::Fail),
+            Some(UnreadablePathPolicy::Fail),
         )
         .unwrap_err();
 

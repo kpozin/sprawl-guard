@@ -1,17 +1,16 @@
 use std::path::{Path, PathBuf};
 
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 
 use crate::value::path::normalize_under_root;
 use crate::{RelativePath, Result, SprawlError};
 
-/// Requested repository scope recorded in a check report.
+/// The paths a check covers: the whole repository or the selected paths.
 ///
-/// Scope is applied during traversal and before classification, so out-of-scope trees cannot cause
-/// unrelated traversal or classification errors.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum CheckScope {
+/// Selection is applied during traversal and before classification, so unselected trees cannot
+/// cause unrelated traversal or classification errors.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SelectedPaths {
     /// Check every discovered source under the repository root.
     All,
     /// Check only the listed non-empty set of normalized path prefixes.
@@ -20,6 +19,22 @@ pub enum CheckScope {
         paths: NonEmptyCheckPaths,
     },
 }
+
+/// Serializes the whole repository as `"all"` and a selection as its list of paths.
+impl Serialize for SelectedPaths {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self {
+            Self::All => serializer.serialize_str(ALL_PATHS),
+            Self::Paths { paths } => paths.serialize(serializer),
+        }
+    }
+}
+
+/// Serialized form of [`SelectedPaths::All`].
+const ALL_PATHS: &str = "all";
 
 /// Non-empty collection of normalized check paths.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -40,14 +55,14 @@ impl NonEmptyCheckPaths {
     }
 }
 
-impl CheckScope {
-    /// Resolves CLI-supplied path scopes under the repository root.
+impl SelectedPaths {
+    /// Resolves CLI-supplied selected paths under the repository root.
     ///
-    /// Every non-empty scope must exist so a typo cannot produce a passing empty check.
+    /// Every non-empty selected path must exist so a typo cannot produce a passing empty check.
     pub(super) fn resolve(root: &Path, paths: Vec<PathBuf>) -> Result<Self> {
         let paths = paths
             .into_iter()
-            .map(|path| scope_path(root, &path))
+            .map(|path| selected_path(root, &path))
             .collect::<Result<Vec<_>>>()?;
         if paths.iter().any(|path| path.as_str().is_empty()) {
             return Ok(Self::All);
@@ -58,7 +73,7 @@ impl CheckScope {
         })
     }
 
-    /// Returns normalized path scopes for traversal pruning.
+    /// Returns normalized selected paths for traversal pruning.
     pub(super) fn paths(&self) -> &[RelativePath] {
         match self {
             Self::All => &[],
@@ -71,13 +86,17 @@ impl CheckScope {
         matches!(self, Self::All)
     }
 
-    /// Returns whether a repository-relative path falls within this scope.
+    /// Returns whether a repository-relative path falls within these selected paths.
     pub(in crate::check) fn contains(&self, path: &RelativePath) -> bool {
-        self.is_all() || self.paths().iter().any(|scope| path.is_at_or_under(scope))
+        self.is_all()
+            || self
+                .paths()
+                .iter()
+                .any(|selected| path.is_at_or_under(selected))
     }
 }
 
-fn scope_path(root: &Path, path: &Path) -> Result<RelativePath> {
+fn selected_path(root: &Path, path: &Path) -> Result<RelativePath> {
     let absolute_path = if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -90,7 +109,7 @@ fn scope_path(root: &Path, path: &Path) -> Result<RelativePath> {
             source,
         })?
     {
-        return Err(SprawlError::MissingCheckScope {
+        return Err(SprawlError::MissingSelectedPath {
             path: path.to_path_buf(),
         });
     }

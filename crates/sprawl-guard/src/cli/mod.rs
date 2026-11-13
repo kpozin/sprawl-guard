@@ -9,10 +9,11 @@ mod ratchet;
 mod reference;
 mod schema;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sprawl_guard_lib::TraversalErrorPolicy;
+use sprawl_guard_lib::UnreadablePathPolicy;
+use sprawl_guard_lib::config::LoadOptions;
 
 use crate::error::{CliError, Result};
 
@@ -21,21 +22,9 @@ use crate::error::{CliError, Result};
 #[command(
     name = crate::CLI_NAME,
     version,
-    about = "Source-tree structure guard for local navigability"
+    about = "Check that source files and directories stay within size limits, and keep existing violations from growing."
 )]
 pub struct Cli {
-    /// Repository root. Defaults to the current directory.
-    #[arg(long, global = true)]
-    root: Option<PathBuf>,
-
-    /// Config file path. Relative paths are resolved under `--root`.
-    #[arg(long, global = true)]
-    config: Option<PathBuf>,
-
-    /// Suppress non-essential output.
-    #[arg(long, global = true)]
-    quiet: bool,
-
     /// Command to run.
     #[command(subcommand)]
     command: Command,
@@ -44,62 +33,112 @@ pub struct Cli {
 /// Supported CLI commands.
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Create an initial config file.
+    /// Preview or create a configuration file.
     Init(InitArgs),
     /// List supported or detected languages.
     Languages(LanguagesArgs),
-    /// Run enforcement.
+    /// Check source files and directories against their limits and the ratchet file.
     Check(CheckArgs),
-    /// Add ratchet ceilings for newly discovered violations.
+    /// Add ratchet entries for new violations.
     Update(UpdateArgs),
-    /// Lower or remove existing ratchet ceilings after violations improve.
+    /// Lower or remove ratchet entries after violations shrink.
     Tighten(TightenArgs),
-    /// Inspect configuration.
+    /// Show or upgrade the configuration.
     Config(ConfigCommand),
     /// Print a JSON Schema for a Sprawl Guard TOML document.
     Schema(SchemaArgs),
-    /// Explain how one path is classified.
+    /// Show how one path is classified and which limits apply to it.
     Explain(ExplainArgs),
     /// Hidden build-time generators.
     #[command(hide = true)]
     Machine(machine::MachineArgs),
 }
 
+/// Options that locate the repository and its configuration file.
+#[derive(Debug, Args)]
+#[command(next_help_heading = "Repository options")]
+struct ProjectArgs {
+    /// Repository root. Defaults to the current directory.
+    #[arg(long)]
+    root: Option<PathBuf>,
+
+    /// Configuration file. Relative paths are resolved under `--root`. Defaults to
+    /// `sprawl-guard.toml` under the root.
+    #[arg(long)]
+    config: Option<PathBuf>,
+}
+
+impl ProjectArgs {
+    /// Builds the config load options, falling back to `default_root` for the repository root.
+    fn load_options(self, default_root: PathBuf) -> LoadOptions {
+        LoadOptions {
+            root: self.root.unwrap_or(default_root),
+            config: self.config,
+        }
+    }
+}
+
+/// Option that suppresses non-essential output.
+#[derive(Debug, Args)]
+#[command(next_help_heading = "Repository options")]
+struct QuietArgs {
+    /// Suppress non-essential output.
+    #[arg(long)]
+    quiet: bool,
+}
+
 /// Arguments for `init`.
 #[derive(Debug, Args)]
 struct InitArgs {
-    /// Print the planned configuration without creating files.
+    #[command(flatten)]
+    project: ProjectArgs,
+
+    #[command(flatten)]
+    quiet: QuietArgs,
+
+    /// Create the configuration file instead of only previewing it.
     #[arg(long)]
-    dry_run: bool,
+    write: bool,
 }
 
 /// Arguments for `check`.
 #[derive(Debug, Args)]
 struct CheckArgs {
-    /// Output format.
+    #[command(flatten)]
+    project: ProjectArgs,
+
+    #[command(flatten)]
+    quiet: QuietArgs,
+
+    /// Output format. Defaults to `[output].format` in the configuration, or `human`.
     #[arg(long)]
     format: Option<CheckFormat>,
 
-    /// Fail if the ratchet file is stale.
+    /// Fail when the ratchet file has stale entries. This is the default.
     #[arg(long, conflicts_with = "no_require_ratchet_current")]
     require_ratchet_current: bool,
 
-    /// Allow stale ratchet entries for exploratory local checks.
+    /// Allow stale ratchet entries, for exploratory local checks.
     #[arg(long, conflicts_with = "require_ratchet_current")]
     no_require_ratchet_current: bool,
 
-    /// Override how recoverable descendant traversal errors affect this check.
+    /// What to do with files or directories that cannot be read. Defaults to
+    /// `[traversal].unreadable_paths` in the configuration, or `fail`.
     #[arg(long)]
-    traversal_error_policy: Option<TraversalErrorPolicyArg>,
+    unreadable_paths: Option<UnreadablePathsArg>,
 
-    /// Paths to check. Defaults to the repository root.
+    /// Paths to check. Checks the whole repository when omitted.
     paths: Vec<PathBuf>,
 }
 
 /// Arguments for `languages`.
 #[derive(Debug, Args)]
 struct LanguagesArgs {
-    /// Output format.
+    /// Repository root scanned by `--detected`. Defaults to the current directory.
+    #[arg(long, requires = "detected")]
+    root: Option<PathBuf>,
+
+    /// Output format. Defaults to `human`.
     #[arg(long)]
     format: Option<HumanJsonFormat>,
 
@@ -111,20 +150,27 @@ struct LanguagesArgs {
 /// Arguments for `update`.
 #[derive(Debug, Args)]
 struct UpdateArgs {
-    /// Paths scanned for current violations.
+    #[command(flatten)]
+    project: ProjectArgs,
+
+    #[command(flatten)]
+    quiet: QuietArgs,
+
+    /// Paths to scan for new violations. Scans the whole repository when omitted.
     paths: Vec<PathBuf>,
 
-    /// Write the ratchet changes instead of only previewing them.
+    /// Save the ratchet changes instead of only previewing them.
     #[arg(long)]
     write: bool,
 
-    /// Permit existing ratchet ceilings to increase to current measurements.
+    /// Raise existing ratchet ceilings to current measurements. Without this flag, `update` never
+    /// raises them.
     #[arg(long)]
     allow_increases: bool,
 
-    /// Show changed ceilings or the complete resulting TOML document.
+    /// Output format.
     #[arg(long, default_value = "human")]
-    format: RatchetFormat,
+    format: UpdateFormat,
 }
 
 impl UpdateArgs {
@@ -140,25 +186,67 @@ impl UpdateArgs {
 /// Arguments for `tighten`.
 #[derive(Debug, Args)]
 struct TightenArgs {
-    /// Paths whose ratchet entries are evaluated.
+    #[command(flatten)]
+    project: ProjectArgs,
+
+    #[command(flatten)]
+    quiet: QuietArgs,
+
+    /// Paths whose ratchet entries are evaluated. Evaluates the whole ratchet file when omitted.
     paths: Vec<PathBuf>,
 
-    /// Write the ratchet changes instead of only previewing them.
+    /// Save the ratchet changes instead of only previewing them.
     #[arg(long)]
     write: bool,
 
-    /// Show changed ceilings or the complete resulting TOML document.
+    /// Output format.
     #[arg(long, default_value = "human")]
-    format: RatchetFormat,
+    format: TightenFormat,
 }
 
-/// Output choices for ratchet previews and writes.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+/// Output choices for ratchet previews and writes, shared by `update` and `tighten`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RatchetFormat {
-    /// Describe only added, raised, lowered, or removed ceilings.
+    /// Changed ceilings only.
     Human,
-    /// Print the complete resulting ratchet as parseable TOML.
+    /// The complete resulting ratchet file.
     Toml,
+}
+
+/// `update --format` values, described in terms of what `update` can change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum UpdateFormat {
+    /// List the ratchet entries that would be added or raised.
+    Human,
+    /// Print the complete resulting ratchet file as TOML.
+    Toml,
+}
+
+impl From<UpdateFormat> for RatchetFormat {
+    fn from(value: UpdateFormat) -> Self {
+        match value {
+            UpdateFormat::Human => Self::Human,
+            UpdateFormat::Toml => Self::Toml,
+        }
+    }
+}
+
+/// `tighten --format` values, described in terms of what `tighten` can change.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum TightenFormat {
+    /// List the ratchet entries that would be lowered or removed.
+    Human,
+    /// Print the complete resulting ratchet file as TOML.
+    Toml,
+}
+
+impl From<TightenFormat> for RatchetFormat {
+    fn from(value: TightenFormat) -> Self {
+        match value {
+            TightenFormat::Human => Self::Human,
+            TightenFormat::Toml => Self::Toml,
+        }
+    }
 }
 
 /// Human and JSON output formats shared by diagnostic commands.
@@ -181,20 +269,20 @@ enum CheckFormat {
     Sarif,
 }
 
-/// CLI traversal error policy override.
+/// CLI override for how unreadable paths are handled.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-enum TraversalErrorPolicyArg {
-    /// Collect recoverable traversal incidents, then fail the run.
+enum UnreadablePathsArg {
+    /// Collect recoverable unreadable paths, then fail the run.
     Fail,
-    /// Report recoverable traversal incidents as warnings and continue.
+    /// Report recoverable unreadable paths as warnings and continue.
     Warn,
 }
 
-impl From<TraversalErrorPolicyArg> for TraversalErrorPolicy {
-    fn from(value: TraversalErrorPolicyArg) -> Self {
+impl From<UnreadablePathsArg> for UnreadablePathPolicy {
+    fn from(value: UnreadablePathsArg) -> Self {
         match value {
-            TraversalErrorPolicyArg::Fail => Self::Fail,
-            TraversalErrorPolicyArg::Warn => Self::Warn,
+            UnreadablePathsArg::Fail => Self::Fail,
+            UnreadablePathsArg::Warn => Self::Warn,
         }
     }
 }
@@ -210,18 +298,28 @@ struct ConfigCommand {
 /// Supported config subcommands.
 #[derive(Debug, Subcommand)]
 enum ConfigSubcommand {
-    /// Print the fully resolved config used by checks.
-    Resolved,
-    /// Print a full explicit config suitable for committing.
-    Export,
-    /// Upgrade an authored config to the current schema.
+    /// Print the built-in defaults merged with the configuration file.
+    Resolved(ProjectArgs),
+    /// Print a complete configuration suitable for committing.
+    Export(ProjectArgs),
+    /// Preview or save the configuration file upgraded to the current schema.
     Upgrade(ConfigUpgradeArgs),
 }
 
 /// Arguments for `config upgrade`.
 #[derive(Debug, Args)]
 struct ConfigUpgradeArgs {
-    /// Report whether an upgrade is needed without changing the file.
+    #[command(flatten)]
+    project: ProjectArgs,
+
+    #[command(flatten)]
+    quiet: QuietArgs,
+
+    /// Save the upgraded configuration instead of only previewing it.
+    #[arg(long, conflicts_with = "check")]
+    write: bool,
+
+    /// Save nothing, and exit with code 1 when an upgrade is pending.
     #[arg(long)]
     check: bool,
 }
@@ -246,38 +344,105 @@ enum SchemaDocumentKind {
 /// Arguments for `explain`.
 #[derive(Debug, Args)]
 struct ExplainArgs {
-    /// Output format.
+    #[command(flatten)]
+    project: ProjectArgs,
+
+    /// Output format. Defaults to `human`.
     #[arg(long)]
     format: Option<HumanJsonFormat>,
 
-    /// Path to explain.
+    /// Path to explain. The path does not need to exist.
     path: PathBuf,
+}
+
+/// Formats a path for human output: relative to the repository root when it is inside the root,
+/// and `.` for the root itself.
+///
+/// The root may be given in a different form than the path, for example relative or through a
+/// symlink, so the canonical root is tried too. Paths outside the root stay as given.
+fn display_path(root: &Path, path: &Path) -> String {
+    let canonical_root = root.canonicalize().ok();
+    let relative = [Some(root), canonical_root.as_deref()]
+        .into_iter()
+        .flatten()
+        .find_map(|root| path.strip_prefix(root).ok());
+    match relative {
+        Some(relative) => display_relative(&relative.to_string_lossy()),
+        None => escape_controls(&path.to_string_lossy()),
+    }
+}
+
+/// Formats a repository-relative path for human output, using `.` for the root itself.
+fn display_relative(path: &str) -> String {
+    if path.is_empty() {
+        ".".to_owned()
+    } else {
+        escape_controls(path)
+    }
+}
+
+/// Escapes control characters, so a path in human output stays on one line and cannot send
+/// commands to the terminal.
+fn escape_controls(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for character in text.chars() {
+        if character.is_control() {
+            escaped.extend(character.escape_default());
+        } else {
+            escaped.push(character);
+        }
+    }
+    escaped
 }
 
 /// Runs the CLI and returns the intended process exit code.
 pub fn run(cli: Cli) -> Result<i32> {
-    let Cli {
-        root,
-        config,
-        quiet,
-        command,
-    } = cli;
-    match command {
+    match cli.command {
         Command::Machine(args) => machine::run_machine(args),
         command => {
             let default_root =
                 std::env::current_dir().map_err(|source| CliError::CurrentDirectory { source })?;
-            let outcome = execution::execute_cli_command(
-                Cli {
-                    root,
-                    config,
-                    quiet,
-                    command,
-                },
-                default_root,
-            )?;
+            let outcome = execution::execute_cli_command(command, default_root)?;
             execution::print_command_outcome(&outcome)?;
             Ok(outcome.exit_code)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod when_displaying_a_path {
+        use super::*;
+
+        #[test]
+        fn it_shows_paths_inside_the_root_relative_to_it() {
+            assert_eq!(
+                display_path(Path::new("/repo"), Path::new("/repo/src/lib.rs")),
+                "src/lib.rs"
+            );
+        }
+
+        #[test]
+        fn it_shows_the_root_itself_as_a_dot() {
+            assert_eq!(display_path(Path::new("/repo"), Path::new("/repo")), ".");
+        }
+
+        #[test]
+        fn it_keeps_paths_outside_the_root_as_given() {
+            assert_eq!(
+                display_path(
+                    Path::new("/repo"),
+                    Path::new("/elsewhere/sprawl-guard.toml")
+                ),
+                "/elsewhere/sprawl-guard.toml"
+            );
+        }
+
+        #[test]
+        fn it_escapes_control_characters() {
+            assert_eq!(display_relative("src\n\u{1b}[2J"), r"src\n\u{1b}[2J");
         }
     }
 }

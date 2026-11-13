@@ -9,7 +9,7 @@ use crate::{RelativePath, Result, SprawlError};
 
 use super::classifier::Classifier;
 use super::traversal::{is_source_file_candidate, is_walked_file};
-use super::types::{PathClassification, SourceExplanation};
+use super::types::{ClassifiedSource, PathClassification, SourceExplanation};
 
 /// Explains how source discovery classifies one path.
 ///
@@ -52,8 +52,9 @@ pub fn explain_path(root: &Path, path: &Path, config: &Config) -> Result<PathCla
             if !is_walked_file(&root, &walk_path, config)? {
                 return Ok(PathClassification::Ignored { path: relative });
             }
-            let classification = Classifier::new(config)?.classify(relative)?;
-            return explain_existing_source(&path, config, classification);
+            return Classifier::new(config)?
+                .classify(relative)?
+                .try_map_source(|source| measure_existing_source(&path, config, source));
         }
         Err(source) if source.kind() == ErrorKind::NotFound => {}
         Err(source) => {
@@ -64,36 +65,35 @@ pub fn explain_path(root: &Path, path: &Path, config: &Config) -> Result<PathCla
         }
     }
     let relative = normalize_explain_path(&root, &lexical_root, &path)?;
-    Classifier::new(config)?.classify(relative)
+    Classifier::new(config)?
+        .classify(relative)?
+        .try_map_source(|source| Ok(SourceExplanation::not_found(source)))
 }
 
 #[cfg(test)]
 #[path = "explain_scoped_tests.rs"]
 mod scoped_tests;
 
-fn explain_existing_source(
+/// Resolves the limits for an existing source file and measures it.
+fn measure_existing_source(
     absolute_path: &Path,
     config: &Config,
-    classification: PathClassification,
-) -> Result<PathClassification> {
-    let PathClassification::Source(explanation) = classification else {
-        return Ok(classification);
-    };
-    let source = explanation.into_source();
+    source: ClassifiedSource,
+) -> Result<SourceExplanation> {
     let limits = LimitResolver::new(config)?;
     let resolved_limits = limits.source_limits(&source)?;
     let measurement = measure_source(
         config,
         &source,
         absolute_path,
-        resolved_limits.file.included_line_types,
+        resolved_limits.file.count_lines,
     )?;
-    Ok(PathClassification::Source(SourceExplanation::measured(
+    Ok(SourceExplanation::measured(
         source,
         resolved_limits,
         measurement.measurement,
         measurement.rust_cfg_test,
-    )))
+    ))
 }
 
 fn absolute_lexical_root(root: &Path) -> Result<std::path::PathBuf> {
@@ -234,7 +234,7 @@ mod tests {
                     indoc! {r#"
                         [limits]
                         max_lines_per_file = { production = 1 }
-                        max_leaf_files_per_directory = { production = 1 }
+                        max_direct_files_per_directory = { production = 1 }
 
                         [languages.rust]
                         enabled = true
@@ -245,7 +245,7 @@ mod tests {
                         [[overrides]]
                         paths = ["src/**"]
                         max_lines_per_file = { production = 3 }
-                        max_leaf_files_per_directory = { production = 4 }
+                        max_direct_files_per_directory = { production = 4 }
                         reason = "package exception"
 
                         [[overrides]]
@@ -285,7 +285,7 @@ mod tests {
                     tempdir.path(),
                     indoc! {r#"
                         [files]
-                        exclude = ["generated/**"]
+                        extend_exclude = ["generated/**"]
 
                         [languages.rust]
                         enabled = true
@@ -406,7 +406,7 @@ mod tests {
                     tempdir.path(),
                     indoc! {r#"
                         [tests]
-                        check_path_tests = false
+                        check = false
 
                         [languages.rust]
                         enabled = true

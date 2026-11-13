@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
@@ -7,7 +7,7 @@ use serde::Deserialize;
 #[cfg(test)]
 use crate::LanguageId;
 use crate::value::schema::authored_toml_schema_generator;
-use crate::{Result, SprawlError};
+use crate::{RelativePath, Result, SprawlError};
 
 use super::defaults::built_in_config;
 use super::files::{PartialFilesConfig, merge_global_file_excludes};
@@ -15,15 +15,12 @@ use super::ignore::{PartialIgnoreConfig, merge_ignore};
 use super::language_groups::{PartialLanguageGroupsConfig, resolve_language_groups};
 use super::languages::{PartialLanguagesConfig, merge_language};
 use super::limits::{PartialLimits, merge_limits};
-use super::output::{OutputFormat, PartialOutputConfig, merge_output};
+use super::output::{PartialOutputConfig, merge_output};
 use super::ratchet::{PartialRatchetConfig, merge_ratchet};
 use super::tests::{PartialTestsConfig, merge_tests};
-use super::traversal::{
-    PartialTraversalConfig, SourceFileByteLimit, SymlinkTraversal, TraversalEntryLimit,
-    TraversalErrorPolicy, merge_traversal,
-};
+use super::traversal::{PartialTraversalConfig, merge_traversal};
 use super::{
-    AuthoredConfigPath, Config, ConfigSchemaVersion, ConfigSource, PathOverride, ResolvedPolicy,
+    AuthoredConfigPath, Config, ConfigSchemaVersion, ConfigSource, PathOverride, ResolvedConfig,
 };
 
 const PRIMARY_CONFIG_FILE: &str = "sprawl-guard.toml";
@@ -43,7 +40,7 @@ pub struct LoadOptions {
     pub config: Option<PathBuf>,
 }
 
-/// Loaded resolved configuration and its provenance.
+/// Loaded resolved configuration and where it came from.
 #[derive(Clone, Debug)]
 pub struct LoadedConfig {
     /// Resolved configuration.
@@ -53,8 +50,8 @@ pub struct LoadedConfig {
 
 impl LoadedConfig {
     /// Binds the resolved configuration to the source from which it was assembled.
-    pub fn resolved_policy(&self) -> ResolvedPolicy<'_> {
-        ResolvedPolicy::new(&self.config, self.source.clone())
+    pub fn resolved_config(&self) -> ResolvedConfig<'_> {
+        ResolvedConfig::new(&self.config, self.source.clone())
     }
 }
 
@@ -68,12 +65,48 @@ pub fn load_resolved_config(options: &LoadOptions) -> Result<LoadedConfig> {
         let path = AuthoredConfigPath::new(path)?;
         let partial = read_current_root_config(path.as_path())?;
         merge_root_config(&mut config, partial)?;
+        config.authored_file = authored_file_under_root(&root, &path)?;
         ConfigSource::Authored { path }
     } else {
         ConfigSource::BuiltIn
     };
 
     Ok(LoadedConfig { config, source })
+}
+
+/// Returns the authored config's repository-relative path, or `None` when it lives outside `root`.
+///
+/// Discovery reports paths as written, without resolving symlinks, so a path already under the
+/// canonical `root` is kept as is. Any other path, such as an absolute path through a symlinked
+/// root or one that leaves the root with `..`, has only its parent directory canonicalized, so the
+/// file name still matches a symlinked config file's own name.
+fn authored_file_under_root(
+    root: &Path,
+    path: &AuthoredConfigPath,
+) -> Result<Option<RelativePath>> {
+    let lexical = path.as_path();
+    if let Ok(relative) = lexical.strip_prefix(root)
+        && !relative
+            .components()
+            .any(|component| component == Component::ParentDir)
+    {
+        return RelativePath::new(relative).map(Some);
+    }
+    let (Some(parent), Some(file_name)) = (lexical.parent(), lexical.file_name()) else {
+        return Ok(None);
+    };
+    let parent = parent
+        .canonicalize()
+        .map_err(|source| SprawlError::ReadConfig {
+            path: lexical.to_path_buf(),
+            source,
+        })?;
+    parent
+        .join(file_name)
+        .strip_prefix(root)
+        .ok()
+        .map(RelativePath::new)
+        .transpose()
 }
 
 fn resolve_config_root(options: &LoadOptions) -> Result<PathBuf> {
@@ -209,7 +242,7 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
         for (language, value) in &config.languages {
             if value.is_enabled()
                 && value.common().include.as_ref().is_some_and(Vec::is_empty)
-                && value.common().additional_globs.is_empty()
+                && value.common().extend_include.is_empty()
             {
                 return Err(SprawlError::LanguageWithoutIncludedPaths {
                     language: *language,
@@ -220,7 +253,7 @@ fn merge_root_config(config: &mut Config, partial: PartialConfig) -> Result<()> 
     config.language_groups = resolve_language_groups(
         language_groups,
         config.languages.keys().copied(),
-        &config.limits.max_leaf_files_per_directory,
+        &config.limits.max_direct_files_per_directory,
     )?;
     if let Some(value) = overrides {
         config.overrides = value;

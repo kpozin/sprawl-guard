@@ -1,7 +1,5 @@
 mod migrate;
 
-use std::path::PathBuf;
-
 use serde::Serialize;
 use sprawl_guard_lib::config::{Config, LoadOptions, load_resolved_config};
 
@@ -24,19 +22,13 @@ enum ConfigRendering {
 }
 
 /// Loads the fully resolved config for `sprawl-guard config resolved`.
-pub(super) fn execute_config_resolved(
-    root: Option<PathBuf>,
-    config_path: Option<PathBuf>,
-) -> Result<ConfigCommandExecution> {
-    execute_config_command(root, config_path, ConfigRendering::Resolved)
+pub(super) fn execute_config_resolved(options: &LoadOptions) -> Result<ConfigCommandExecution> {
+    execute_config_command(options, ConfigRendering::Resolved)
 }
 
 /// Loads the fully explicit config for `sprawl-guard config export`.
-pub(super) fn execute_config_export(
-    root: Option<PathBuf>,
-    config_path: Option<PathBuf>,
-) -> Result<ConfigCommandExecution> {
-    execute_config_command(root, config_path, ConfigRendering::Authored)
+pub(super) fn execute_config_export(options: &LoadOptions) -> Result<ConfigCommandExecution> {
+    execute_config_command(options, ConfigRendering::Authored)
 }
 
 /// Renders the config execution result as canonical TOML.
@@ -59,17 +51,10 @@ pub(super) fn render_authored_toml(document: &impl Serialize) -> Result<String> 
 }
 
 fn execute_config_command(
-    root: Option<PathBuf>,
-    config_path: Option<PathBuf>,
+    options: &LoadOptions,
     rendering: ConfigRendering,
 ) -> Result<ConfigCommandExecution> {
-    let root = root.unwrap_or(
-        std::env::current_dir().map_err(|source| CliError::CurrentDirectory { source })?,
-    );
-    let loaded = load_resolved_config(&LoadOptions {
-        root,
-        config: config_path,
-    })?;
+    let loaded = load_resolved_config(options)?;
     Ok(ConfigCommandExecution {
         config: Box::new(loaded.config.materialized_for_inspection()),
         rendering,

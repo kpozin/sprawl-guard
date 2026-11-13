@@ -7,7 +7,7 @@ import {
   type WrapperError,
 } from "./errors.js";
 import type { ProcessExit } from "./run-cli.js";
-import { buildWasiInvocation } from "./wasi-invocation.js";
+import { buildWasiInvocation, GUEST_ROOT } from "./wasi-invocation.js";
 
 const FORWARDED_ENV_NAMES = [
   "CI",
@@ -47,7 +47,7 @@ export async function runWasiModule(
     args: invocation.value.args,
     env: filterEnvironment(),
     preopens: {
-      "/workspace": invocation.value.hostRoot,
+      [GUEST_ROOT]: invocation.value.hostRoot,
     },
     returnOnExit: true,
   });

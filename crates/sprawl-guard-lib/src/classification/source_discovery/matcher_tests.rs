@@ -79,7 +79,7 @@ mod discover_sources {
                 tempdir.path(),
                 indoc! {r#"
                     [languages.yaml]
-                    additional_globs = ["**/*.lock", "**/go.sum"]
+                    extend_include = ["**/*.lock", "**/go.sum"]
                 "#},
             );
             write_source_file(tempdir.path(), "config.yaml");
@@ -98,13 +98,13 @@ mod discover_sources {
         use super::*;
 
         #[test]
-        fn additional_globs_preserve_bundled_paths() {
+        fn extend_include_preserve_bundled_paths() {
             let tempdir = tempfile::tempdir().unwrap();
             write_config(
                 tempdir.path(),
                 indoc! {r#"
                     [languages.rust]
-                    additional_globs = ["generated/**/*.rust"]
+                    extend_include = ["generated/**/*.rust"]
                 "#},
             );
             write_source_file(tempdir.path(), "src/lib.rs");
@@ -126,7 +126,7 @@ mod discover_sources {
                 indoc! {r#"
                     [languages.rust]
                     include = []
-                    additional_globs = ["**/*.rust"]
+                    extend_include = ["**/*.rust"]
                 "#},
             );
             write_source_file(tempdir.path(), "lower.rust");
@@ -147,7 +147,7 @@ mod discover_sources {
                     exclude = ["**/*.[eE]"]
 
                     [languages."specman e"]
-                    additional_globs = ["**/*.[eE]"]
+                    extend_include = ["**/*.[eE]"]
                 "#},
             );
             write_source_file(tempdir.path(), "lower.e");
@@ -168,7 +168,7 @@ mod discover_sources {
                 tempdir.path(),
                 indoc! {r#"
                     [languages.markdown]
-                    additional_globs = ["**/*.guide"]
+                    extend_include = ["**/*.guide"]
 
                     [language_groups.content]
                     languages = ["markdown"]

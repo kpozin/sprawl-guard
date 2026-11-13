@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import tarfile
-import tomllib
-from hashlib import sha256
 from dataclasses import dataclass
 from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
+
+import tomllib
 
 from sprawl_guard_public_archive.errors import PackageValidationError
 

@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::{GlobPattern, LanguageId, RelativePath, Result, SprawlError};
 
 use super::bundled_languages::BundledLanguage;
-use super::types::{ClassifiedSource, PathClassification, SourceExplanation, SourceKind};
+use super::types::{ClassifiedSource, PathClassification, SourceKind};
 
 /// Decision engine for files that are visible to ignore-aware traversal.
 ///
@@ -30,7 +30,7 @@ impl<'config> Classifier<'config> {
     pub(super) fn new(config: &'config Config) -> Result<Self> {
         Ok(Self {
             config,
-            global_exclude: glob_set(&config.files.exclude)?,
+            global_exclude: glob_set(&config.files.extend_exclude)?,
             global_tests: glob_set(&config.tests.globs)?,
             languages: language_matchers(config)?,
         })
@@ -39,17 +39,18 @@ impl<'config> Classifier<'config> {
     /// Converts a diagnostic classification into discovery output.
     ///
     /// `Some(ClassifiedSource)` contains a path selected for checking. `None` means configured
-    /// policy excludes the path. Ambiguous language matches become errors because later checks
-    /// need one definitive language-specific policy.
+    /// configuration excludes the path. Ambiguous language matches become errors because later checks
+    /// need one definitive set of language settings.
     pub(super) fn included_source(&self, path: RelativePath) -> Result<Option<ClassifiedSource>> {
         match self.classify(path)? {
-            PathClassification::Source(explanation) => Ok(Some(explanation.into_source())),
+            PathClassification::Source(source) => Ok(Some(source)),
             PathClassification::AmbiguousLanguage { path, languages } => {
                 Err(ambiguous_language(path, languages))
             }
             PathClassification::Ignored { .. }
             | PathClassification::GloballyExcluded { .. }
             | PathClassification::RatchetExcluded { .. }
+            | PathClassification::ConfigExcluded { .. }
             | PathClassification::NonFile { .. }
             | PathClassification::NotSource { .. }
             | PathClassification::LanguageExcluded { .. }
@@ -58,17 +59,23 @@ impl<'config> Classifier<'config> {
         }
     }
 
-    /// Explains the first policy decision that applies to one visible path.
+    /// Explains the first rule that applies to one visible path.
     ///
     /// The returned variant is the reason discovery would include or exclude
     /// the path: global exclude, no language match, language-level exclusion,
     /// all matching languages excluded, ambiguous language match, test file
-    /// excluded because path-based test checks are disabled, or included source
+    /// excluded because test file checks are disabled, or included source
     /// file. Ignore decisions are not produced here because callers must run
     /// ignore-aware traversal before calling this method.
-    pub(super) fn classify(&self, path: RelativePath) -> Result<PathClassification> {
+    pub(super) fn classify(
+        &self,
+        path: RelativePath,
+    ) -> Result<PathClassification<ClassifiedSource>> {
         if path.as_str() == self.config.ratchet.file.as_str() {
             return Ok(PathClassification::RatchetExcluded { path });
+        }
+        if self.config.authored_file.as_ref() == Some(&path) {
+            return Ok(PathClassification::ConfigExcluded { path });
         }
         if self.global_exclude.is_match(path.as_str()) {
             return Ok(PathClassification::GloballyExcluded { path });
@@ -111,7 +118,7 @@ impl<'config> Classifier<'config> {
 
         let is_test = self.global_tests.is_match(path.as_str())
             || is_match(&language.test_globs, path.as_str());
-        if is_test && !self.config.tests.check_path_tests {
+        if is_test && !self.config.tests.check {
             return Ok(PathClassification::TestExcluded {
                 path,
                 language: language.id,
@@ -124,8 +131,11 @@ impl<'config> Classifier<'config> {
             SourceKind::Production
         };
         let group = self.config.language_groups.group_for(language.id).clone();
-        Ok(PathClassification::Source(SourceExplanation::classified(
-            ClassifiedSource::new(path, language.id, group, kind),
+        Ok(PathClassification::Source(ClassifiedSource::new(
+            path,
+            language.id,
+            group,
+            kind,
         )))
     }
 }
@@ -191,7 +201,7 @@ fn language_matchers(config: &Config) -> Result<LanguageMatchers> {
                 .include
                 .iter()
                 .flatten()
-                .chain(&common.additional_globs),
+                .chain(&common.extend_include),
         )?;
         let index = entries.len();
         if common.include.is_none() {

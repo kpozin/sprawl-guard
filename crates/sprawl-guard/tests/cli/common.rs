@@ -19,9 +19,10 @@ fn sprawl_guard_binary() -> &'static str {
         .expect("sprawl-guard binary path must be provided by Cargo or Bazel")
 }
 
+/// Runs the binary from `root`, which every root-aware command uses when `--root` is omitted.
 pub(crate) fn sprawl_guard(root: &TempDir) -> Command {
     let mut command = sprawl_guard_no_root();
-    command.arg("--root").arg(root.path());
+    command.current_dir(root.path());
     command
 }
 
@@ -35,22 +36,13 @@ pub(crate) fn sprawl_guard_no_root() -> Command {
     Command::new(binary)
 }
 
+/// Human check output's first paragraph when the default config file under the root is selected.
+pub(crate) const AUTHORED_CONFIG_HEADER: &str = "Configuration: sprawl-guard.toml\n\n";
+
 pub(crate) fn write_config(root: &TempDir, contents: &str) {
     root.child("sprawl-guard.toml")
         .write_str(&format!("schema_version = 2\n{contents}"))
         .unwrap();
-    ignore_fixture_file(root, "sprawl-guard.toml");
-}
-
-fn ignore_fixture_file(root: &TempDir, path: &str) {
-    let ignore_file = root.child(".gitignore");
-    let mut contents = std::fs::read_to_string(ignore_file.path()).unwrap_or_default();
-    if !contents.is_empty() && !contents.ends_with('\n') {
-        contents.push('\n');
-    }
-    contents.push_str(path);
-    contents.push('\n');
-    ignore_file.write_str(&contents).unwrap();
 }
 
 pub(crate) fn read_config(root: &TempDir) -> String {
@@ -112,11 +104,7 @@ pub(crate) fn toml_from_stdout_config(output: &Output) -> TomlValue {
     let config_start = stdout.find("# sprawl-guard.toml").unwrap_or(0);
     let config = stdout[config_start..]
         .lines()
-        .take_while(|line| {
-            !line.starts_with("Included source files:")
-                && !line.starts_with("Current tree ")
-                && !line.starts_with("Large generated/vendor-like directories ")
-        })
+        .take_while(|line| !line.starts_with("Preview only;"))
         .collect::<Vec<_>>()
         .join("\n");
     parse_toml(&config)
@@ -145,7 +133,7 @@ pub(crate) fn write_rust_file_limit_config_and_file_ratchet(
     root: &TempDir,
     configured_limit: u32,
     ratchet_path: &str,
-    ratchet_loc: u32,
+    ratchet_lines: u32,
 ) {
     write_config(
         root,
@@ -165,7 +153,7 @@ pub(crate) fn write_rust_file_limit_config_and_file_ratchet(
             [[files]]
             path = "{ratchet_path}"
             role = "production"
-            max_loc = {ratchet_loc}
+            max_lines = {ratchet_lines}
         "#},
     );
 }
@@ -181,12 +169,12 @@ pub(crate) fn write_rust_source_with_function_count(
     write_file(root, path, &contents);
 }
 
-pub(crate) fn write_rust_directory_fanout_fixture(root: &TempDir) {
+pub(crate) fn write_rust_directory_direct_files_fixture(root: &TempDir) {
     write_config(
         root,
         indoc! {r#"
             [limits]
-            max_leaf_files_per_directory = { production = 1 }
+            max_direct_files_per_directory = { production = 1 }
 
             [languages.rust]
             enabled = true
@@ -196,16 +184,16 @@ pub(crate) fn write_rust_directory_fanout_fixture(root: &TempDir) {
     write_file(root, "src/b.rs", "fn b() {}\n");
 }
 
-pub(crate) fn write_mixed_group_directory_fanout_fixture(root: &TempDir) {
+pub(crate) fn write_mixed_group_directory_direct_files_fixture(root: &TempDir) {
     write_config(
         root,
         indoc! {r#"
             [limits]
-            max_leaf_files_per_directory = { production = 1 }
+            max_direct_files_per_directory = { production = 1 }
 
             [[overrides]]
             paths = ["src/**"]
-            max_leaf_files_per_directory = { production = 1 }
+            max_direct_files_per_directory = { production = 1 }
             reason = "exercise grouped directory fan-out"
 
             [languages.rust]
@@ -259,7 +247,7 @@ pub(crate) fn write_dependency_lockfile_ratchet_fixture(root: &TempDir) {
     write_config(
         root,
         indoc! {r#"
-            [limits.max_leaf_files_per_directory]
+            [limits.max_direct_files_per_directory]
             production = 1
 
             [languages.yaml]
@@ -280,13 +268,13 @@ pub(crate) fn write_dependency_lockfile_ratchet_fixture(root: &TempDir) {
             [[files]]
             path = "src/pnpm-lock.yaml"
             role = "production"
-            max_loc = 3
+            max_lines = 3
 
             [[directories]]
             path = "src"
             role = "production"
             group = "source"
-            leaf_files = 2
+            max_direct_files = 2
         "#},
     );
 }
@@ -333,7 +321,7 @@ pub(crate) fn production_directory_ratchet_entries(
             (
                 entry.group.as_str(),
                 entry.path.as_str(),
-                entry.leaf_files.get(),
+                entry.max_direct_files.get(),
             )
         })
         .collect()

@@ -9,9 +9,9 @@ use crate::config::Config;
 use crate::value::path::normalize_under_root;
 use crate::{DiagnosticDetail, RelativePath, Result, SprawlError};
 
-use super::types::{TraversalIncident, TraversalIncidentKind, TraversalIncidentSeverity};
+use super::types::{UnreadablePath, UnreadablePathKind, UnreadablePathSeverity};
 
-/// Creates an ignore-aware walk pruned to repository-relative scopes.
+/// Creates an ignore-aware walk pruned to repository-relative selected paths.
 pub(super) fn walk_sources_scoped(
     root: &Path,
     config: &Config,
@@ -34,7 +34,7 @@ pub(super) fn walk_sources_scoped(
             && (scopes.is_empty() || is_native_scope_relevant(entry.path(), &filter_root, &scopes))
     });
     // ignore 0.4 still parses parent ignore files with parents(false). Their
-    // errors are outside this scan's policy and observation budget.
+    // errors are outside this scan's configuration and observation limit.
     let root = root.to_path_buf();
     builder.build().filter(move |result| match result {
         Ok(_) => true,
@@ -68,7 +68,7 @@ fn walk_builder(root: &Path, config: &Config) -> WalkBuilder {
         .hidden(false)
         .ignore(config.ignore.respect_ignore)
         .git_ignore(config.ignore.respect_gitignore)
-        // Only in-root ignore files participate in repository policy.
+        // Only ignore files inside the root affect the scan.
         .parents(false)
         .git_global(false)
         .git_exclude(false)
@@ -90,7 +90,7 @@ fn walk_builder(root: &Path, config: &Config) -> WalkBuilder {
 /// Returns whether an existing file appears in the configured ignore-aware walk.
 ///
 /// `explain` uses this to distinguish files ignored by traversal from files that
-/// are visible to traversal but later excluded by sprawl-guard policy.
+/// are visible to the walk but later excluded by the configuration.
 pub(super) fn is_walked_file(root: &Path, path: &Path, config: &Config) -> Result<bool> {
     let expected = normalize_under_root(root, path)?;
     let mut visited_entries = 0_u32;
@@ -131,33 +131,31 @@ pub(super) fn checked_walk_entry(
     Ok(entry)
 }
 
-/// Converts one walker result for discovery while collecting recoverable incidents.
+/// Converts one walker result for discovery while collecting recoverable unreadable paths.
 ///
 /// The ignore walker can continue after many descendant errors. Discovery uses
-/// this path so `check` can report every recoverable traversal incident instead
+/// this path so `check` can report every recoverable unreadable path instead
 /// of failing on the first one. The hard entry bound is always an operational
-/// error and is not affected by traversal incident policy.
+/// error and is not affected by `unreadable_paths`.
 pub(super) fn collect_walk_entry(
     root: &Path,
     config: &Config,
-    severity: TraversalIncidentSeverity,
+    severity: UnreadablePathSeverity,
     visited_entries: &mut u32,
-    incidents: &mut Vec<TraversalIncident>,
+    unreadable_paths: &mut Vec<UnreadablePath>,
     result: std::result::Result<DirEntry, ignore::Error>,
 ) -> Result<Option<DirEntry>> {
     count_walk_entry(root, config, visited_entries)?;
     let entry = match result {
         Ok(entry) => entry,
         Err(source) => {
-            incidents.extend(traversal_incidents_from_ignore_error(
-                root, severity, source,
-            ));
+            unreadable_paths.extend(unreadable_paths_from_ignore_error(root, severity, source));
             return Ok(None);
         }
     };
     reject_symlinked_ignore_files(&entry, config)?;
     if let Some(source) = entry.error() {
-        incidents.extend(traversal_incidents_from_ignore_error(
+        unreadable_paths.extend(unreadable_paths_from_ignore_error(
             root,
             severity,
             source.clone(),
@@ -166,7 +164,7 @@ pub(super) fn collect_walk_entry(
     Ok(Some(entry))
 }
 
-/// Refuses policy whose contents are not owned by the scanned directory.
+/// Refuses ignore files whose contents are not owned by the scanned directory.
 fn reject_symlinked_ignore_files(entry: &DirEntry, config: &Config) -> Result<()> {
     if !entry.file_type().is_some_and(|kind| kind.is_dir()) {
         return Ok(());
@@ -182,7 +180,7 @@ fn reject_symlinked_ignore_files(entry: &DirEntry, config: &Config) -> Result<()
             return Err(SprawlError::Traverse {
                 path,
                 source: ignore::Error::Io(std::io::Error::other(
-                    "ignore policy must not be a symlink",
+                    "ignore file must not be a symlink",
                 )),
             });
         }
@@ -217,34 +215,34 @@ mod tests {
         use super::*;
 
         #[test]
-        fn it_counts_each_error_before_collecting_the_next_incident() {
+        fn it_counts_each_error_before_collecting_the_next_unreadable_path() {
             let root = tempfile::tempdir().unwrap();
             write_rust_entry_limit_config(root.path(), 1);
             let config = load_config(root.path());
             let mut visited_entries = 0;
-            let mut incidents = Vec::new();
+            let mut unreadable_paths = Vec::new();
 
             let first = collect_walk_entry(
                 root.path(),
                 &config,
-                TraversalIncidentSeverity::Warning,
+                UnreadablePathSeverity::Warning,
                 &mut visited_entries,
-                &mut incidents,
+                &mut unreadable_paths,
                 Err(ignore::Error::Io(io::Error::other("first failure"))),
             )
             .unwrap();
             let second = collect_walk_entry(
                 root.path(),
                 &config,
-                TraversalIncidentSeverity::Warning,
+                UnreadablePathSeverity::Warning,
                 &mut visited_entries,
-                &mut incidents,
+                &mut unreadable_paths,
                 Err(ignore::Error::Io(io::Error::other("second failure"))),
             )
             .unwrap_err();
 
             assert!(first.is_none());
-            assert_eq!(incidents.len(), 1);
+            assert_eq!(unreadable_paths.len(), 1);
             assert!(matches!(
                 second,
                 SprawlError::TraversalEntryLimitExceeded { limit: 1, .. }
@@ -270,57 +268,57 @@ fn count_walk_entry(root: &Path, config: &Config, visited_entries: &mut u32) -> 
     Ok(())
 }
 
-/// Converts a file-type read failure before classification into a traversal incident.
-pub(super) fn file_type_incident(
+/// Converts a file-type read failure before classification into a unreadable path.
+pub(super) fn file_type_unreadable_path(
     root: &Path,
-    severity: TraversalIncidentSeverity,
+    severity: UnreadablePathSeverity,
     path: &Path,
     detail: DiagnosticDetail,
-) -> TraversalIncident {
-    TraversalIncident {
-        kind: TraversalIncidentKind::FileTypeFailed,
+) -> UnreadablePath {
+    UnreadablePath {
+        kind: UnreadablePathKind::FileTypeFailed,
         severity,
         path: normalize_under_root(root, path).ok(),
         detail,
     }
 }
 
-fn traversal_incidents_from_ignore_error(
+fn unreadable_paths_from_ignore_error(
     root: &Path,
-    severity: TraversalIncidentSeverity,
+    severity: UnreadablePathSeverity,
     source: ignore::Error,
-) -> Vec<TraversalIncident> {
-    let mut incidents = Vec::new();
-    collect_ignore_error(root, severity, source, None, None, &mut incidents);
-    incidents
+) -> Vec<UnreadablePath> {
+    let mut unreadable_paths = Vec::new();
+    collect_ignore_error(root, severity, source, None, None, &mut unreadable_paths);
+    unreadable_paths
 }
 
 fn collect_ignore_error(
     root: &Path,
-    severity: TraversalIncidentSeverity,
+    severity: UnreadablePathSeverity,
     source: ignore::Error,
     path: Option<&Path>,
     depth: Option<usize>,
-    incidents: &mut Vec<TraversalIncident>,
+    unreadable_paths: &mut Vec<UnreadablePath>,
 ) {
     match source {
         ignore::Error::Partial(errors) => {
             for error in errors {
-                collect_ignore_error(root, severity, error, path, depth, incidents);
+                collect_ignore_error(root, severity, error, path, depth, unreadable_paths);
             }
         }
         ignore::Error::WithLineNumber { err, .. } => {
-            collect_ignore_error(root, severity, *err, path, depth, incidents);
+            collect_ignore_error(root, severity, *err, path, depth, unreadable_paths);
         }
         ignore::Error::WithPath { path, err } => {
-            collect_ignore_error(root, severity, *err, Some(&path), depth, incidents);
+            collect_ignore_error(root, severity, *err, Some(&path), depth, unreadable_paths);
         }
         ignore::Error::WithDepth { depth, err } => {
-            collect_ignore_error(root, severity, *err, path, Some(depth), incidents);
+            collect_ignore_error(root, severity, *err, path, Some(depth), unreadable_paths);
         }
         ignore::Error::Loop { child, .. } => {
-            incidents.push(TraversalIncident {
-                kind: TraversalIncidentKind::SymlinkLoop,
+            unreadable_paths.push(UnreadablePath {
+                kind: UnreadablePathKind::SymlinkLoop,
                 severity,
                 path: normalize_under_root(root, &child).ok(),
                 detail: DiagnosticDetail::new("symlink loop found"),
@@ -328,13 +326,13 @@ fn collect_ignore_error(
         }
         ignore::Error::Io(error) => {
             let kind = if error.kind() == ErrorKind::NotFound {
-                TraversalIncidentKind::BrokenSymlink
+                UnreadablePathKind::BrokenSymlink
             } else if depth.is_some() {
-                TraversalIncidentKind::ReadDirFailed
+                UnreadablePathKind::ReadDirFailed
             } else {
-                TraversalIncidentKind::FileTypeFailed
+                UnreadablePathKind::FileTypeFailed
             };
-            incidents.push(TraversalIncident {
+            unreadable_paths.push(UnreadablePath {
                 kind,
                 severity,
                 path: path.and_then(|path| normalize_under_root(root, path).ok()),
@@ -342,16 +340,16 @@ fn collect_ignore_error(
             });
         }
         ignore::Error::Glob { err, .. } | ignore::Error::UnrecognizedFileType(err) => {
-            incidents.push(TraversalIncident {
-                kind: TraversalIncidentKind::IgnoreParseFailed,
+            unreadable_paths.push(UnreadablePath {
+                kind: UnreadablePathKind::IgnoreParseFailed,
                 severity,
                 path: path.and_then(|path| normalize_under_root(root, path).ok()),
                 detail: DiagnosticDetail::new(err),
             });
         }
         ignore::Error::InvalidDefinition => {
-            incidents.push(TraversalIncident {
-                kind: TraversalIncidentKind::IgnoreParseFailed,
+            unreadable_paths.push(UnreadablePath {
+                kind: UnreadablePathKind::IgnoreParseFailed,
                 severity,
                 path: path.and_then(|path| normalize_under_root(root, path).ok()),
                 detail: DiagnosticDetail::new("invalid file type definition"),

@@ -1,17 +1,17 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use crate::LeafFileLimit;
+use crate::DirectFileLimit;
 use crate::classification::{ClassifiedSource, SourceKind};
 use crate::resolved_limits::LimitResolver;
-use crate::{LanguageGroupId, LeafFiles, RelativePath, Result};
+use crate::{DirectFiles, LanguageGroupId, RelativePath, Result};
 
-use super::{DirectoryFanoutViolation, DirectoryViolationKind};
+use super::{DirectoryDirectFilesViolation, DirectoryViolationKind};
 
-pub(super) fn directory_fanout_checks(
+pub(super) fn directory_direct_files_checks(
     limits: &LimitResolver<'_>,
     sources: &[ClassifiedSource],
-) -> Result<Vec<DirectoryFanoutCheck>> {
+) -> Result<Vec<DirectoryDirectFilesCheck>> {
     let mut directories = BTreeMap::<DirectoryKey, DirectoryCount>::new();
     for source in sources {
         let directory = source_parent_directory(&source.path)?;
@@ -29,8 +29,9 @@ pub(super) fn directory_fanout_checks(
     for (directory, count) in directories {
         let actual = count.actual();
         let kind = violation_kind(directory.kind);
-        let limit = limits.directory_leaf_files(directory.kind, &directory.group, &directory.path);
-        let measurement = DirectoryFanoutMeasurement {
+        let limit =
+            limits.directory_direct_files(directory.kind, &directory.group, &directory.path);
+        let measurement = DirectoryDirectFilesMeasurement {
             kind,
             group: directory.group.clone(),
             path: directory.path.clone(),
@@ -38,8 +39,8 @@ pub(super) fn directory_fanout_checks(
             limit: limit.value,
         };
         let check = match limit.value {
-            LeafFileLimit::Finite(value) if actual.get() > value.get() => {
-                DirectoryFanoutCheck::Exceeded(DirectoryFanoutViolation {
+            DirectFileLimit::Finite(value) if actual.get() > value.get() => {
+                DirectoryDirectFilesCheck::Exceeded(DirectoryDirectFilesViolation {
                     kind,
                     group: directory.group,
                     path: directory.path,
@@ -49,33 +50,33 @@ pub(super) fn directory_fanout_checks(
                     files: count.files.clone(),
                 })
             }
-            _ => DirectoryFanoutCheck::WithinLimit(measurement),
+            _ => DirectoryDirectFilesCheck::WithinLimit(measurement),
         };
         checks.push(check);
     }
     Ok(checks)
 }
 
-pub(super) enum DirectoryFanoutCheck {
-    WithinLimit(DirectoryFanoutMeasurement),
-    Exceeded(DirectoryFanoutViolation),
+pub(super) enum DirectoryDirectFilesCheck {
+    WithinLimit(DirectoryDirectFilesMeasurement),
+    Exceeded(DirectoryDirectFilesViolation),
 }
 
-impl DirectoryFanoutCheck {
-    pub(super) fn measurement(&self) -> DirectoryFanoutMeasurement {
+impl DirectoryDirectFilesCheck {
+    pub(super) fn measurement(&self) -> DirectoryDirectFilesMeasurement {
         match self {
             Self::WithinLimit(measurement) => measurement.clone(),
-            Self::Exceeded(violation) => DirectoryFanoutMeasurement {
+            Self::Exceeded(violation) => DirectoryDirectFilesMeasurement {
                 kind: violation.kind,
                 group: violation.group.clone(),
                 path: violation.path.clone(),
                 actual: violation.actual,
-                limit: LeafFileLimit::Finite(violation.limit),
+                limit: DirectFileLimit::Finite(violation.limit),
             },
         }
     }
 
-    pub(super) fn violation_mut(&mut self) -> Option<&mut DirectoryFanoutViolation> {
+    pub(super) fn violation_mut(&mut self) -> Option<&mut DirectoryDirectFilesViolation> {
         match self {
             Self::WithinLimit(_) => None,
             Self::Exceeded(violation) => Some(violation),
@@ -86,7 +87,7 @@ impl DirectoryFanoutCheck {
         matches!(self, Self::Exceeded(_))
     }
 
-    pub(super) fn into_violation(self) -> Option<DirectoryFanoutViolation> {
+    pub(super) fn into_violation(self) -> Option<DirectoryDirectFilesViolation> {
         match self {
             Self::WithinLimit(_) => None,
             Self::Exceeded(violation) => Some(violation),
@@ -95,12 +96,12 @@ impl DirectoryFanoutCheck {
 }
 
 #[derive(Clone)]
-pub(super) struct DirectoryFanoutMeasurement {
+pub(super) struct DirectoryDirectFilesMeasurement {
     pub(super) kind: DirectoryViolationKind,
     pub(super) group: LanguageGroupId,
     pub(super) path: RelativePath,
-    pub(super) actual: LeafFiles,
-    pub(super) limit: LeafFileLimit,
+    pub(super) actual: DirectFiles,
+    pub(super) limit: DirectFileLimit,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -120,8 +121,8 @@ impl DirectoryCount {
         self.files.push(file);
     }
 
-    fn actual(&self) -> LeafFiles {
-        LeafFiles::trusted(
+    fn actual(&self) -> DirectFiles {
+        DirectFiles::trusted(
             self.files
                 .len()
                 .try_into()
@@ -132,8 +133,8 @@ impl DirectoryCount {
 
 fn violation_kind(kind: SourceKind) -> DirectoryViolationKind {
     match kind {
-        SourceKind::Production => DirectoryViolationKind::DirectoryFanout,
-        SourceKind::Test => DirectoryViolationKind::TestDirectoryFanout,
+        SourceKind::Production => DirectoryViolationKind::DirectoryDirectFiles,
+        SourceKind::Test => DirectoryViolationKind::TestDirectoryDirectFiles,
     }
 }
 
@@ -165,7 +166,7 @@ mod tests {
             crate::test_support::write_config(
                 tempdir.path(),
                 indoc::indoc! {r#"
-                    [limits.max_leaf_files_per_directory]
+                    [limits.max_direct_files_per_directory]
                     production = 1
 
                     [language_groups.frontend]
@@ -181,10 +182,10 @@ mod tests {
                 production_source("src/lib.rs", "Rust", LanguageGroupId::Source),
             ];
 
-            let checks = directory_fanout_checks(&limits, &sources).unwrap();
+            let checks = directory_direct_files_checks(&limits, &sources).unwrap();
             let measurements = checks
                 .iter()
-                .map(DirectoryFanoutCheck::measurement)
+                .map(DirectoryDirectFilesCheck::measurement)
                 .collect::<Vec<_>>();
 
             assert_eq!(measurements.len(), 2);

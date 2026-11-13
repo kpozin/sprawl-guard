@@ -2,17 +2,19 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 use std::path::Path;
 
-use indoc::formatdoc;
 use serde_json::{Value, json};
 use sprawl_guard_lib::classification::{
     ClassifiedSource, bundled_extensions, bundled_filenames, discover_sources,
 };
 use sprawl_guard_lib::config::{Config, LanguageConfig, RustCfgTestExclusion, built_in_config};
-use sprawl_guard_lib::{GlobPattern, IncludedLineTypes, LanguageGroupId, LanguageId};
+use sprawl_guard_lib::{CountLines, GlobPattern, LanguageGroupId, LanguageId};
 
 use crate::error::{CliError, Result};
 
 const SOURCE_COUNT_INCREMENT: usize = 1;
+
+/// Space between columns of the human language table.
+const COLUMN_GAP: &str = "  ";
 
 pub(super) fn supported_languages_report() -> LanguagesReport {
     let config = built_in_config();
@@ -69,9 +71,7 @@ fn language_entries(
                 Some(LanguageEntry::new(
                     *id,
                     language_config,
-                    config
-                        .effective_language_file_limits(*id)
-                        .included_line_types,
+                    config.effective_language_file_limits(*id).count_lines,
                     detected_counts.get(id).copied(),
                 ))
             } else {
@@ -81,52 +81,33 @@ fn language_entries(
         .collect()
 }
 
+/// Renders one row per language: its name, configuration key, detected file count when
+/// detecting, and the extensions and exact filenames it claims.
 pub(super) fn human_report(report: &LanguagesReport) -> String {
-    let mut output = format!("{} languages:\n", report.mode.heading());
-    for language in &report.languages {
-        let count = language
-            .source_files
-            .map(|count| format!("    source files: {count}\n"))
-            .unwrap_or_default();
-        output.push_str(&formatdoc! {"
-              {key}
-                canonical: {canonical}
-                accepted aliases: {aliases}
-                enabled: {enabled}
-                literate: {literate}
-                automatic group: {group}
-                automatic included line types: {included_line_types}
-            {count}    include: {include}
-                bundled extensions: {bundled_extensions}
-                bundled filenames: {bundled_filenames}
-                additional globs: {additional_globs}
-                exclude: {exclude}
-                test globs: {test_globs}{rust}
-        ",
-        key = language.config_key,
-        canonical = language.id,
-        aliases = language.human_aliases(),
-        enabled = language.enabled,
-        literate = language.literate,
-        group = language.group,
-        included_line_types = language.included_line_types,
-        include = language
-            .include
-            .as_ref()
-            .map(|include| display_list(include))
-            .unwrap_or_else(|| "(bundled)".to_owned()),
-        bundled_extensions = display_list(&language.bundled_extensions),
-        bundled_filenames = display_list(&language.bundled_filenames),
-        additional_globs = display_list(&language.additional_globs),
-        exclude = display_list(&language.exclude),
-        test_globs = display_list(&language.test_globs),
-        rust = language
-            .rust
-            .as_ref()
-            .map(RustLanguageEntry::human_suffix)
-            .unwrap_or_default(),
-        });
+    let mut rows = vec![report.mode.header_row()];
+    rows.extend(report.languages.iter().map(|language| {
+        let mut row = vec![language.id.to_string(), language.config_key.clone()];
+        if let Some(count) = language.source_files {
+            row.push(count.to_string());
+        }
+        row.push(language.matched_names());
+        row
+    }));
+    let widths = (0..rows[0].len())
+        .map(|column| rows.iter().map(|row| row[column].len()).max().unwrap_or(0))
+        .collect::<Vec<_>>();
+    let mut output = format!("{} languages:\n\n", report.mode.heading());
+    for row in rows {
+        let line = row
+            .iter()
+            .zip(&widths)
+            .map(|(cell, width)| format!("{cell:<width$}"))
+            .collect::<Vec<_>>()
+            .join(COLUMN_GAP);
+        output.push_str(line.trim_end());
+        output.push('\n');
     }
+    output.push_str("\nUse --format json for globs, groups, and counted line types.\n");
     output
 }
 
@@ -194,6 +175,15 @@ impl LanguageReportMode {
         }
     }
 
+    /// Column titles for the human table; only detection reports file counts.
+    fn header_row(&self) -> Vec<String> {
+        let titles: &[&str] = match self {
+            Self::Supported => &["Language", "Key", "Extensions and filenames"],
+            Self::Detected => &["Language", "Key", "Files", "Extensions and filenames"],
+        };
+        titles.iter().map(|title| (*title).to_owned()).collect()
+    }
+
     fn as_json_str(&self) -> &'static str {
         match self {
             Self::Supported => "supported",
@@ -210,12 +200,12 @@ struct LanguageEntry {
     enabled: bool,
     literate: bool,
     group: LanguageGroupId,
-    included_line_types: IncludedLineTypes,
+    count_lines: CountLines,
     source_files: Option<NonZeroUsize>,
     include: Option<Vec<String>>,
     bundled_extensions: Vec<String>,
     bundled_filenames: Vec<String>,
-    additional_globs: Vec<String>,
+    extend_include: Vec<String>,
     exclude: Vec<String>,
     test_globs: Vec<String>,
     rust: Option<RustLanguageEntry>,
@@ -225,7 +215,7 @@ impl LanguageEntry {
     fn new(
         id: LanguageId,
         config: &LanguageConfig,
-        included_line_types: IncludedLineTypes,
+        count_lines: CountLines,
         source_files: Option<NonZeroUsize>,
     ) -> Self {
         let common = config.common();
@@ -240,7 +230,7 @@ impl LanguageEntry {
             enabled: config.is_enabled(),
             literate,
             group,
-            included_line_types,
+            count_lines,
             source_files,
             include: common.include.as_deref().map(glob_strings),
             bundled_extensions: bundled_extensions(id)
@@ -251,7 +241,7 @@ impl LanguageEntry {
                 .iter()
                 .map(|value| (*value).to_owned())
                 .collect(),
-            additional_globs: glob_strings(&common.additional_globs),
+            extend_include: glob_strings(&common.extend_include),
             exclude: glob_strings(&common.exclude),
             test_globs: glob_strings(&common.test_globs),
             rust: config.rust().map(|rust| RustLanguageEntry {
@@ -269,11 +259,11 @@ impl LanguageEntry {
             "enabled": self.enabled,
             "literate": self.literate,
             "automatic_group": self.group,
-            "automatic_included_line_types": self.included_line_types,
+            "automatic_count_lines": self.count_lines,
             "include": &self.include,
             "bundled_extensions": &self.bundled_extensions,
             "bundled_filenames": &self.bundled_filenames,
-            "additional_globs": &self.additional_globs,
+            "extend_include": &self.extend_include,
             "exclude": &self.exclude,
             "test_globs": &self.test_globs,
         });
@@ -286,13 +276,15 @@ impl LanguageEntry {
         value
     }
 
-    fn human_aliases(&self) -> String {
-        let aliases = display_list(&self.accepted_aliases);
-        if self.case_insensitive {
-            format!("{aliases} (case-insensitive)")
-        } else {
-            aliases
-        }
+    /// Bundled extensions as `.ext`, followed by exact filenames.
+    fn matched_names(&self) -> String {
+        let names = self
+            .bundled_extensions
+            .iter()
+            .map(|extension| format!(".{extension}"))
+            .chain(self.bundled_filenames.iter().cloned())
+            .collect::<Vec<_>>();
+        display_list(&names)
     }
 }
 
@@ -301,13 +293,6 @@ struct RustLanguageEntry {
 }
 
 impl RustLanguageEntry {
-    fn human_suffix(&self) -> String {
-        format!(
-            "\n    rust: exclude_cfg_test = {}",
-            self.exclude_cfg_test.is_enabled()
-        )
-    }
-
     fn json(&self) -> Value {
         json!({
             "exclude_cfg_test": self.exclude_cfg_test.is_enabled(),

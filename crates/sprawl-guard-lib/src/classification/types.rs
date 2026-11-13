@@ -3,7 +3,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::code_line_counter::LocMeasurement;
+use crate::code_line_counter::LineMeasurement;
 use crate::{
     DiagnosticDetail, LanguageGroupId, LanguageId, RelativePath, RustCfgTestInfo,
     SourceResolvedLimits,
@@ -34,7 +34,7 @@ impl fmt::Display for SourceKind {
 /// A source file included by the current resolved configuration.
 ///
 /// Included sources have already passed ignore handling, global excludes,
-/// language-specific excludes, and any policy that disables path-classified test
+/// language-specific excludes, and any setting that disables test-file
 /// files.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ClassifiedSource {
@@ -42,7 +42,7 @@ pub struct ClassifiedSource {
     pub path: RelativePath,
     /// Matched language.
     language: LanguageId,
-    /// Language group used for directory fan-out measurements.
+    /// Language group used for directory direct-file measurements.
     group: LanguageGroupId,
     /// Production/test kind.
     pub kind: SourceKind,
@@ -64,7 +64,7 @@ impl ClassifiedSource {
         }
     }
 
-    /// Returns the language group used for directory fan-out measurements.
+    /// Returns the language group used for directory direct-file measurements.
     pub fn group(&self) -> &LanguageGroupId {
         &self.group
     }
@@ -78,37 +78,37 @@ impl ClassifiedSource {
 /// Result of ignore-aware source discovery.
 ///
 /// `sources` contains every classified source that could be discovered.
-/// `traversal_incidents` contains recoverable descendant traversal failures
-/// encountered while looking for additional sources.
+/// `unreadable_paths` contains the paths below the root that could not be read
+/// while looking for additional sources.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SourceDiscoveryReport {
     /// Sources accepted by discovery and classification.
     pub(crate) sources: Vec<ClassifiedSource>,
     /// Recoverable traversal failures collected during discovery.
-    pub(crate) traversal_incidents: Vec<TraversalIncident>,
+    pub(crate) unreadable_paths: Vec<UnreadablePath>,
 }
 
 /// Recoverable filesystem traversal failure.
 ///
-/// These incidents happen while looking for possible source files, before a
+/// These failures happen while looking for possible source files, before a
 /// specific source file is known to require measurement. They are rendered
 /// separately from generic check warnings because they make analysis partial.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct TraversalIncident {
-    /// Stable incident kind for machine consumers.
-    pub kind: TraversalIncidentKind,
-    /// Severity after applying traversal error policy.
-    pub severity: TraversalIncidentSeverity,
+pub struct UnreadablePath {
+    /// Stable failure kind for machine consumers.
+    pub kind: UnreadablePathKind,
+    /// Severity after applying `unreadable_paths`.
+    pub severity: UnreadablePathSeverity,
     /// Repository-relative path when the traversal backend reported one under the root.
     pub path: Option<RelativePath>,
     /// Backend detail suitable for display.
     pub detail: DiagnosticDetail,
 }
 
-impl TraversalIncident {
+impl UnreadablePath {
     /// Returns the deterministic sort key used before rendering reports.
-    pub(crate) fn sort_key(&self) -> TraversalIncidentSortKey<'_> {
-        TraversalIncidentSortKey {
+    pub(crate) fn sort_key(&self) -> UnreadablePathSortKey<'_> {
+        UnreadablePathSortKey {
             path: self.path.as_ref(),
             kind: self.kind,
             detail: self.detail.as_str(),
@@ -116,10 +116,10 @@ impl TraversalIncident {
     }
 }
 
-/// Stable traversal incident categories.
+/// Stable unreadable path categories.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum TraversalIncidentKind {
+pub enum UnreadablePathKind {
     /// A directory could not be read while walking descendants.
     ReadDirFailed,
     /// A descendant path's file type could not be read.
@@ -132,21 +132,21 @@ pub enum TraversalIncidentKind {
     IgnoreParseFailed,
 }
 
-/// Severity assigned to a traversal incident after config and CLI overrides.
+/// Severity assigned to a unreadable path after config and CLI overrides.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub enum TraversalIncidentSeverity {
-    /// Incident fails the run after discovery finishes.
+pub enum UnreadablePathSeverity {
+    /// The unreadable path fails the run after discovery finishes.
     Error,
-    /// Incident makes analysis partial but does not fail the run by itself.
+    /// The unreadable path makes analysis partial but does not fail the run by itself.
     Warning,
 }
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) struct TraversalIncidentSortKey<'incident> {
-    path: Option<&'incident RelativePath>,
-    kind: TraversalIncidentKind,
-    detail: &'incident str,
+pub(crate) struct UnreadablePathSortKey<'path> {
+    path: Option<&'path RelativePath>,
+    kind: UnreadablePathKind,
+    detail: &'path str,
 }
 
 /// Diagnostic details for a source file that discovery would include.
@@ -157,35 +157,35 @@ pub(crate) struct TraversalIncidentSortKey<'incident> {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum SourceExplanation {
-    /// Classification-only result for a path that was not measured.
-    Classified {
+    /// Path that does not exist, so it was classified by its path alone and not measured.
+    NotFound {
         /// Included source classification.
         source: ClassifiedSource,
     },
-    /// Existing source measured with its complete effective policy.
+    /// Existing source measured with all of its effective limits.
     Measured {
         /// Included source classification.
         source: ClassifiedSource,
         /// Resolved file and directory limits used by `check`.
         resolved_limits: SourceResolvedLimits,
-        /// Configured-LOC measurement and logical-line breakdown.
-        measurement: LocMeasurement,
+        /// Configured-line measurements and line breakdown.
+        measurement: LineMeasurement,
         /// Rust-specific preprocessing status, when the source is Rust.
         rust_cfg_test: Option<RustCfgTestInfo>,
     },
 }
 
 impl SourceExplanation {
-    /// Creates an explanation before later-phase diagnostics are attached.
-    pub(super) fn classified(source: ClassifiedSource) -> Self {
-        Self::Classified { source }
+    /// Creates an explanation for a source path that does not exist.
+    pub(super) fn not_found(source: ClassifiedSource) -> Self {
+        Self::NotFound { source }
     }
 
     /// Creates an explanation for a successfully measured existing source.
     pub(super) fn measured(
         source: ClassifiedSource,
         resolved_limits: SourceResolvedLimits,
-        measurement: LocMeasurement,
+        measurement: LineMeasurement,
         rust_cfg_test: Option<RustCfgTestInfo>,
     ) -> Self {
         Self::Measured {
@@ -199,24 +199,24 @@ impl SourceExplanation {
     /// Returns the included source classification.
     pub fn source(&self) -> &ClassifiedSource {
         match self {
-            Self::Classified { source } | Self::Measured { source, .. } => source,
+            Self::NotFound { source } | Self::Measured { source, .. } => source,
         }
     }
 
     /// Returns resolved limits when this existing source was measured.
     pub fn resolved_limits(&self) -> Option<&SourceResolvedLimits> {
         match self {
-            Self::Classified { .. } => None,
+            Self::NotFound { .. } => None,
             Self::Measured {
                 resolved_limits, ..
             } => Some(resolved_limits),
         }
     }
 
-    /// Returns the configured-LOC measurement for an existing source.
-    pub fn measurement(&self) -> Option<&LocMeasurement> {
+    /// Returns the line measurement for an existing source.
+    pub fn measurement(&self) -> Option<&LineMeasurement> {
         match self {
-            Self::Classified { .. } => None,
+            Self::NotFound { .. } => None,
             Self::Measured { measurement, .. } => Some(measurement),
         }
     }
@@ -224,7 +224,7 @@ impl SourceExplanation {
     /// Returns Rust preprocessing details for a measured Rust source.
     pub fn rust_cfg_test(&self) -> Option<&RustCfgTestInfo> {
         match self {
-            Self::Classified { .. }
+            Self::NotFound { .. }
             | Self::Measured {
                 rust_cfg_test: None,
                 ..
@@ -235,23 +235,20 @@ impl SourceExplanation {
             } => Some(info),
         }
     }
-
-    /// Consumes the explanation and returns its source classification.
-    pub(super) fn into_source(self) -> ClassifiedSource {
-        match self {
-            Self::Classified { source } | Self::Measured { source, .. } => source,
-        }
-    }
 }
 
 /// Full classification for a single path.
 ///
 /// This is the diagnostic form of source discovery. It keeps negative outcomes
-/// distinct so `sprawl-guard explain` can report which policy decision caused a
+/// distinct so `sprawl-guard explain` can report which rule caused a
 /// path not to participate in later checks.
+///
+/// `S` is what an included source carries. The classifier yields plain [`ClassifiedSource`]
+/// values because it never reads the filesystem; `explain` then replaces each with a
+/// [`SourceExplanation`] that says whether the file exists and how it measures.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum PathClassification {
+pub enum PathClassification<S = SourceExplanation> {
     /// The path was ignored by standard ignore-aware traversal.
     Ignored {
         /// Repository-relative path.
@@ -264,6 +261,11 @@ pub enum PathClassification {
     },
     /// The path is the configured generated ratchet file.
     RatchetExcluded {
+        /// Repository-relative path.
+        path: RelativePath,
+    },
+    /// The path is the authored configuration file in use.
+    ConfigExcluded {
         /// Repository-relative path.
         path: RelativePath,
     },
@@ -306,8 +308,7 @@ pub enum PathClassification {
         /// Matched languages whose exclude globs also matched.
         languages: Vec<LanguageId>,
     },
-    /// The path is a source file classified as test code, but path-based test
-    /// checks are disabled.
+    /// The path is a test file, but test file checks are disabled.
     TestExcluded {
         /// Repository-relative path.
         path: RelativePath,
@@ -315,5 +316,36 @@ pub enum PathClassification {
         language: LanguageId,
     },
     /// The path is included as a source file.
-    Source(SourceExplanation),
+    Source(S),
+}
+
+impl<S> PathClassification<S> {
+    /// Replaces an included source's payload with `explain_source`'s result, keeping every
+    /// exclusion as is.
+    pub(super) fn try_map_source<T>(
+        self,
+        explain_source: impl FnOnce(S) -> crate::Result<T>,
+    ) -> crate::Result<PathClassification<T>> {
+        Ok(match self {
+            Self::Source(source) => PathClassification::Source(explain_source(source)?),
+            Self::Ignored { path } => PathClassification::Ignored { path },
+            Self::GloballyExcluded { path } => PathClassification::GloballyExcluded { path },
+            Self::RatchetExcluded { path } => PathClassification::RatchetExcluded { path },
+            Self::ConfigExcluded { path } => PathClassification::ConfigExcluded { path },
+            Self::NonFile { path } => PathClassification::NonFile { path },
+            Self::NotSource { path } => PathClassification::NotSource { path },
+            Self::AmbiguousLanguage { path, languages } => {
+                PathClassification::AmbiguousLanguage { path, languages }
+            }
+            Self::LanguageExcluded { path, language } => {
+                PathClassification::LanguageExcluded { path, language }
+            }
+            Self::LanguagesExcluded { path, languages } => {
+                PathClassification::LanguagesExcluded { path, languages }
+            }
+            Self::TestExcluded { path, language } => {
+                PathClassification::TestExcluded { path, language }
+            }
+        })
+    }
 }

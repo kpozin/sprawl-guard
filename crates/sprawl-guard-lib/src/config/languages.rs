@@ -5,7 +5,7 @@ use schemars::{Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use tokei::LanguageType;
 
-use crate::{GlobPattern, IncludedLineTypes, LanguageId, LocLimit, Result, SprawlError};
+use crate::{CountLines, GlobPattern, LanguageId, LineLimit, Result, SprawlError};
 
 /// Per-language configuration.
 ///
@@ -71,7 +71,7 @@ impl Default for LanguageConfig {
         Self::generic(CommonLanguageConfig {
             mode: LanguageMode::Enabled,
             include: None,
-            additional_globs: vec![],
+            extend_include: vec![],
             exclude: vec![],
             test_globs: vec![],
             limits: LanguageLimits::default(),
@@ -111,7 +111,7 @@ pub(super) struct PartialLanguageConfig {
     // Flattening keeps shared and Rust-only settings in one user-facing language table.
     #[serde(flatten)]
     common: PartialCommonLanguageConfig,
-    /// Whether to exclude top-level Rust `cfg(test)` items from production LOC.
+    /// Whether to exclude top-level Rust `cfg(test)` items from production lines.
     #[serde(rename = "exclude_cfg_test")]
     cfg_test_exclusion: Option<RustCfgTestExclusion>,
 }
@@ -187,7 +187,7 @@ pub struct CommonLanguageConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include: Option<Vec<GlobPattern>>,
     /// Authored glob patterns added to the selected bundled or explicit paths.
-    pub additional_globs: Vec<GlobPattern>,
+    pub extend_include: Vec<GlobPattern>,
     /// Glob patterns excluded for this language.
     pub exclude: Vec<GlobPattern>,
     /// Language-specific glob patterns that classify this language's source files as test code.
@@ -203,7 +203,7 @@ pub struct CommonLanguageConfig {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RustLanguageConfig {
-    /// Whether top-level `cfg(test)` items are excluded from production LOC.
+    /// Whether top-level `cfg(test)` items are excluded from production lines.
     #[serde(rename = "exclude_cfg_test")]
     pub cfg_test_exclusion: RustCfgTestExclusion,
 }
@@ -243,14 +243,14 @@ impl LanguageMode {
     }
 }
 
-/// Whether top-level Rust `cfg(test)` items are excluded from production LOC.
+/// Whether top-level Rust `cfg(test)` items are excluded from production lines.
 // TOML represents this value as a boolean; the enum keeps the internal state domain-specific.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(from = "bool", into = "bool")]
 pub enum RustCfgTestExclusion {
     /// Exclude top-level Rust `cfg(test)` items.
     Enabled,
-    /// Count Rust `cfg(test)` items as production LOC.
+    /// Count Rust `cfg(test)` items as production lines.
     Disabled,
 }
 
@@ -293,18 +293,18 @@ pub struct LanguageLimits {
 pub struct LanguageMaxLinesPerFileLimits {
     /// Optional replacement for inherited included line types.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub included_line_types: Option<IncludedLineTypes>,
-    /// Optional production configured-LOC limit.
+    pub count_lines: Option<CountLines>,
+    /// Optional production line limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub production: Option<LocLimit>,
-    /// Optional test configured-LOC limit.
+    pub production: Option<LineLimit>,
+    /// Optional test line limit.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub test: Option<LocLimit>,
+    pub test: Option<LineLimit>,
 }
 
 impl LanguageMaxLinesPerFileLimits {
     fn is_empty(&self) -> bool {
-        self.included_line_types.is_none() && self.production.is_none() && self.test.is_none()
+        self.count_lines.is_none() && self.production.is_none() && self.test.is_none()
     }
 }
 
@@ -324,8 +324,8 @@ pub(super) fn merge_language(
     if let Some(value) = common.include.clone() {
         config.common_mut().include = Some(value);
     }
-    if let Some(value) = common.additional_globs.clone() {
-        config.common_mut().additional_globs = value;
+    if let Some(value) = common.extend_include.clone() {
+        config.common_mut().extend_include = value;
     }
     if let Some(value) = common.exclude.clone() {
         config.common_mut().exclude = value;
@@ -339,8 +339,8 @@ pub(super) fn merge_language(
         .and_then(|limits| limits.max_lines_per_file)
     {
         let resolved = &mut config.common_mut().limits.max_lines_per_file;
-        if let Some(value) = limits.included_line_types {
-            resolved.included_line_types = Some(value);
+        if let Some(value) = limits.count_lines {
+            resolved.count_lines = Some(value);
         }
         if let Some(value) = limits.production {
             resolved.production = Some(value);
@@ -368,7 +368,7 @@ struct PartialCommonLanguageConfig {
     #[serde(rename = "enabled")]
     mode: Option<LanguageMode>,
     include: Option<Vec<GlobPattern>>,
-    additional_globs: Option<Vec<GlobPattern>>,
+    extend_include: Option<Vec<GlobPattern>>,
     exclude: Option<Vec<GlobPattern>>,
     test_globs: Option<Vec<GlobPattern>>,
     limits: Option<PartialLanguageLimits>,
@@ -383,7 +383,7 @@ struct PartialLanguageLimits {
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialLanguageMaxLinesPerFileLimits {
-    included_line_types: Option<IncludedLineTypes>,
-    production: Option<LocLimit>,
-    test: Option<LocLimit>,
+    count_lines: Option<CountLines>,
+    production: Option<LineLimit>,
+    test: Option<LineLimit>,
 }

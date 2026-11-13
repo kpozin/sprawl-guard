@@ -29,7 +29,7 @@ mod when_writing_the_initial_update {
                 [[files]]
                 path = "src/lib.rs"
                 role = "production"
-                max_loc = 2
+                max_lines = 2
             "#})
         );
         assert_eq!(stderr(&output), "");
@@ -38,7 +38,7 @@ mod when_writing_the_initial_update {
     #[test]
     fn it_records_the_automatic_source_group_for_directory_entries() {
         let root = TempDir::new().unwrap();
-        write_rust_directory_fanout_fixture(&root);
+        write_rust_directory_direct_files_fixture(&root);
 
         let (output, ratchet) = run_ratchet_file_write(&root, "update");
 
@@ -50,7 +50,7 @@ mod when_writing_the_initial_update {
     #[test]
     fn it_records_each_group_when_directory_entries_share_a_path() {
         let root = TempDir::new().unwrap();
-        write_mixed_group_directory_fanout_fixture(&root);
+        write_mixed_group_directory_direct_files_fixture(&root);
 
         let (output, ratchet) = run_ratchet_file_write(&root, "update");
 
@@ -163,10 +163,12 @@ mod when_comparing_update_and_tighten_help {
             .unwrap();
 
         assert_exit_code(&update, exit_codes::SUCCESS);
-        assert!(stdout(&update).contains("Add ratchet ceilings for newly discovered violations"));
+        assert!(stdout(&update).contains("Add ratchet entries for new violations"));
         assert!(stdout(&update).contains("--allow-increases"));
         assert_exit_code(&tighten, exit_codes::SUCCESS);
-        assert!(stdout(&tighten).contains("Lower or remove existing ratchet ceilings"));
+        assert!(
+            stdout(&tighten).contains("Lower or remove ratchet entries after violations shrink")
+        );
     }
 }
 
@@ -194,7 +196,7 @@ mod when_the_ratchet_file_already_exists {
                 [[files]]
                 path = "src/now-small.rs"
                 role = "production"
-                max_loc = 20
+                max_lines = 20
             "#},
         );
         write_file(&root, "src/now-small.rs", "fn small() {}\n");
@@ -204,7 +206,7 @@ mod when_the_ratchet_file_already_exists {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 1);
         assert_eq!(ratchet.files[0].path.as_str(), "src/now-small.rs");
-        assert_eq!(ratchet.files[0].max_loc.get(), 20);
+        assert_eq!(ratchet.files[0].max_lines.get(), 20);
         assert!(ratchet.directories.is_empty());
         assert_eq!(stderr(&output), "");
     }
@@ -230,7 +232,7 @@ mod when_the_ratchet_file_already_exists {
                 [[files]]
                 path = "old/lib.rs"
                 role = "production"
-                max_loc = 9
+                max_lines = 9
             "#},
         );
         write_file(
@@ -251,9 +253,9 @@ mod when_the_ratchet_file_already_exists {
         assert_exit_code(&output, exit_codes::SUCCESS);
         assert_eq!(ratchet.files.len(), 2);
         let old_file = production_file_ratchet_entry(&ratchet, "old/lib.rs").unwrap();
-        assert_eq!(old_file.max_loc.get(), 9);
+        assert_eq!(old_file.max_lines.get(), 9);
         let new_file = production_file_ratchet_entry(&ratchet, "new/lib.rs").unwrap();
-        assert_eq!(new_file.max_loc.get(), 2);
+        assert_eq!(new_file.max_lines.get(), 2);
     }
 
     fn assert_scoped_update_ceiling(flags: &[&str], expected_ceiling: u32) {
@@ -270,7 +272,7 @@ mod when_the_ratchet_file_already_exists {
         let ratchet = read_ratchet_file(&root);
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        assert_eq!(ratchet.files[0].max_loc.get(), expected_ceiling);
+        assert_eq!(ratchet.files[0].max_lines.get(), expected_ceiling);
         assert_eq!(stderr(&output), "");
     }
 
@@ -298,7 +300,7 @@ mod when_traversal_is_incomplete {
 
                 [traversal]
                 follow_symlinks = "directories"
-                error_policy = "warn"
+                unreadable_paths = "warn"
 
                 [languages.rust]
                 enabled = true

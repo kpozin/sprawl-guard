@@ -6,67 +6,86 @@ import {
   type HostRootPath,
 } from "./paths.js";
 
-const GUEST_WORKSPACE_ROOT = "/workspace";
+/**
+ * Guest path where the host repository root is preopened.
+ *
+ * A WASI guest starts in `/`, so mounting the root there makes the CLI's working-directory
+ * default select the repository without an injected `--root`.
+ */
+export const GUEST_ROOT = "/";
 
-/** Direct WASI invocation plus the host repository root preopened as `/workspace`. */
+const ROOT_FLAG = "--root";
+const ROOT_FLAG_PREFIX = `${ROOT_FLAG}=`;
+const OPTION_TERMINATOR = "--";
+
+/** Direct WASI invocation plus the host repository root preopened at {@link GUEST_ROOT}. */
 export type WasiInvocationPlan = {
   readonly args: string[];
   readonly hostRoot: HostRootPath;
 };
 
+/** Position and value of the single `--root` option in the wrapper arguments. */
+type RootOption = {
+  readonly index: number;
+  readonly tokenCount: 1 | 2;
+  readonly value: string | undefined;
+};
+
 /**
- * Maps the wrapper-owned leading host `--root` into the WASI guest workspace.
+ * Maps a host `--root` option into the WASI guest root.
  *
- * Every other token is passed to Rust unchanged. Non-root path operands must therefore be
- * repository-relative when the WASI fallback is used.
+ * `--root` may appear anywhere before `--`; its value becomes the preopened host directory and
+ * the option is rewritten in place to name {@link GUEST_ROOT}. Without `--root`, the current
+ * directory is mounted. Every other token is passed to Rust unchanged, so non-root path operands
+ * must be repository-relative when the WASI fallback is used.
  */
 export function buildWasiInvocation(
   userArgv: readonly string[],
 ): Result<WasiInvocationPlan, WrapperError> {
-  let hostRoot = unsafeHostRootPathFromAbsolutePath(resolveAbsolutePath(process.cwd()));
-  let remaining = [...userArgv];
-
-  const first = remaining[0];
-  if (first === "--root") {
-    const rawRoot = remaining[1];
-    if (rawRoot === undefined || rawRoot.length === 0) {
-      return Result.err(new MissingFlagValueError("--root"));
-    }
-    hostRoot = unsafeHostRootPathFromAbsolutePath(resolveAbsolutePath(rawRoot));
-    remaining = remaining.slice(2);
-  } else if (first?.startsWith("--root=") === true) {
-    const rawRoot = first.slice("--root=".length);
-    if (rawRoot.length === 0) {
-      return Result.err(new MissingFlagValueError("--root"));
-    }
-    hostRoot = unsafeHostRootPathFromAbsolutePath(resolveAbsolutePath(rawRoot));
-    remaining = remaining.slice(1);
-  }
-
-  if (containsRootOption(remaining)) {
+  const rootOptions = findRootOptions(userArgv);
+  const [rootOption, ...repeated] = rootOptions;
+  if (repeated.length > 0) {
     return Result.err(
       new RuntimeFailureError(
         "prepare WASI invocation",
-        "the WASI fallback requires --root to be the first wrapper argument",
+        `${ROOT_FLAG} may be passed only once`,
         userArgv,
       ),
     );
   }
+  if (rootOption === undefined) {
+    return Result.ok({
+      args: ["sprawl-guard", ...userArgv],
+      hostRoot: hostRootFrom(process.cwd()),
+    });
+  }
+  if (rootOption.value === undefined || rootOption.value.length === 0) {
+    return Result.err(new MissingFlagValueError(ROOT_FLAG));
+  }
 
+  const args = [...userArgv];
+  args.splice(rootOption.index, rootOption.tokenCount, ROOT_FLAG, GUEST_ROOT);
   return Result.ok({
-    args: ["sprawl-guard", "--root", GUEST_WORKSPACE_ROOT, ...remaining],
-    hostRoot,
+    args: ["sprawl-guard", ...args],
+    hostRoot: hostRootFrom(rootOption.value),
   });
 }
 
-function containsRootOption(argv: readonly string[]): boolean {
-  for (const argument of argv) {
-    if (argument === "--") {
-      return false;
+function hostRootFrom(path: string): HostRootPath {
+  return unsafeHostRootPathFromAbsolutePath(resolveAbsolutePath(path));
+}
+
+function findRootOptions(argv: readonly string[]): RootOption[] {
+  const options: RootOption[] = [];
+  for (const [index, argument] of argv.entries()) {
+    if (argument === OPTION_TERMINATOR) {
+      break;
     }
-    if (argument === "--root" || argument.startsWith("--root=")) {
-      return true;
+    if (argument === ROOT_FLAG) {
+      options.push({ index, tokenCount: 2, value: argv[index + 1] });
+    } else if (argument.startsWith(ROOT_FLAG_PREFIX)) {
+      options.push({ index, tokenCount: 1, value: argument.slice(ROOT_FLAG_PREFIX.length) });
     }
   }
-  return false;
+  return options;
 }

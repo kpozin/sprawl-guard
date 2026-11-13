@@ -3,11 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{CustomLanguageGroupId, LanguageGroupId, LanguageId, LeafFileLimit};
+use crate::{CustomLanguageGroupId, DirectFileLimit, LanguageGroupId, LanguageId};
 
-use super::MaxLeafFilesPerDirectoryLimits;
+use super::MaxDirectFilesPerDirectoryLimits;
 use super::limits::{
-    PartialMaxLeafFilesPerDirectoryLimits, merge_max_leaf_files_per_directory_limits,
+    PartialMaxDirectFilesPerDirectoryLimits, merge_max_direct_files_per_directory_limits,
 };
 
 /// Error returned when a custom language group's members are invalid.
@@ -70,12 +70,12 @@ impl<'de> Deserialize<'de> for LanguageGroupMembers {
     }
 }
 
-/// Directory fan-out limits for one language group.
+/// Directory direct-file count limits for one language group.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct LanguageGroupLimits {
-    /// Maximum direct leaf source files per directory.
-    pub max_leaf_files_per_directory: MaxLeafFilesPerDirectoryLimits,
+    /// Maximum direct source files per directory.
+    pub max_direct_files_per_directory: MaxDirectFilesPerDirectoryLimits,
 }
 
 /// Resolved configuration for one custom language group.
@@ -114,7 +114,7 @@ impl LanguageGroupsConfig {
         Self {
             documentation: DocumentationLanguageGroupConfig {
                 limits: LanguageGroupLimits {
-                    max_leaf_files_per_directory: unlimited_directory_limits(),
+                    max_direct_files_per_directory: unlimited_directory_limits(),
                 },
             },
             custom: BTreeMap::new(),
@@ -186,13 +186,13 @@ struct PartialLanguageGroupConfig {
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PartialLanguageGroupLimits {
-    max_leaf_files_per_directory: Option<PartialMaxLeafFilesPerDirectoryLimits>,
+    max_direct_files_per_directory: Option<PartialMaxDirectFilesPerDirectoryLimits>,
 }
 
 pub(super) fn resolve_language_groups(
     partial: Option<PartialLanguageGroupsConfig>,
     languages: impl IntoIterator<Item = LanguageId>,
-    global_limits: &MaxLeafFilesPerDirectoryLimits,
+    global_limits: &MaxDirectFilesPerDirectoryLimits,
 ) -> Result<LanguageGroupsConfig, LanguageGroupsError> {
     let mut resolved = LanguageGroupsConfig::automatic(languages);
     let Some(PartialLanguageGroupsConfig(groups)) = partial else {
@@ -208,7 +208,7 @@ pub(super) fn resolve_language_groups(
                     return Err(LanguageGroupsError::DocumentationLanguages);
                 }
                 apply_group_limits(
-                    &mut resolved.documentation.limits.max_leaf_files_per_directory,
+                    &mut resolved.documentation.limits.max_direct_files_per_directory,
                     partial_group.limits,
                 );
             }
@@ -238,7 +238,7 @@ pub(super) fn resolve_language_groups(
                     CustomLanguageGroupConfig {
                         languages,
                         limits: LanguageGroupLimits {
-                            max_leaf_files_per_directory: directory_limits,
+                            max_direct_files_per_directory: directory_limits,
                         },
                     },
                 );
@@ -250,21 +250,21 @@ pub(super) fn resolve_language_groups(
 }
 
 fn apply_group_limits(
-    resolved: &mut MaxLeafFilesPerDirectoryLimits,
+    resolved: &mut MaxDirectFilesPerDirectoryLimits,
     partial: Option<PartialLanguageGroupLimits>,
 ) {
     let Some(PartialLanguageGroupLimits {
-        max_leaf_files_per_directory: Some(partial),
+        max_direct_files_per_directory: Some(partial),
     }) = partial
     else {
         return;
     };
-    merge_max_leaf_files_per_directory_limits(resolved, partial);
+    merge_max_direct_files_per_directory_limits(resolved, partial);
 }
 
-fn unlimited_directory_limits() -> MaxLeafFilesPerDirectoryLimits {
-    MaxLeafFilesPerDirectoryLimits {
-        production: LeafFileLimit::Unlimited,
-        test: LeafFileLimit::Unlimited,
+fn unlimited_directory_limits() -> MaxDirectFilesPerDirectoryLimits {
+    MaxDirectFilesPerDirectoryLimits {
+        production: DirectFileLimit::Unlimited,
+        test: DirectFileLimit::Unlimited,
     }
 }

@@ -1,4 +1,4 @@
-//! Configured-LOC counting adapters.
+//! Line counting adapters.
 
 use std::path::Path;
 
@@ -6,27 +6,27 @@ use serde::Serialize;
 use tokei::{CodeStats, Config as TokeiConfig};
 
 use crate::{
-    CountedLoc, IncludedLineTypes, LanguageId, LineCount, LineCountOverflow, LineCounts, Result,
+    CountLines, CountedLines, LanguageId, LineCount, LineCountOverflow, LineCounts, Result,
     SprawlError,
 };
 
 const TOKEI_BACKEND_ID: &str = "tokei";
 const TOKEI_BACKEND_VERSION: &str = "15.0.0";
 
-/// Counts configured LOC with a specific backend.
+/// Counts lines with a specific backend.
 pub trait CodeLineCounter {
-    /// Measures logical lines for a source file on disk.
+    /// Measures lines for a source file on disk.
     ///
-    /// `language` selects the parser semantics. `included_line_types` selects
+    /// `language` selects the parser semantics. `count_lines` selects
     /// which recursively summarized line categories contribute to `actual`.
     fn count_path(
         &self,
         path: &Path,
         language: LanguageId,
-        included_line_types: IncludedLineTypes,
-    ) -> Result<LocMeasurement>;
+        count_lines: CountLines,
+    ) -> Result<LineMeasurement>;
 
-    /// Measures logical lines for source text already loaded in memory.
+    /// Measures lines for source text already loaded in memory.
     ///
     /// This is primarily useful for tests and alternative callers that already
     /// own the source contents. The `language` parameter has the same meaning as
@@ -35,8 +35,8 @@ pub trait CodeLineCounter {
         &self,
         source: &str,
         language: LanguageId,
-        included_line_types: IncludedLineTypes,
-    ) -> Result<LocMeasurement>;
+        count_lines: CountLines,
+    ) -> Result<LineMeasurement>;
 
     /// Stable backend identifier copied into `CheckReport.counter.backend`.
     fn backend_id(&self) -> &'static str;
@@ -54,22 +54,22 @@ impl CodeLineCounter for TokeiCodeLineCounter {
         &self,
         path: &Path,
         language: LanguageId,
-        included_line_types: IncludedLineTypes,
-    ) -> Result<LocMeasurement> {
+        count_lines: CountLines,
+    ) -> Result<LineMeasurement> {
         let report = language
             .as_tokei()
             .parse(path.to_path_buf(), &TokeiConfig::default())
             .map_err(|(source, path)| SprawlError::ReadSource { path, source })?;
-        measure_stats(&report.stats, included_line_types, path)
+        measure_stats(&report.stats, count_lines, path)
     }
 
     fn count_source(
         &self,
         source: &str,
         language: LanguageId,
-        included_line_types: IncludedLineTypes,
-    ) -> Result<LocMeasurement> {
-        count_source_text(source, language, included_line_types, Path::new("<memory>"))
+        count_lines: CountLines,
+    ) -> Result<LineMeasurement> {
+        count_source_text(source, language, count_lines, Path::new("<memory>"))
     }
 
     fn backend_id(&self) -> &'static str {
@@ -81,33 +81,33 @@ impl CodeLineCounter for TokeiCodeLineCounter {
     }
 }
 
-/// One configured LOC measurement and its complete logical-line breakdown.
+/// One line measurement and its complete line breakdown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct LocMeasurement {
+pub struct LineMeasurement {
     /// Line categories selected for the aggregate.
-    included_line_types: IncludedLineTypes,
+    count_lines: CountLines,
     /// Complete recursively summarized parser counts.
     line_counts: LineCounts,
     /// Sum of the selected line categories.
-    actual: CountedLoc,
+    actual: CountedLines,
 }
 
-impl LocMeasurement {
+impl LineMeasurement {
     /// Creates a measurement with a checked aggregate derived from its breakdown.
     pub fn new(
-        included_line_types: IncludedLineTypes,
+        count_lines: CountLines,
         line_counts: LineCounts,
     ) -> std::result::Result<Self, LineCountOverflow> {
         Ok(Self {
-            included_line_types,
+            count_lines,
             line_counts,
-            actual: line_counts.included_total(included_line_types)?,
+            actual: line_counts.included_total(count_lines)?,
         })
     }
 
     /// Returns the line categories selected for the aggregate.
-    pub const fn included_line_types(&self) -> IncludedLineTypes {
-        self.included_line_types
+    pub const fn count_lines(&self) -> CountLines {
+        self.count_lines
     }
 
     /// Returns the complete recursively summarized parser counts.
@@ -116,7 +116,7 @@ impl LocMeasurement {
     }
 
     /// Returns the aggregate of the selected line categories.
-    pub const fn actual(&self) -> CountedLoc {
+    pub const fn actual(&self) -> CountedLines {
         self.actual
     }
 }
@@ -124,27 +124,27 @@ impl LocMeasurement {
 fn count_source_text(
     source: &str,
     language: LanguageId,
-    included_line_types: IncludedLineTypes,
+    count_lines: CountLines,
     path: &Path,
-) -> Result<LocMeasurement> {
+) -> Result<LineMeasurement> {
     let stats = language
         .as_tokei()
         .parse_from_str(source, &TokeiConfig::default());
-    measure_stats(&stats, included_line_types, path)
+    measure_stats(&stats, count_lines, path)
 }
 
 fn measure_stats(
     stats: &CodeStats,
-    included_line_types: IncludedLineTypes,
+    count_lines: CountLines,
     path: &Path,
-) -> Result<LocMeasurement> {
+) -> Result<LineMeasurement> {
     let summary = stats.summarise();
     let line_counts = LineCounts::new(
         line_count(summary.code, path)?,
         line_count(summary.comments, path)?,
         line_count(summary.blanks, path)?,
     );
-    LocMeasurement::new(included_line_types, line_counts).map_err(|error| {
+    LineMeasurement::new(count_lines, line_counts).map_err(|error| {
         SprawlError::CodeLineCountOverflow {
             path: path.to_path_buf(),
             count: error.count(),
@@ -181,11 +181,7 @@ mod tests {
             "#};
 
             let lines = TokeiCodeLineCounter
-                .count_source(
-                    source,
-                    LanguageId::new("Rust").unwrap(),
-                    IncludedLineTypes::Code,
-                )
+                .count_source(source, LanguageId::new("Rust").unwrap(), CountLines::Code)
                 .unwrap();
 
             assert_eq!(lines.actual().get(), 4);
@@ -207,7 +203,7 @@ mod tests {
                 .count_source(
                     source,
                     LanguageId::new("JavaScript").unwrap(),
-                    IncludedLineTypes::Code,
+                    CountLines::Code,
                 )
                 .unwrap();
 
@@ -228,7 +224,7 @@ mod tests {
                 .count_path(
                     &path,
                     LanguageId::new("JavaScript").unwrap(),
-                    IncludedLineTypes::Code,
+                    CountLines::Code,
                 )
                 .unwrap();
 
@@ -247,7 +243,7 @@ mod tests {
                 .count_source(
                     source,
                     LanguageId::new("Markdown").unwrap(),
-                    IncludedLineTypes::CodeAndComments,
+                    CountLines::CodeAndComments,
                 )
                 .unwrap();
 
@@ -267,11 +263,7 @@ mod tests {
             let source = include_str!("../testdata/line_counts/rust_doc_comment.rs");
 
             let measurement = TokeiCodeLineCounter
-                .count_source(
-                    source,
-                    LanguageId::new("Rust").unwrap(),
-                    IncludedLineTypes::Code,
-                )
+                .count_source(source, LanguageId::new("Rust").unwrap(), CountLines::Code)
                 .unwrap();
 
             assert_eq!(
@@ -291,7 +283,7 @@ mod tests {
                 .count_source(
                     "<script>const value = 1;</script>",
                     LanguageId::new("Html").unwrap(),
-                    IncludedLineTypes::Code,
+                    CountLines::Code,
                 )
                 .unwrap();
 

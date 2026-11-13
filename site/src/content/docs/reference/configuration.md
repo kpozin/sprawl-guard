@@ -3,7 +3,7 @@ title: Configuration reference
 description: Fields, defaults, and precedence rules for sprawl-guard.toml.
 ---
 
-Sprawl Guard implicitly discovers only `sprawl-guard.toml` under the repository root. `--config
+Sprawl Guard looks only for `sprawl-guard.toml` in the repository root. `--config
 PATH` selects an explicit file, including alternative filenames such as `.sprawlrc.toml`. Unknown
 sections and fields are errors.
 
@@ -14,9 +14,9 @@ Every root configuration starts with an editor schema directive and declares its
 schema_version = 2
 ```
 
-Run `sprawl-guard init` to create this minimal file, then add the sections below.
+Run `sprawl-guard init --write` to create this minimal file, then add the sections below.
 
-Use `sprawl-guard config resolved` to inspect the effective policy. Use
+Use `sprawl-guard config resolved` to see the full resolved configuration. Use
 `sprawl-guard config export` to print a complete configuration suitable for committing.
 
 ## Editor support
@@ -28,26 +28,43 @@ the appropriate schema in editors such as the Even Better TOML extension for VS 
 Run `sprawl-guard schema config` or `sprawl-guard schema ratchet` to print either schema for local
 or offline use.
 
-After upgrading Sprawl Guard, run `sprawl-guard config upgrade` to update the authored root config.
-The command preserves authored formatting and comments and replaces the file atomically after the
-config validates. `sprawl-guard config upgrade --check` is read-only and exits with code `1` when
-an upgrade is needed, so CI can require committed configs to stay current. The V1→V2 migration
-removes the no-op `[output].color` field while preserving all other authored settings.
+## Upgrade the configuration
+
+After upgrading Sprawl Guard, run `sprawl-guard config upgrade` to preview the upgraded root
+configuration, and `sprawl-guard config upgrade --write` to save it. `--write` keeps your formatting
+and comments, and replaces the file atomically only after the upgraded configuration passes
+validation. `sprawl-guard config upgrade --check` saves nothing and exits with code `1` when an
+upgrade is needed, so CI can require the committed configuration to stay current.
+
+The schema v1 to v2 upgrade renames these keys and keeps all other settings:
+
+| Schema v1                               | Schema v2                                 |
+| --------------------------------------- | ----------------------------------------- |
+| `[limits.max_leaf_files_per_directory]` | `[limits.max_direct_files_per_directory]` |
+| `included_line_types`                   | `count_lines`, without `"code"`           |
+| `[tests].check_path_tests`              | `[tests].check`                           |
+| `[traversal].error_policy`              | `[traversal].unreadable_paths`            |
+| `[files].exclude`                       | `[files].extend_exclude`                  |
+| `[languages.<id>].additional_globs`     | `[languages.<id>].extend_include`         |
+
+It also removes the unused `[output].color` and `[traversal].max_depth` fields. Values are checked
+after the upgrade, so error messages name the v2 keys.
 
 ## Sections and defaults
 
 ### `[limits.max_lines_per_file]`
 
-| Field                 | Type and default        | Meaning                                                   |
-| --------------------- | ----------------------- | --------------------------------------------------------- |
-| `included_line_types` | array, `["code"]`       | Count `code`, with optional `comments` and `blank_lines`. |
-| `production`          | positive integer, `400` | Configured LOC in a production file.                      |
-| `test`                | positive integer, `800` | Configured LOC in a path-classified test file.            |
+| Field         | Type and default        | Meaning                                               |
+| ------------- | ----------------------- | ----------------------------------------------------- |
+| `count_lines` | array, `[]`             | Extra line types to count: `comments`, `blank_lines`. |
+| `production`  | positive integer, `400` | Lines in a production file.                           |
+| `test`        | positive integer, `800` | Lines in a test file.                                 |
 
-`included_line_types` must contain `code` and may not contain duplicates. Literate languages
-automatically add `comments` unless their language-specific setting replaces the global selection.
+Code lines always count. `count_lines` adds comment or blank lines and must not contain duplicates.
+For literate languages, Sprawl Guard adds `comments` automatically unless a language-specific
+`count_lines` replaces the global selection.
 
-### `[limits.max_leaf_files_per_directory]`
+### `[limits.max_direct_files_per_directory]`
 
 | Field        | Type and default                        | Meaning                                          |
 | ------------ | --------------------------------------- | ------------------------------------------------ |
@@ -58,11 +75,11 @@ automatically add `comments` unless their language-specific setting replaces the
 
 All fields are booleans and default to `true`.
 
-Only ignore files within the selected root affect ignore policy. Sprawl Guard ignores global Git
-excludes, `.git/info/exclude`, and ignore files above that root.
+Only ignore files inside the repository root are read. Global Git excludes, `.git/info/exclude`,
+and ignore files above the root have no effect.
 
-Enabled ignore files must not be symlinks, including broken links. Sprawl Guard rejects such policy
-instead of reading rules from an external target.
+Enabled ignore files must not be symlinks, including broken links. Sprawl Guard reports an error
+instead of reading rules from the link's target.
 
 | Field               | Meaning                                                                                        |
 | ------------------- | ---------------------------------------------------------------------------------------------- |
@@ -74,26 +91,30 @@ instead of reading rules from an external target.
 
 ### `[traversal]`
 
-| Field              | Type and default             | Meaning                                                          |
-| ------------------ | ---------------------------- | ---------------------------------------------------------------- |
-| `follow_symlinks`  | enum, `"none"`               | `none`, `files`, `directories`, or `files-and-directories`.      |
-| `same_file_system` | boolean, `true`              | Stay on the root's filesystem.                                   |
-| `max_entries`      | positive integer, `1000000`  | Maximum visited filesystem entries.                              |
-| `max_file_bytes`   | positive integer, `10485760` | Largest source file read for line counting.                      |
-| `error_policy`     | enum, `"fail"`               | `fail` or `warn` for recoverable descendant traversal incidents. |
+| Field              | Type and default             | Meaning                                                     |
+| ------------------ | ---------------------------- | ----------------------------------------------------------- |
+| `follow_symlinks`  | enum, `"none"`               | `none`, `files`, `directories`, or `files-and-directories`. |
+| `same_file_system` | boolean, `true`              | Stay on the root's filesystem.                              |
+| `max_entries`      | positive integer, `1000000`  | Maximum visited filesystem entries.                         |
+| `max_file_bytes`   | positive integer, `10485760` | Largest source file Sprawl Guard reads.                     |
+| `unreadable_paths` | enum, `"fail"`               | `fail` or `warn` for unreadable paths below the root.       |
 
-Native builds enforce `same_file_system`. WASI builds accept but ignore it. The npm fallback
-preopens only the selected project root, but it can still traverse mounted filesystems below that
+A source file larger than `max_file_bytes` is an error: the command stops and exits with code `2`.
+Exclude large generated files instead of raising the limit.
+
+Native builds honor `same_file_system`. WASI builds accept but ignore it. The npm package's WASI
+fallback exposes only the repository root, but it can still read mounted filesystems below that
 root. `config resolved` reports the configured value, not this platform-specific behavior.
 
 ### `[files]`
 
-`exclude` is an array of repository-relative globs. Matching paths are removed before language
-classification. Authored patterns extend the built-in list rather than replacing it.
+`extend_exclude` is an array of repository-relative globs. Matching paths are removed before any
+language claims them. Like every `extend_*` field, it adds to the built-in list instead of
+replacing it.
 
-The built-in exclusions use the lockfile-related patterns from
-[GitHub's code-review exclusions](https://docs.github.com/en/copilot/reference/review-excluded-files)
-as a baseline. They match these patterns at any depth:
+The built-in exclusions are the lockfile-related patterns from
+[GitHub's code-review exclusions](https://docs.github.com/en/copilot/reference/review-excluded-files),
+matched at any depth:
 
 ```text
 **/*.lock              **/bun.lockb            **/go.sum
@@ -103,8 +124,8 @@ as a baseline. They match these patterns at any depth:
 
 ### `[tests]`
 
-`check_path_tests` is a boolean that defaults to `true`. When false, files matched by a test glob
-are omitted. `globs` replaces the default array of test globs:
+`check` is a boolean that defaults to `true`. When false, test files are not checked. `globs`
+replaces the default array of test globs:
 
 ```toml title="sprawl-guard.toml"
 [tests]
@@ -128,24 +149,25 @@ globs = [
 
 ### `[languages.<id>]`
 
-| Field              | Type and default         | Meaning                                                                                    |
-| ------------------ | ------------------------ | ------------------------------------------------------------------------------------------ |
-| `enabled`          | boolean, `true`          | Enable or disable this language.                                                           |
-| `include`          | optional array of globs  | Replace the language's bundled candidate paths.                                            |
-| `additional_globs` | array of globs, `[]`     | Add candidate paths without replacing bundled paths.                                       |
-| `exclude`          | array of globs, `[]`     | Remove matching candidates for this language.                                              |
-| `test_globs`       | array of globs, `[]`     | Additional test-file classifiers. Rust defaults to `["benches/**"]`.                       |
-| `exclude_cfg_test` | boolean, `true` for Rust | Exclude top-level Rust `cfg(test)` items from production LOC. Invalid for other languages. |
+| Field              | Type and default         | Meaning                                                                        |
+| ------------------ | ------------------------ | ------------------------------------------------------------------------------ |
+| `enabled`          | boolean, `true`          | Enable or disable this language.                                               |
+| `include`          | optional array of globs  | Replace the language's bundled paths.                                          |
+| `extend_include`   | array of globs, `[]`     | Add paths to the language's bundled paths.                                     |
+| `exclude`          | array of globs, `[]`     | Remove matching paths for this language.                                       |
+| `test_globs`       | array of globs, `[]`     | More globs that mark test files. Rust defaults to `["benches/**"]`.            |
+| `exclude_cfg_test` | boolean, `true` for Rust | Stop counting top-level Rust `cfg(test)` items in production files. Rust only. |
 
 Every Tokei language is enabled by default. Under `[languages.<id>.limits.max_lines_per_file]`,
-`production`, `test`, and `included_line_types` are optional. Numeric fields replace the
-corresponding global threshold. `included_line_types` replaces the global or automatic
+`production`, `test`, and `count_lines` are optional. Numeric fields replace the
+corresponding global limit. `count_lines` replaces the global or automatic
 literate-language selection. Run `sprawl-guard languages` to list all supported IDs and their
 bundled paths. IDs are case-insensitive.
 
 ### `[language_groups.<name>]`
 
-Custom language groups give related languages a shared directory fan-out count and policy.
+Custom language groups give related languages one shared direct-file count and limit per
+directory.
 `languages` is a non-empty array of distinct supported language IDs. A language may belong to at
 most one custom group; disabled languages may remain listed.
 
@@ -153,7 +175,7 @@ most one custom group; disabled languages may remain listed.
 [language_groups.frontend]
 languages = ["javascript", "typescript", "jsx", "tsx"]
 
-[language_groups.frontend.limits.max_leaf_files_per_directory]
+[language_groups.frontend.limits.max_direct_files_per_directory]
 production = 12
 test = 20
 ```
@@ -162,25 +184,25 @@ Omitted custom-group limit fields inherit their global values. Languages outside
 assigned automatically: Tokei literate languages use `documentation`, and all others use `source`.
 The `source` group uses the global directory limits and cannot be configured directly.
 
-The `documentation` group is unlimited for production and test fan-out by default. Its table cannot
-declare `languages`, but a custom group may claim a literate language and replace that language's
+The `documentation` group has unlimited direct files by default. Its table cannot declare
+`languages`, but a custom group may list a literate language, which replaces that language's
 automatic assignment. Documentation-group limits can be made finite:
 
 ```toml title="sprawl-guard.toml"
-[language_groups.documentation.limits.max_leaf_files_per_directory]
+[language_groups.documentation.limits.max_direct_files_per_directory]
 production = 20
 ```
 
 ### `[[overrides]]`
 
-| Field                                     | Type                                       | Meaning                                            |
-| ----------------------------------------- | ------------------------------------------ | -------------------------------------------------- |
-| `paths`                                   | non-empty array of globs                   | Repository-relative paths matched by the override. |
-| `reason`                                  | non-empty string                           | Human-readable justification.                      |
-| `max_lines_per_file.production`           | optional positive integer                  | Production file limit.                             |
-| `max_lines_per_file.test`                 | optional positive integer                  | Test file limit.                                   |
-| `max_leaf_files_per_directory.production` | optional positive integer or `"unlimited"` | Production fan-out limit.                          |
-| `max_leaf_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test fan-out limit.                                |
+| Field                                       | Type                                       | Meaning                                            |
+| ------------------------------------------- | ------------------------------------------ | -------------------------------------------------- |
+| `paths`                                     | non-empty array of globs                   | Repository-relative paths matched by the override. |
+| `reason`                                    | non-empty string                           | Why the override exists.                           |
+| `max_lines_per_file.production`             | optional positive integer                  | Production file limit.                             |
+| `max_lines_per_file.test`                   | optional positive integer                  | Test file limit.                                   |
+| `max_direct_files_per_directory.production` | optional positive integer or `"unlimited"` | Production direct-file limit.                      |
+| `max_direct_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test direct-file limit.                            |
 
 Each override must set at least one limit. Matching entries apply in order; later entries replace
 only the fields they set.
@@ -189,7 +211,7 @@ only the fields they set.
 [[overrides]]
 paths = ["vendor/**"]
 max_lines_per_file = { production = 1200, test = 1600 }
-max_leaf_files_per_directory = { production = 20, test = "unlimited" }
+max_direct_files_per_directory = { production = 20, test = "unlimited" }
 reason = "Upstream layout"
 ```
 
@@ -200,10 +222,10 @@ reason = "Upstream layout"
 | `file`            | path, `"sprawl-guard.ratchet.toml"` | Repository-relative ratchet file.           |
 | `require_current` | boolean, `true`                     | Fail checks when ratchet entries are stale. |
 
-This section selects the ratchet file and stale-entry policy; ratchet ceilings are stored in the
-separate file. See
+This section names the ratchet file and whether `check` fails on stale entries; the ceilings
+themselves live in the ratchet file. See
 [Adopt Sprawl Guard in an existing repository](/sprawl-guard/adopt-existing-repository/) for its
-format and creation workflow.
+format and how to create it.
 
 ### `[output]`
 
@@ -211,20 +233,23 @@ format and creation workflow.
 | -------- | ---------------- | ---------------------------- |
 | `format` | enum, `"human"`  | `human`, `json`, or `sarif`. |
 
+Only `check` reads `[output].format`, and `check --format` takes precedence. Other commands default
+to human output.
+
 ## Precedence
 
 Sprawl Guard applies configuration in this order:
 
-1. Built-in defaults provide the base policy. Fields in the root configuration replace the
-   corresponding defaults.
-2. Arrays in the root configuration replace their default arrays unless their field documentation
-   says otherwise. In particular, `[files].exclude` extends the built-in lockfile exclusions. Root
-   `[[overrides]]` replace the empty default override list.
-3. Language-specific file thresholds and included line types replace their global values. Literate
-   languages add comments automatically when no language-specific line-type selection is present.
+1. Built-in defaults come first. Fields in the root configuration replace the corresponding
+   defaults.
+2. Arrays in the root configuration replace their default arrays, except `extend_*` fields, which
+   add to them. `[files].extend_exclude` extends the built-in lockfile excludes.
+3. Language-specific file limits and `count_lines` replace their global values. For literate
+   languages, Sprawl Guard adds comments automatically unless a language-specific `count_lines` is
+   set.
 4. Custom-group directory limits replace their global values. Documentation directory limits start
    from their unlimited defaults.
 5. Matching path overrides apply in declaration order. Later entries replace only the fields they
    set.
-6. CLI options override the output format, ratchet-current requirement, traversal error policy,
-   root, and configuration path for that run.
+6. CLI options override the output format, whether `check` fails on stale entries, unreadable-path
+   handling, root, and configuration path for that run.

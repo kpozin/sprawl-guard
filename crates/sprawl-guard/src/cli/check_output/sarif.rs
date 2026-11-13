@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 use sprawl_guard_lib::CheckReport;
 use sprawl_guard_lib::RelativePath;
 use sprawl_guard_lib::check::{
-    CheckViolation, DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation,
+    CheckViolation, DirectoryDirectFilesViolation, DirectoryViolationKind, FileLinesViolation,
     FileViolationKind, RatchetViolation, RatchetViolationKind,
 };
 
@@ -10,10 +10,10 @@ const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
 const TOOL_NAME: &str = "sprawl-guard";
 
-const FILE_LOC_RULE_ID: &str = "sprawl-guard/file-loc";
-const TEST_FILE_LOC_RULE_ID: &str = "sprawl-guard/test-file-loc";
-const DIRECTORY_FANOUT_RULE_ID: &str = "sprawl-guard/directory-fanout";
-const TEST_DIRECTORY_FANOUT_RULE_ID: &str = "sprawl-guard/test-directory-fanout";
+const FILE_LINES_RULE_ID: &str = "sprawl-guard/file-lines";
+const TEST_FILE_LINES_RULE_ID: &str = "sprawl-guard/test-file-lines";
+const DIRECTORY_DIRECT_FILES_RULE_ID: &str = "sprawl-guard/directory-direct-files";
+const TEST_DIRECTORY_DIRECT_FILES_RULE_ID: &str = "sprawl-guard/test-directory-direct-files";
 const RATCHET_INCREASE_RULE_ID: &str = "sprawl-guard/ratchet-increase";
 const RATCHET_STALE_RULE_ID: &str = "sprawl-guard/ratchet-stale";
 
@@ -39,34 +39,34 @@ pub(super) fn sarif_check_report(report: &CheckReport) -> Value {
 fn rules() -> Vec<Value> {
     vec![
         rule(
-            FILE_LOC_RULE_ID,
-            "File LOC budget exceeded",
-            "A production source file exceeded its resolved configured-LOC limit.",
+            FILE_LINES_RULE_ID,
+            "File over the line limit",
+            "A source file has more lines than its limit.",
         ),
         rule(
-            TEST_FILE_LOC_RULE_ID,
-            "Test file LOC budget exceeded",
-            "A path-classified test file exceeded its resolved configured-LOC limit.",
+            TEST_FILE_LINES_RULE_ID,
+            "Test file over the line limit",
+            "A test file has more lines than its limit.",
         ),
         rule(
-            DIRECTORY_FANOUT_RULE_ID,
-            "Directory fan-out budget exceeded",
-            "A production directory exceeded its resolved direct leaf-file limit.",
+            DIRECTORY_DIRECT_FILES_RULE_ID,
+            "Directory with too many direct files",
+            "A directory directly contains more source files than its limit.",
         ),
         rule(
-            TEST_DIRECTORY_FANOUT_RULE_ID,
-            "Test directory fan-out budget exceeded",
-            "A test directory exceeded its resolved direct leaf-file limit.",
+            TEST_DIRECTORY_DIRECT_FILES_RULE_ID,
+            "Test directory with too many direct files",
+            "A directory directly contains more test files than its limit.",
         ),
         rule(
             RATCHET_INCREASE_RULE_ID,
             "Ratchet ceiling exceeded",
-            "A measured value increased above its stored ratchet ceiling.",
+            "A measurement rose above the ceiling of its ratchet entry.",
         ),
         rule(
             RATCHET_STALE_RULE_ID,
-            "Ratchet entry is stale",
-            "A stored ratchet ceiling is no longer current for the measured value.",
+            "Stale ratchet entry",
+            "A ratchet entry's violation shrank or disappeared.",
         ),
     ]
 }
@@ -88,27 +88,29 @@ fn results(report: &CheckReport) -> Vec<Value> {
         .violations()
         .iter()
         .map(|violation| match violation {
-            CheckViolation::FileLoc(violation) => file_loc_result(violation),
-            CheckViolation::DirectoryFanout(violation) => directory_fanout_result(violation),
+            CheckViolation::FileLines(violation) => file_lines_result(violation),
+            CheckViolation::DirectoryDirectFiles(violation) => {
+                directory_direct_files_result(violation)
+            }
             CheckViolation::Ratchet(violation) => ratchet_result(violation),
         })
         .collect()
 }
 
-fn file_loc_result(violation: &FileLocViolation) -> Value {
+fn file_lines_result(violation: &FileLinesViolation) -> Value {
     let rule_id = match violation.kind {
-        FileViolationKind::FileLoc => FILE_LOC_RULE_ID,
-        FileViolationKind::TestFileLoc => TEST_FILE_LOC_RULE_ID,
+        FileViolationKind::FileLines => FILE_LINES_RULE_ID,
+        FileViolationKind::TestFileLines => TEST_FILE_LINES_RULE_ID,
     };
     json!({
         "ruleId": rule_id,
         "level": "error",
         "message": {
             "text": format!(
-                "{} has {} configured LOC (included line types: {}), exceeding limit {}.",
+                "{} has {} lines (counting {}), over the limit of {}.",
                 violation.path,
                 violation.measurement.actual().get(),
-                violation.measurement.included_line_types(),
+                violation.measurement.count_lines(),
                 violation.limit
             )
         },
@@ -118,7 +120,7 @@ fn file_loc_result(violation: &FileLocViolation) -> Value {
             "path": violation.path,
             "language": violation.language,
             "actual": violation.measurement.actual(),
-            "included_line_types": violation.measurement.included_line_types(),
+            "count_lines": violation.measurement.count_lines(),
             "line_counts": violation.measurement.line_counts(),
             "limit": violation.limit,
             "ratchet": violation.ratchet
@@ -126,17 +128,21 @@ fn file_loc_result(violation: &FileLocViolation) -> Value {
     })
 }
 
-fn directory_fanout_result(violation: &DirectoryFanoutViolation) -> Value {
+fn directory_direct_files_result(violation: &DirectoryDirectFilesViolation) -> Value {
     let (rule_id, source_kind) = match violation.kind {
-        DirectoryViolationKind::DirectoryFanout => (DIRECTORY_FANOUT_RULE_ID, "production"),
-        DirectoryViolationKind::TestDirectoryFanout => (TEST_DIRECTORY_FANOUT_RULE_ID, "test"),
+        DirectoryViolationKind::DirectoryDirectFiles => {
+            (DIRECTORY_DIRECT_FILES_RULE_ID, "production")
+        }
+        DirectoryViolationKind::TestDirectoryDirectFiles => {
+            (TEST_DIRECTORY_DIRECT_FILES_RULE_ID, "test")
+        }
     };
     let mut result = json!({
         "ruleId": rule_id,
         "level": "error",
         "message": {
             "text": format!(
-                "{} in group {} has {} direct {source_kind} leaf files, exceeding limit {}.",
+                "{} in group {} has {} direct {source_kind} files, exceeding limit {}.",
                 display_path(&violation.path),
                 violation.group,
                 violation.actual,
@@ -165,7 +171,7 @@ fn directory_fanout_result(violation: &DirectoryFanoutViolation) -> Value {
                         "id": index + 1,
                         "physicalLocation": physical_location(path),
                         "message": {
-                            "text": "Child leaf file"
+                            "text": "Direct file"
                         }
                     })
                 })
@@ -177,14 +183,14 @@ fn directory_fanout_result(violation: &DirectoryFanoutViolation) -> Value {
 
 fn ratchet_result(violation: &RatchetViolation) -> Value {
     let rule_id = match violation.kind() {
-        RatchetViolationKind::FileLocIncreased
-        | RatchetViolationKind::TestFileLocIncreased
-        | RatchetViolationKind::DirectoryFanoutIncreased
-        | RatchetViolationKind::TestDirectoryFanoutIncreased => RATCHET_INCREASE_RULE_ID,
-        RatchetViolationKind::FileLocStale
-        | RatchetViolationKind::TestFileLocStale
-        | RatchetViolationKind::DirectoryFanoutStale
-        | RatchetViolationKind::TestDirectoryFanoutStale => RATCHET_STALE_RULE_ID,
+        RatchetViolationKind::FileLinesIncreased
+        | RatchetViolationKind::TestFileLinesIncreased
+        | RatchetViolationKind::DirectoryDirectFilesIncreased
+        | RatchetViolationKind::TestDirectoryDirectFilesIncreased => RATCHET_INCREASE_RULE_ID,
+        RatchetViolationKind::FileLinesStale
+        | RatchetViolationKind::TestFileLinesStale
+        | RatchetViolationKind::DirectoryDirectFilesStale
+        | RatchetViolationKind::TestDirectoryDirectFilesStale => RATCHET_STALE_RULE_ID,
     };
     let mut result = json!({
         "ruleId": rule_id,
@@ -204,8 +210,8 @@ fn ratchet_result(violation: &RatchetViolation) -> Value {
     if let Some(group) = violation.group() {
         result["properties"]["group"] = json!(group);
     }
-    if let Some(measurement) = violation.loc_measurement() {
-        result["properties"]["included_line_types"] = json!(measurement.included_line_types());
+    if let Some(measurement) = violation.line_measurement() {
+        result["properties"]["count_lines"] = json!(measurement.count_lines());
         result["properties"]["line_counts"] = json!(measurement.line_counts());
     }
     result
@@ -217,38 +223,35 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
         None => display_path(violation.path()).to_owned(),
     };
     let measurement_context = violation
-        .loc_measurement()
+        .line_measurement()
         .map_or_else(String::new, |measurement| {
-            format!(
-                " configured LOC (included line types: {})",
-                measurement.included_line_types()
-            )
+            format!(" lines (counting {})", measurement.count_lines())
         });
     match violation.kind() {
-        RatchetViolationKind::FileLocIncreased
-        | RatchetViolationKind::TestFileLocIncreased
-        | RatchetViolationKind::DirectoryFanoutIncreased
-        | RatchetViolationKind::TestDirectoryFanoutIncreased => {
+        RatchetViolationKind::FileLinesIncreased
+        | RatchetViolationKind::TestFileLinesIncreased
+        | RatchetViolationKind::DirectoryDirectFilesIncreased
+        | RatchetViolationKind::TestDirectoryDirectFilesIncreased => {
             let actual = violation
                 .actual()
                 .map(|value| value.get().to_string())
                 .unwrap_or_else(|| "not measured".to_owned());
             format!(
-                "{subject} increased to {actual}{measurement_context} above ratchet ceiling {}.",
+                "{subject} rose to {actual}{measurement_context}, above its ceiling of {}.",
                 violation.ratchet().get()
             )
         }
-        RatchetViolationKind::FileLocStale
-        | RatchetViolationKind::TestFileLocStale
-        | RatchetViolationKind::DirectoryFanoutStale
-        | RatchetViolationKind::TestDirectoryFanoutStale => match violation.actual() {
+        RatchetViolationKind::FileLinesStale
+        | RatchetViolationKind::TestFileLinesStale
+        | RatchetViolationKind::DirectoryDirectFilesStale
+        | RatchetViolationKind::TestDirectoryDirectFilesStale => match violation.actual() {
             Some(actual) => format!(
-                "{subject} has stale ratchet ceiling {}; current value is {}{measurement_context}.",
+                "{subject} has a stale ratchet entry: ceiling {}, now {}{measurement_context}.",
                 violation.ratchet().get(),
                 actual.get()
             ),
             None => format!(
-                "{subject} has stale ratchet ceiling {} but is no longer measured.",
+                "{subject} has a stale ratchet entry: ceiling {}, and it was not found.",
                 violation.ratchet().get()
             ),
         },
@@ -288,17 +291,17 @@ fn display_path(path: &RelativePath) -> &str {
 mod tests {
     use serde_json::json;
     use sprawl_guard_lib::check::{
-        CounterInfo, DirectoryFanoutViolation, DirectoryViolationKind, FileLocViolation,
+        CounterInfo, DirectoryDirectFilesViolation, DirectoryViolationKind, FileLinesViolation,
         FileRatchetStaleMissingViolation, FileViolationKind, RatchetIncreasedViolation,
         RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetStaleViolation,
         RatchetViolation,
     };
     use sprawl_guard_lib::{
         CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
-        DetectedLanguageCount, DiagnosticDetail, DirectoryRatchetStaleMeasuredViolation,
-        FileRatchetIncreasedViolation, FileRatchetStaleMeasuredViolation, LanguageGroupId,
-        LanguageId, LeafFiles, LineCount, LocLimit, RatchetCount, RatchetLimit, RelativePath,
-        ScanSummary,
+        DetectedLanguageCount, DiagnosticDetail, DirectFiles,
+        DirectoryRatchetStaleMeasuredViolation, FileRatchetIncreasedViolation,
+        FileRatchetStaleMeasuredViolation, LanguageGroupId, LanguageId, LineCount, LineLimit,
+        RatchetCount, RatchetEntryCount, RatchetLimit, RelativePath, ScanSummary,
     };
 
     use super::*;
@@ -308,6 +311,7 @@ mod tests {
             CheckedFileCount::new(3),
             CheckedDirectoryCount::new(2),
             DetectedLanguageCount::new(1),
+            RatchetEntryCount::new(0),
         )
     }
 
@@ -325,20 +329,20 @@ mod tests {
         )
     }
 
-    fn file_loc_violation(kind: FileViolationKind, path: &str) -> FileLocViolation {
-        FileLocViolation {
+    fn file_lines_violation(kind: FileViolationKind, path: &str) -> FileLinesViolation {
+        FileLinesViolation {
             kind,
             path: RelativePath::new(path).unwrap(),
             language: LanguageId::new("Rust").unwrap(),
-            measurement: loc_measurement(3),
-            limit: LocLimit::new(2).unwrap(),
+            measurement: line_measurement(3),
+            limit: LineLimit::new(2).unwrap(),
             ratchet: None,
         }
     }
 
-    fn loc_measurement(actual: u32) -> sprawl_guard_lib::code_line_counter::LocMeasurement {
-        sprawl_guard_lib::code_line_counter::LocMeasurement::new(
-            sprawl_guard_lib::IncludedLineTypes::Code,
+    fn line_measurement(actual: u32) -> sprawl_guard_lib::code_line_counter::LineMeasurement {
+        sprawl_guard_lib::code_line_counter::LineMeasurement::new(
+            sprawl_guard_lib::CountLines::Code,
             sprawl_guard_lib::LineCounts::new(
                 LineCount::new(actual),
                 LineCount::new(0),
@@ -348,26 +352,26 @@ mod tests {
         .unwrap()
     }
 
-    fn directory_fanout_violation(
+    fn directory_direct_files_violation(
         kind: DirectoryViolationKind,
         path: &str,
         files: Vec<&str>,
-    ) -> DirectoryFanoutViolation {
-        directory_fanout_violation_in_group(kind, path, LanguageGroupId::Source, files)
+    ) -> DirectoryDirectFilesViolation {
+        directory_direct_files_violation_in_group(kind, path, LanguageGroupId::Source, files)
     }
 
-    fn directory_fanout_violation_in_group(
+    fn directory_direct_files_violation_in_group(
         kind: DirectoryViolationKind,
         path: &str,
         group: LanguageGroupId,
         files: Vec<&str>,
-    ) -> DirectoryFanoutViolation {
-        DirectoryFanoutViolation {
+    ) -> DirectoryDirectFilesViolation {
+        DirectoryDirectFilesViolation {
             kind,
             group,
             path: RelativePath::new(path).unwrap(),
-            actual: LeafFiles::new(2).unwrap(),
-            limit: LeafFiles::new(1).unwrap(),
+            actual: DirectFiles::new(2).unwrap(),
+            limit: DirectFiles::new(1).unwrap(),
             ratchet: None,
             files: files
                 .into_iter()
@@ -395,39 +399,39 @@ mod tests {
                         "semanticVersion": env!("CARGO_PKG_VERSION"),
                         "rules": [
                             {
-                                "id": "sprawl-guard/file-loc",
+                                "id": "sprawl-guard/file-lines",
                                 "shortDescription": {
-                                    "text": "File LOC budget exceeded"
+                                    "text": "File over the line limit"
                                 },
                                 "fullDescription": {
-                                    "text": "A production source file exceeded its resolved configured-LOC limit."
+                                    "text": "A source file has more lines than its limit."
                                 }
                             },
                             {
-                                "id": "sprawl-guard/test-file-loc",
+                                "id": "sprawl-guard/test-file-lines",
                                 "shortDescription": {
-                                    "text": "Test file LOC budget exceeded"
+                                    "text": "Test file over the line limit"
                                 },
                                 "fullDescription": {
-                                    "text": "A path-classified test file exceeded its resolved configured-LOC limit."
+                                    "text": "A test file has more lines than its limit."
                                 }
                             },
                             {
-                                "id": "sprawl-guard/directory-fanout",
+                                "id": "sprawl-guard/directory-direct-files",
                                 "shortDescription": {
-                                    "text": "Directory fan-out budget exceeded"
+                                    "text": "Directory with too many direct files"
                                 },
                                 "fullDescription": {
-                                    "text": "A production directory exceeded its resolved direct leaf-file limit."
+                                    "text": "A directory directly contains more source files than its limit."
                                 }
                             },
                             {
-                                "id": "sprawl-guard/test-directory-fanout",
+                                "id": "sprawl-guard/test-directory-direct-files",
                                 "shortDescription": {
-                                    "text": "Test directory fan-out budget exceeded"
+                                    "text": "Test directory with too many direct files"
                                 },
                                 "fullDescription": {
-                                    "text": "A test directory exceeded its resolved direct leaf-file limit."
+                                    "text": "A directory directly contains more test files than its limit."
                                 }
                             },
                             {
@@ -436,16 +440,16 @@ mod tests {
                                     "text": "Ratchet ceiling exceeded"
                                 },
                                 "fullDescription": {
-                                    "text": "A measured value increased above its stored ratchet ceiling."
+                                    "text": "A measurement rose above the ceiling of its ratchet entry."
                                 }
                             },
                             {
                                 "id": "sprawl-guard/ratchet-stale",
                                 "shortDescription": {
-                                    "text": "Ratchet entry is stale"
+                                    "text": "Stale ratchet entry"
                                 },
                                 "fullDescription": {
-                                    "text": "A stored ratchet ceiling is no longer current for the measured value."
+                                    "text": "A ratchet entry's violation shrank or disappeared."
                                 }
                             }
                         ]
@@ -487,13 +491,13 @@ mod tests {
         }
     }
 
-    mod when_rendering_file_loc_findings {
+    mod when_rendering_file_lines_findings {
         use super::*;
 
         #[test]
         fn it_maps_the_file_to_a_sarif_location() {
-            let report = report_with(vec![CheckViolation::FileLoc(file_loc_violation(
-                FileViolationKind::FileLoc,
+            let report = report_with(vec![CheckViolation::FileLines(file_lines_violation(
+                FileViolationKind::FileLines,
                 "src/lib.rs",
             ))]);
 
@@ -511,8 +515,8 @@ mod tests {
                     },
                 }),
                 json!({
-                    "ruleId": FILE_LOC_RULE_ID,
-                    "message": "src/lib.rs has 3 configured LOC (included line types: code), exceeding limit 2.",
+                    "ruleId": FILE_LINES_RULE_ID,
+                    "message": "src/lib.rs has 3 lines (counting code), over the limit of 2.",
                     "location": {
                         "artifactLocation": {
                             "uri": "src/lib.rs",
@@ -531,8 +535,8 @@ mod tests {
 
         #[test]
         fn it_uses_the_test_file_rule_for_test_file_violations() {
-            let report = report_with(vec![CheckViolation::FileLoc(file_loc_violation(
-                FileViolationKind::TestFileLoc,
+            let report = report_with(vec![CheckViolation::FileLines(file_lines_violation(
+                FileViolationKind::TestFileLines,
                 "src/lib.test.rs",
             ))]);
 
@@ -540,7 +544,7 @@ mod tests {
 
             assert_eq!(
                 output["runs"][0]["results"][0]["ruleId"],
-                TEST_FILE_LOC_RULE_ID
+                TEST_FILE_LINES_RULE_ID
             );
         }
     }
@@ -550,9 +554,9 @@ mod tests {
 
         #[test]
         fn it_maps_child_files_to_related_locations() {
-            let report = report_with(vec![CheckViolation::DirectoryFanout(
-                directory_fanout_violation(
-                    DirectoryViolationKind::DirectoryFanout,
+            let report = report_with(vec![CheckViolation::DirectoryDirectFiles(
+                directory_direct_files_violation(
+                    DirectoryViolationKind::DirectoryDirectFiles,
                     "src",
                     vec!["src/a.rs", "src/b.rs"],
                 ),
@@ -571,7 +575,7 @@ mod tests {
                     ],
                 }),
                 json!({
-                    "ruleId": DIRECTORY_FANOUT_RULE_ID,
+                    "ruleId": DIRECTORY_DIRECT_FILES_RULE_ID,
                     "path": "src",
                     "relatedLocations": [
                         {"uri": "src/a.rs"},
@@ -583,9 +587,9 @@ mod tests {
 
         #[test]
         fn it_uses_the_test_directory_rule_for_test_directory_violations() {
-            let report = report_with(vec![CheckViolation::DirectoryFanout(
-                directory_fanout_violation(
-                    DirectoryViolationKind::TestDirectoryFanout,
+            let report = report_with(vec![CheckViolation::DirectoryDirectFiles(
+                directory_direct_files_violation(
+                    DirectoryViolationKind::TestDirectoryDirectFiles,
                     "src",
                     vec!["src/lib.test.rs"],
                 ),
@@ -595,7 +599,7 @@ mod tests {
 
             assert_eq!(
                 output["runs"][0]["results"][0]["ruleId"],
-                TEST_DIRECTORY_FANOUT_RULE_ID
+                TEST_DIRECTORY_DIRECT_FILES_RULE_ID
             );
             assert_eq!(
                 output["runs"][0]["results"][0]["properties"]["group"],
@@ -606,14 +610,14 @@ mod tests {
         #[test]
         fn it_identifies_groups_when_directory_findings_share_a_path() {
             let report = report_with(vec![
-                CheckViolation::DirectoryFanout(directory_fanout_violation_in_group(
-                    DirectoryViolationKind::DirectoryFanout,
+                CheckViolation::DirectoryDirectFiles(directory_direct_files_violation_in_group(
+                    DirectoryViolationKind::DirectoryDirectFiles,
                     "src",
                     LanguageGroupId::Source,
                     vec!["src/a.rs", "src/b.rs"],
                 )),
-                CheckViolation::DirectoryFanout(directory_fanout_violation_in_group(
-                    DirectoryViolationKind::DirectoryFanout,
+                CheckViolation::DirectoryDirectFiles(directory_direct_files_violation_in_group(
+                    DirectoryViolationKind::DirectoryDirectFiles,
                     "src",
                     LanguageGroupId::Documentation,
                     vec!["src/a.md", "src/b.md"],
@@ -625,11 +629,11 @@ mod tests {
 
             assert_eq!(
                 results[0]["message"]["text"],
-                "src in group source has 2 direct production leaf files, exceeding limit 1."
+                "src in group source has 2 direct production files, exceeding limit 1."
             );
             assert_eq!(
                 results[1]["message"]["text"],
-                "src in group documentation has 2 direct production leaf files, exceeding limit 1."
+                "src in group documentation has 2 direct production files, exceeding limit 1."
             );
         }
     }
@@ -640,13 +644,13 @@ mod tests {
         #[test]
         fn it_preserves_the_check_report_order() {
             let report = report_with(vec![
-                CheckViolation::DirectoryFanout(directory_fanout_violation(
-                    DirectoryViolationKind::DirectoryFanout,
+                CheckViolation::DirectoryDirectFiles(directory_direct_files_violation(
+                    DirectoryViolationKind::DirectoryDirectFiles,
                     "src",
                     vec!["src/a.rs"],
                 )),
-                CheckViolation::FileLoc(file_loc_violation(
-                    FileViolationKind::FileLoc,
+                CheckViolation::FileLines(file_lines_violation(
+                    FileViolationKind::FileLines,
                     "src/lib.rs",
                 )),
             ]);
@@ -654,8 +658,8 @@ mod tests {
             let output = sarif_check_report(&report);
             let results = &output["runs"][0]["results"];
 
-            assert_eq!(results[0]["ruleId"], DIRECTORY_FANOUT_RULE_ID);
-            assert_eq!(results[1]["ruleId"], FILE_LOC_RULE_ID);
+            assert_eq!(results[0]["ruleId"], DIRECTORY_DIRECT_FILES_RULE_ID);
+            assert_eq!(results[1]["ruleId"], FILE_LINES_RULE_ID);
         }
     }
 
@@ -666,9 +670,9 @@ mod tests {
         fn it_maps_increases_to_the_ratchet_increase_rule() {
             let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Increased(
                 RatchetIncreasedViolation::File(FileRatchetIncreasedViolation {
-                    kind: FileViolationKind::FileLoc,
+                    kind: FileViolationKind::FileLines,
                     path: RelativePath::new("src/lib.rs").unwrap(),
-                    measurement: loc_measurement(5),
+                    measurement: line_measurement(5),
                     limit: RatchetCount::new(2),
                     ratchet: RatchetCount::new(4),
                 }),
@@ -683,7 +687,7 @@ mod tests {
                     "message": result["message"]["text"],
                     "properties": {
                         "actual": result["properties"]["actual"],
-                        "included_line_types": result["properties"]["included_line_types"],
+                        "count_lines": result["properties"]["count_lines"],
                         "line_counts": result["properties"]["line_counts"],
                         "limit": result["properties"]["limit"],
                         "ratchet": result["properties"]["ratchet"],
@@ -691,10 +695,10 @@ mod tests {
                 }),
                 json!({
                     "ruleId": RATCHET_INCREASE_RULE_ID,
-                    "message": "src/lib.rs increased to 5 configured LOC (included line types: code) above ratchet ceiling 4.",
+                    "message": "src/lib.rs rose to 5 lines (counting code), above its ceiling of 4.",
                     "properties": {
                         "actual": 5,
-                        "included_line_types": ["code"],
+                        "count_lines": [],
                         "line_counts": {"code": 5, "comments": 0, "blank_lines": 0},
                         "limit": 2,
                         "ratchet": 4,
@@ -709,7 +713,7 @@ mod tests {
             let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
                 RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::Directory(
                     DirectoryRatchetStaleMeasuredViolation {
-                        kind: DirectoryViolationKind::DirectoryFanout,
+                        kind: DirectoryViolationKind::DirectoryDirectFiles,
                         path: RelativePath::new("src").unwrap(),
                         group: LanguageGroupId::Source,
                         actual: RatchetCount::new(1),
@@ -723,18 +727,18 @@ mod tests {
             let result = &output["runs"][0]["results"][0];
 
             assert_eq!(result["ruleId"], RATCHET_STALE_RULE_ID);
-            assert_eq!(result["properties"]["kind"], "directory_fanout_stale");
+            assert_eq!(result["properties"]["kind"], "directory_direct_files_stale");
             assert_eq!(result["properties"]["group"], "source");
         }
 
         #[test]
-        fn it_identifies_included_line_types_for_measured_file_staleness() {
+        fn it_identifies_count_lines_for_measured_file_staleness() {
             let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
                 RatchetStaleViolation::Measured(RatchetStaleMeasuredViolation::File(
                     FileRatchetStaleMeasuredViolation {
-                        kind: FileViolationKind::FileLoc,
+                        kind: FileViolationKind::FileLines,
                         path: RelativePath::new("src/lib.rs").unwrap(),
-                        measurement: loc_measurement(2),
+                        measurement: line_measurement(2),
                         limit: RatchetCount::new(3),
                         ratchet: RatchetCount::new(4),
                     },
@@ -746,7 +750,7 @@ mod tests {
 
             assert_eq!(
                 result["message"]["text"],
-                "src/lib.rs has stale ratchet ceiling 4; current value is 2 configured LOC (included line types: code)."
+                "src/lib.rs has a stale ratchet entry: ceiling 4, now 2 lines (counting code)."
             );
         }
 
@@ -755,7 +759,7 @@ mod tests {
             let report = report_with(vec![CheckViolation::Ratchet(RatchetViolation::Stale(
                 RatchetStaleViolation::Missing(RatchetStaleMissingViolation::File(
                     FileRatchetStaleMissingViolation {
-                        kind: FileViolationKind::FileLoc,
+                        kind: FileViolationKind::FileLines,
                         path: RelativePath::new("src/deleted.rs").unwrap(),
                         ratchet: RatchetCount::new(4),
                     },
@@ -774,7 +778,7 @@ mod tests {
                 json!({
                     "ruleId": RATCHET_STALE_RULE_ID,
                     "actual": null,
-                    "message": "src/deleted.rs has stale ratchet ceiling 4 but is no longer measured.",
+                    "message": "src/deleted.rs has a stale ratchet entry: ceiling 4, and it was not found.",
                 })
             );
         }
@@ -806,11 +810,11 @@ mod tests {
                 json!([
                     {
                         "group": "source",
-                        "message": "src in group source has stale ratchet ceiling 4 but is no longer measured.",
+                        "message": "src in group source has a stale ratchet entry: ceiling 4, and it was not found.",
                     },
                     {
                         "group": "documentation",
-                        "message": "src in group documentation has stale ratchet ceiling 5 but is no longer measured.",
+                        "message": "src in group documentation has a stale ratchet entry: ceiling 5, and it was not found.",
                     },
                 ])
             );

@@ -1,17 +1,11 @@
-use std::num::NonZeroU32;
 use std::path::Path;
 
-use serde::{Deserialize, Deserializer};
 use toml_edit::DocumentMut;
 
 use super::{
-    AuthoredConfigPath, ConfigSchemaVersion, LoadOptions, OutputFormat, PartialConfig,
-    PartialFilesConfig, PartialIgnoreConfig, PartialLanguageGroupsConfig, PartialLanguagesConfig,
-    PartialLimits, PartialOutputConfig, PartialRatchetConfig, PartialTestsConfig,
-    PartialTraversalConfig, Result, SourceFileByteLimit, SprawlError, SymlinkTraversal,
-    TraversalEntryLimit, TraversalErrorPolicy, deserialize_config, discover_config,
-    parse_config_value, read_config_text, resolve_config_root, root_schema_version,
-    validate_partial_config,
+    AuthoredConfigPath, ConfigSchemaVersion, LoadOptions, PartialConfig, Result, SprawlError,
+    deserialize_config, discover_config, parse_config_value, read_config_text, resolve_config_root,
+    root_schema_version, validate_partial_config,
 };
 
 /// Prepared upgrade for one authored root configuration.
@@ -60,8 +54,6 @@ pub fn prepare_config_upgrade(options: &LoadOptions) -> Result<Option<PreparedCo
 
     let upgrade = match version {
         ConfigSchemaVersion::V1 => {
-            let legacy = deserialize_config::<PartialConfigV1>(path.as_path(), value)?;
-            validate_partial_config(legacy.into_v2())?;
             let migrated = migrate_v1_document(path.as_path(), &contents)?;
             validate_migrated_current_config(path.as_path(), &migrated)?;
             ConfigUpgrade::Required(migrated)
@@ -96,21 +88,188 @@ fn validate_migrated_current_config(
     validate_partial_config(deserialize_config(path, value)?)
 }
 
+/// Version 1 key renamed in version 2, located by its table path from the document root.
+struct RenamedKeyV1 {
+    table: &'static [&'static str],
+    from: &'static str,
+    to: &'static str,
+}
+
+/// Version 1 keys whose version 2 names differ, outside per-language and per-group tables.
+const RENAMED_ROOT_KEYS_V1: [RenamedKeyV1; 5] = [
+    RenamedKeyV1 {
+        table: &["limits"],
+        from: DIRECT_FILES_KEY_V1,
+        to: DIRECT_FILES_KEY_V2,
+    },
+    RenamedKeyV1 {
+        table: &["limits", "max_lines_per_file"],
+        from: "included_line_types",
+        to: "count_lines",
+    },
+    RenamedKeyV1 {
+        table: &["files"],
+        from: "exclude",
+        to: "extend_exclude",
+    },
+    RenamedKeyV1 {
+        table: &["tests"],
+        from: "check_path_tests",
+        to: "check",
+    },
+    RenamedKeyV1 {
+        table: &["traversal"],
+        from: "error_policy",
+        to: "unreadable_paths",
+    },
+];
+
+/// Version 1 name of the per-directory direct-file limit, used at the root, in language groups,
+/// and in path overrides.
+const DIRECT_FILES_KEY_V1: &str = "max_leaf_files_per_directory";
+
+/// Version 2 name of the per-directory direct-file limit.
+const DIRECT_FILES_KEY_V2: &str = "max_direct_files_per_directory";
+
+/// Version 1 key dropped in version 2 because the setting no longer exists.
+const REMOVED_KEYS_V1: [(&str, &str); 2] = [("output", "color"), ("traversal", "max_depth")];
+
+/// Version 1 line type that version 2 counts implicitly and omits from `count_lines`.
+const IMPLICIT_LINE_TYPE_V1: &str = "code";
+
+/// Rewrites a version 1 document's keys to their version 2 names.
+///
+/// The result is validated as a current configuration afterward, so this transform renames keys
+/// and leaves value validation to the current schema. Validation errors therefore name the version
+/// 2 keys, and values of the removed keys are discarded without being checked.
 fn migrate_v1_document(path: &Path, contents: &str) -> Result<MigratedAuthoredConfigDocument> {
     rewrite_authored_config(path, contents, |document| {
-        if let Some(output) = document
-            .get_mut("output")
-            .and_then(toml_edit::Item::as_table_like_mut)
-        {
-            output.remove("color");
+        let root = document.as_table_mut();
+        for (table, key) in REMOVED_KEYS_V1 {
+            if let Some(table) = table_at(root, &[table]) {
+                table.remove(key);
+            }
         }
-        if let Some(traversal) = document
-            .get_mut("traversal")
-            .and_then(toml_edit::Item::as_table_like_mut)
+        for renamed in &RENAMED_ROOT_KEYS_V1 {
+            if let Some(table) = table_at(root, renamed.table) {
+                rename_key(table, renamed.from, renamed.to);
+            }
+        }
+        if let Some(line_types) = table_at(root, &["limits", "max_lines_per_file"])
+            .and_then(|table| table.get_mut("count_lines"))
         {
-            traversal.remove("max_depth");
+            drop_implicit_line_type(line_types);
+        }
+        migrate_v1_languages(root);
+        if let Some(groups) = table_at(root, &["language_groups"]) {
+            for (_, group) in groups.iter_mut() {
+                if let Some(limits) = group
+                    .as_table_like_mut()
+                    .and_then(|group| table_at(group, &["limits"]))
+                {
+                    rename_key(limits, DIRECT_FILES_KEY_V1, DIRECT_FILES_KEY_V2);
+                }
+            }
+        }
+        match root.get_mut("overrides") {
+            Some(toml_edit::Item::ArrayOfTables(overrides)) => {
+                for path_override in overrides.iter_mut() {
+                    rename_key(path_override, DIRECT_FILES_KEY_V1, DIRECT_FILES_KEY_V2);
+                }
+            }
+            Some(toml_edit::Item::Value(toml_edit::Value::Array(overrides))) => {
+                for path_override in overrides.iter_mut() {
+                    if let Some(path_override) = path_override.as_inline_table_mut() {
+                        rename_key(path_override, DIRECT_FILES_KEY_V1, DIRECT_FILES_KEY_V2);
+                    }
+                }
+            }
+            _ => {}
         }
     })
+}
+
+/// Renames per-language `additional_globs` and `included_line_types` keys.
+fn migrate_v1_languages(root: &mut dyn toml_edit::TableLike) {
+    let Some(languages) = table_at(root, &["languages"]) else {
+        return;
+    };
+    for (_, language) in languages.iter_mut() {
+        let Some(language) = language.as_table_like_mut() else {
+            continue;
+        };
+        rename_key(language, "additional_globs", "extend_include");
+        if let Some(limits) = table_at(language, &["limits", "max_lines_per_file"]) {
+            rename_key(limits, "included_line_types", "count_lines");
+            if let Some(line_types) = limits.get_mut("count_lines") {
+                drop_implicit_line_type(line_types);
+            }
+        }
+    }
+}
+
+/// Returns the table-like item at `path`, whether written as a table, inline table, or dotted key.
+fn table_at<'a>(
+    table: &'a mut dyn toml_edit::TableLike,
+    path: &[&str],
+) -> Option<&'a mut dyn toml_edit::TableLike> {
+    path.iter().try_fold(table, |table, key| {
+        table
+            .get_mut(key)
+            .and_then(toml_edit::Item::as_table_like_mut)
+    })
+}
+
+/// Renames one key in place, keeping its comments and its position among sibling keys.
+///
+/// When both names are present, the old key stays so that validation rejects it as unknown
+/// instead of silently dropping one of the two values.
+fn rename_key(table: &mut dyn toml_edit::TableLike, from: &str, to: &str) {
+    if table.contains_key(to) {
+        return;
+    }
+    let Some(from_key) = table.key(from).cloned() else {
+        return;
+    };
+    let following: Vec<String> = table
+        .iter()
+        .map(|(key, _)| key.to_owned())
+        .skip_while(|key| key != from)
+        .skip(1)
+        .collect();
+    let item = table
+        .remove(from)
+        .expect("a key found by name must be removable");
+    let to_key = toml_edit::Key::new(to)
+        .with_leaf_decor(from_key.leaf_decor().clone())
+        .with_dotted_decor(from_key.dotted_decor().clone());
+    table.entry_format(&to_key).or_insert(item);
+    for key in following {
+        let formatted = table.key(&key).cloned();
+        if let (Some(formatted), Some(item)) = (formatted, table.remove(&key)) {
+            table.entry_format(&formatted).or_insert(item);
+        }
+    }
+}
+
+/// Removes `"code"` from a version 1 line-type array, since version 2 always counts code.
+fn drop_implicit_line_type(item: &mut toml_edit::Item) {
+    let Some(array) = item.as_array_mut() else {
+        return;
+    };
+    // The first element's spacing follows the opening bracket, so it passes to the new first
+    // element instead of leaving `[ "comments"]`.
+    let first_prefix = array
+        .get(0)
+        .filter(|value| value.as_str() == Some(IMPLICIT_LINE_TYPE_V1))
+        .map(|value| value.decor().prefix().cloned());
+    array.retain(|value| value.as_str() != Some(IMPLICIT_LINE_TYPE_V1));
+    if let (Some(prefix), Some(first)) = (first_prefix, array.get_mut(0)) {
+        match prefix {
+            Some(prefix) => first.decor_mut().set_prefix(prefix),
+            None => first.decor_mut().clear(),
+        }
+    }
 }
 
 fn repair_schema_directive(path: &Path, contents: &str) -> Result<MigratedAuthoredConfigDocument> {
@@ -181,123 +340,4 @@ impl ConfigLineEnding {
             }
         })
     }
-}
-
-/// Version 1 authored shape retained for V1 → V2 migration.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartialConfigV1 {
-    #[serde(rename = "schema_version")]
-    _schema_version: ConfigSchemaVersion,
-    limits: Option<PartialLimits>,
-    ignore: Option<PartialIgnoreConfig>,
-    traversal: Option<PartialTraversalConfigV1>,
-    files: Option<PartialFilesConfig>,
-    tests: Option<PartialTestsConfig>,
-    languages: Option<PartialLanguagesConfig>,
-    language_groups: Option<PartialLanguageGroupsConfig>,
-    overrides: Option<Vec<super::PathOverride>>,
-    ratchet: Option<PartialRatchetConfig>,
-    output: Option<PartialOutputConfigV1>,
-}
-
-impl PartialConfigV1 {
-    fn into_v2(self) -> PartialConfig {
-        let Self {
-            _schema_version: _,
-            limits,
-            ignore,
-            traversal,
-            files,
-            tests,
-            languages,
-            language_groups,
-            overrides,
-            ratchet,
-            output,
-        } = self;
-        PartialConfig {
-            schema_version: ConfigSchemaVersion::V2,
-            limits,
-            ignore,
-            traversal: traversal.map(PartialTraversalConfigV1::into_v2),
-            files,
-            tests,
-            languages,
-            language_groups,
-            overrides,
-            ratchet,
-            output: output.map(PartialOutputConfigV1::into_v2),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartialTraversalConfigV1 {
-    follow_symlinks: Option<SymlinkTraversal>,
-    same_file_system: Option<bool>,
-    #[serde(rename = "max_depth")]
-    _max_depth: Option<LegacyTraversalDepthV1>,
-    max_entries: Option<TraversalEntryLimit>,
-    max_file_bytes: Option<SourceFileByteLimit>,
-    error_policy: Option<TraversalErrorPolicy>,
-}
-
-impl PartialTraversalConfigV1 {
-    fn into_v2(self) -> PartialTraversalConfig {
-        let Self {
-            follow_symlinks,
-            same_file_system,
-            _max_depth: _,
-            max_entries,
-            max_file_bytes,
-            error_policy,
-        } = self;
-        PartialTraversalConfig {
-            follow_symlinks,
-            same_file_system,
-            max_entries,
-            max_file_bytes,
-            error_policy,
-        }
-    }
-}
-
-#[derive(Debug)]
-struct LegacyTraversalDepthV1;
-
-impl<'de> Deserialize<'de> for LegacyTraversalDepthV1 {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = u32::deserialize(deserializer)?;
-        NonZeroU32::new(value).map(|_| Self).ok_or_else(|| {
-            serde::de::Error::custom("traversal max_depth must be greater than zero")
-        })
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PartialOutputConfigV1 {
-    format: Option<OutputFormat>,
-    #[serde(rename = "color")]
-    _color: Option<LegacyColorModeV1>,
-}
-
-impl PartialOutputConfigV1 {
-    fn into_v2(self) -> PartialOutputConfig {
-        let Self { format, _color: _ } = self;
-        PartialOutputConfig { format }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum LegacyColorModeV1 {
-    Auto,
-    Always,
-    Never,
 }

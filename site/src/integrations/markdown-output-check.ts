@@ -71,11 +71,11 @@ async function verifyMarkdownOutput(
   }
   assert.match(
     quickStart,
-    /sprawl-guard init --dry-run[\s\S]*sprawl-guard init[\s\S]*sprawl-guard languages --detected[\s\S]*sprawl-guard check/u,
+    /sprawl-guard init[\s\S]*sprawl-guard init --write[\s\S]*sprawl-guard languages --detected[\s\S]*sprawl-guard check/u,
   );
 
   const cliReference = await readOutput(outputDirectory, "reference/cli-and-output.md");
-  assert.match(cliReference, /`Usage: sprawl-guard \[OPTIONS\] <COMMAND>`/u);
+  assert.match(cliReference, /`Usage: sprawl-guard <COMMAND>`/u);
   assert.match(cliReference, /Argument or option\s+\| Meaning/u);
   assert.match(cliReference, /`-V, --version`/u);
   assert.match(cliReference, /\*\*Allowed values:\*\*/u);

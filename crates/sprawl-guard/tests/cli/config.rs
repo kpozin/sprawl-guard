@@ -29,7 +29,7 @@ fn full_config_output(root: &TempDir, command: &str) -> String {
         &config,
         toml::toml! {
             [limits.max_lines_per_file]
-            included_line_types = ["code"]
+            count_lines = []
             production = 123
             test = 800
 
@@ -69,7 +69,7 @@ mod resolved {
     }
 
     #[test]
-    fn it_materializes_inherited_and_automatic_language_loc_policy() {
+    fn it_materializes_inherited_and_automatic_language_line_limits() {
         let root = TempDir::new().unwrap();
         write_sample_config(&root);
 
@@ -82,7 +82,7 @@ mod resolved {
         assert_eq!(
             config["languages"]["Rust"]["limits"]["max_lines_per_file"],
             toml::Value::Table(toml::toml! {
-                included_line_types = ["code"]
+                count_lines = []
                 production = 123
                 test = 800
             })
@@ -90,7 +90,7 @@ mod resolved {
         assert_eq!(
             config["languages"]["Markdown"]["limits"]["max_lines_per_file"],
             toml::Value::Table(toml::toml! {
-                included_line_types = ["code", "comments"]
+                count_lines = ["comments"]
                 production = 123
                 test = 800
             })
@@ -104,7 +104,7 @@ mod resolved {
             &root,
             indoc! {r#"
                 [files]
-                exclude = ["generated/**"]
+                extend_exclude = ["generated/**"]
             "#},
         );
 
@@ -115,7 +115,7 @@ mod resolved {
         let config = parse_toml(&stdout(&output));
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        let excludes = config["files"]["exclude"].as_array().unwrap();
+        let excludes = config["files"]["extend_exclude"].as_array().unwrap();
         assert!(
             excludes
                 .iter()
@@ -203,7 +203,9 @@ mod upgrade {
                 .unwrap();
 
             assert_exit_code(&output, exit_codes::CHECK_FAILURE);
-            assert!(stdout(&output).contains("Config requires an upgrade:"));
+            assert!(
+                stdout(&output).contains("Configuration needs an upgrade: sprawl-guard.toml\n")
+            );
             assert_eq!(read_config(&root), source);
             assert_eq!(stderr(&output), "");
         }
@@ -230,12 +232,12 @@ mod upgrade {
             write_file(&root, "sprawl-guard.toml", source);
 
             let output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
+                .args(["config", "upgrade", "--write"])
                 .output()
                 .unwrap();
 
             assert_exit_code(&output, exit_codes::SUCCESS);
-            assert!(stdout(&output).contains("Upgraded config:"));
+            assert!(stdout(&output).contains("Upgraded sprawl-guard.toml\n"));
             let migrated = read_config(&root);
             assert!(migrated.starts_with(CURRENT_DIRECTIVE));
             assert!(migrated.contains("# Owned by the platform team."));
@@ -246,6 +248,41 @@ mod upgrade {
             assert!(!migrated.contains("color ="));
             assert!(!migrated.contains("max_depth"));
             assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_without_write_previews_the_migration_without_changing_the_file() {
+            let root = TempDir::new().unwrap();
+            let source = "schema_version = 1\n[output]\ncolor = \"always\"\n";
+            write_file(&root, "sprawl-guard.toml", source);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert!(stdout(&output).contains("Would upgrade "));
+            assert!(stdout(&output).contains("schema_version = 2"));
+            assert!(stdout(&output).contains("Preview only; use --write to apply."));
+            assert_eq!(read_config(&root), source);
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn write_and_check_together_are_rejected() {
+            let root = TempDir::new().unwrap();
+            let source = "schema_version = 1\n";
+            write_file(&root, "sprawl-guard.toml", source);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade", "--write", "--check"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert!(stderr(&output).contains("cannot be used with"));
+            assert_eq!(read_config(&root), source);
         }
 
         #[test]
@@ -267,7 +304,7 @@ mod upgrade {
             assert_eq!(read_config(&root), source);
 
             let upgrade_output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
+                .args(["config", "upgrade", "--write"])
                 .output()
                 .unwrap();
 
@@ -282,6 +319,151 @@ mod upgrade {
                 Some(5000)
             );
             assert!(migrated_toml["traversal"].get("max_depth").is_none());
+        }
+
+        #[test]
+        fn upgrade_renames_v1_keys_in_place_and_keeps_their_comments() {
+            let root = TempDir::new().unwrap();
+            write_file(
+                &root,
+                "sprawl-guard.toml",
+                indoc! {r#"
+                    schema_version = 1
+
+                    [limits.max_lines_per_file]
+                    included_line_types = ["code", "comments"]
+                    production = 300
+
+                    [limits.max_leaf_files_per_directory]
+                    production = 20
+
+                    [files]
+                    # Generated code is owned elsewhere.
+                    exclude = ["generated/**"]
+
+                    [tests]
+                    check_path_tests = false
+                    globs = ["tests/**"]
+
+                    [traversal]
+                    error_policy = "warn"
+
+                    [languages.rust]
+                    additional_globs = ["*.rs.in"]
+                    limits.max_lines_per_file.included_line_types = ["code", "blank_lines"]
+
+                    [language_groups.documentation]
+                    limits = { max_leaf_files_per_directory = { production = 30 } }
+
+                    [[overrides]]
+                    paths = ["vendor/**"]
+                    reason = "Vendored code."
+                    max_leaf_files_per_directory = { production = "unlimited" }
+                "#},
+            );
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade", "--write"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(
+                read_config(&root),
+                format!(
+                    "{CURRENT_DIRECTIVE}{}",
+                    indoc! {r#"
+                        schema_version = 2
+
+                        [limits.max_lines_per_file]
+                        count_lines = ["comments"]
+                        production = 300
+
+                        [limits.max_direct_files_per_directory]
+                        production = 20
+
+                        [files]
+                        # Generated code is owned elsewhere.
+                        extend_exclude = ["generated/**"]
+
+                        [tests]
+                        check = false
+                        globs = ["tests/**"]
+
+                        [traversal]
+                        unreadable_paths = "warn"
+
+                        [languages.rust]
+                        extend_include = ["*.rs.in"]
+                        limits.max_lines_per_file.count_lines = ["blank_lines"]
+
+                        [language_groups.documentation]
+                        limits = { max_direct_files_per_directory = { production = 30 } }
+
+                        [[overrides]]
+                        paths = ["vendor/**"]
+                        reason = "Vendored code."
+                        max_direct_files_per_directory = { production = "unlimited" }
+                    "#}
+                )
+            );
+            assert_eq!(stderr(&output), "");
+        }
+
+        #[test]
+        fn upgrade_renames_keys_in_inline_override_arrays() {
+            let root = TempDir::new().unwrap();
+            write_file(
+                &root,
+                "sprawl-guard.toml",
+                indoc! {r#"
+                    schema_version = 1
+                    overrides = [
+                      { paths = ["vendor/**"], reason = "Vendored code.", max_leaf_files_per_directory = { production = 5 } },
+                    ]
+                "#},
+            );
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade", "--write"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(
+                read_config(&root),
+                format!(
+                    "{CURRENT_DIRECTIVE}{}",
+                    indoc! {r#"
+                        schema_version = 2
+                        overrides = [
+                          { paths = ["vendor/**"], reason = "Vendored code.", max_direct_files_per_directory = { production = 5 } },
+                        ]
+                    "#}
+                )
+            );
+        }
+
+        #[test]
+        fn upgrade_rejects_a_key_written_under_both_its_old_and_new_names() {
+            let root = TempDir::new().unwrap();
+            let source = indoc! {r#"
+                schema_version = 1
+
+                [tests]
+                check_path_tests = false
+                check = true
+            "#};
+            write_file(&root, "sprawl-guard.toml", source);
+
+            let output = sprawl_guard(&root)
+                .args(["config", "upgrade", "--write"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert!(stderr(&output).contains("check_path_tests"));
+            assert_eq!(read_config(&root), source);
         }
 
         #[test]
@@ -307,7 +489,7 @@ mod upgrade {
             let original = read_config(&root);
 
             let output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
+                .args(["config", "upgrade", "--write"])
                 .output()
                 .unwrap();
 
@@ -323,7 +505,7 @@ mod upgrade {
             write_file(&root, "sprawl-guard.toml", original);
 
             let output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
+                .args(["config", "upgrade", "--write"])
                 .output()
                 .unwrap();
 
@@ -342,7 +524,7 @@ mod upgrade {
             );
 
             let output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
+                .args(["config", "upgrade", "--write"])
                 .output()
                 .unwrap();
 
@@ -364,7 +546,7 @@ mod upgrade {
             );
 
             let output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
+                .args(["config", "upgrade", "--write"])
                 .output()
                 .unwrap();
 
@@ -384,7 +566,7 @@ mod upgrade {
             write_file(&root, "sprawl-guard.toml", source);
 
             let output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
+                .args(["config", "upgrade", "--write"])
                 .output()
                 .unwrap();
 
@@ -422,7 +604,7 @@ mod upgrade {
                 .unwrap();
 
             assert_exit_code(&output, exit_codes::SUCCESS);
-            assert!(stdout(&output).contains("Config is current:"));
+            assert!(stdout(&output).contains("Configuration is current:"));
             assert_eq!(read_config(&root), source);
             assert_eq!(stderr(&output), "");
         }
@@ -436,7 +618,7 @@ mod upgrade {
             let root = TempDir::new().unwrap();
 
             let output = sprawl_guard(&root)
-                .args(["config", "upgrade"])
+                .args(["config", "upgrade", "--write"])
                 .output()
                 .unwrap();
 
@@ -457,7 +639,7 @@ mod upgrade {
             write_file(&root, "selected.toml", selected);
 
             let output = sprawl_guard(&root)
-                .args(["--config", "selected.toml", "config", "upgrade"])
+                .args(["config", "upgrade", "--write", "--config", "selected.toml"])
                 .output()
                 .unwrap();
 
@@ -477,7 +659,7 @@ mod upgrade {
             write_file(&root, ".sprawlrc.toml", selected);
 
             let output = sprawl_guard(&root)
-                .args(["--config", ".sprawlrc.toml", "config", "upgrade"])
+                .args(["config", "upgrade", "--write", "--config", ".sprawlrc.toml"])
                 .output()
                 .unwrap();
 

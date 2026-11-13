@@ -1,16 +1,107 @@
 ---
 title: Run in CI
-description: Make Sprawl Guard checks reproducible for pull requests and merges.
+description: Check the whole repository on every pull request and push.
 ---
 
-import { Steps, TabItem, Tabs } from "@astrojs/starlight/components";
+import { TabItem, Tabs } from "@astrojs/starlight/components";
 
-Run a read-only check of the complete repository in CI.
+Run two read-only commands in CI from the repository root:
+
+1. `sprawl-guard config upgrade --check` fails when `sprawl-guard.toml` needs an upgrade after a
+   tool update. It saves nothing.
+2. `sprawl-guard check` checks the whole repository. It also fails on stale ratchet entries, so
+   record improvements with `tighten --write` in the same change.
+
+The job needs a committed `sprawl-guard.toml`; without one, `config upgrade --check` exits `2`.
+
+## Add the CI job
+
+This GitHub Actions workflow runs on pull requests and pushes. Use the tab that matches the
+installation, and replace `<VERSION>` with a [pinned release](#pin-a-release).
+
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install sprawl-guard --version <VERSION> --locked
+      - run: sprawl-guard config upgrade --check
+      - run: sprawl-guard check
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: npm exec -- sprawl-guard config upgrade --check
+      - run: npm exec -- sprawl-guard check
+```
+
+  </TabItem>
+  <TabItem label="pnpm">
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec sprawl-guard config upgrade --check
+      - run: pnpm exec sprawl-guard check
+```
+
+  </TabItem>
+</Tabs>
+
+Do not pass paths in CI: a check on selected paths skips files and stale ratchet entries elsewhere.
+Do not write the ratchet file in CI. Run `tighten --write` locally, review the changes, and commit
+them with the source.
 
 ## Pin a release
 
 Choose a [published release](https://github.com/kpozin/sprawl-guard/releases) and replace
-`<VERSION>` below. Cargo installs the pinned binary in CI. For npm or pnpm, add the exact
+`<VERSION>` above. Cargo installs the pinned binary in CI. For npm or pnpm, add the exact
 development dependency locally and commit the updated manifest and lockfile.
 
 <Tabs syncKey="package-manager">
@@ -49,216 +140,41 @@ dependency:
 Do not run `npm install --save-dev` or `pnpm add --save-dev` in CI. Restore the committed
 lockfile instead.
 
-## Use your existing verification command
+## Run the same check locally
 
-If the repository already has a `check`, `verify`, or equivalent command, add
-`sprawl-guard config upgrade --check` followed by an unscoped `sprawl-guard check`. The upgrade
-check prevents a tool update from leaving a stale authored configuration without changing files in
-CI. Use the same verification command for local development, coding agents, and CI.
+Run the same two commands before you push. If the repository already has a `check`, `verify`, or
+similar command, add them there so local runs and CI use the same check.
 
-For example, a Just recipe can anchor both the root and expected config to the directory containing
-the justfile, regardless of the caller's working directory:
+For example, an optional Just recipe can pin the root and configuration to the justfile's
+directory:
 
 ```just title="justfile"
 sprawl-guard:
-    sprawl-guard --root "{{justfile_directory()}}" --config sprawl-guard.toml config upgrade --check
-    sprawl-guard --root "{{justfile_directory()}}" --config sprawl-guard.toml check
-
-sprawl-guard-prepare:
-    sprawl-guard --root "{{justfile_directory()}}" --config sprawl-guard.toml tighten --write
-    just --justfile "{{justfile()}}" sprawl-guard
-
-sprawl-guard-prepare-commit:
-    python3 "{{justfile_directory()}}/scripts/sprawl-guard-commit.py" prepare -- sprawl-guard
+    sprawl-guard config upgrade --check --root "{{justfile_directory()}}" --config sprawl-guard.toml
+    sprawl-guard check --root "{{justfile_directory()}}" --config sprawl-guard.toml
 ```
 
-A scoped Sprawl Guard check can provide faster feedback while editing, but it cannot replace the
-unscoped gate. Directory limits and stale ratchet entries can depend on files outside the selected
-paths.
+For a project-local Node dependency, replace `sprawl-guard` with `npm exec -- sprawl-guard` or
+`pnpm exec sprawl-guard`.
 
-For a project-local npm dependency, replace `sprawl-guard --root` in these recipes with
-`npm exec -- sprawl-guard --root` (or `pnpm exec sprawl-guard --root`). Keep `--root` before the
-subcommand for WASI compatibility.
-
-## Prepare Improvements Locally
-
-After [adopting a ratchet](/sprawl-guard/adopt-existing-repository/), run
-`just sprawl-guard-prepare` to record improvements and then run the same full verification gate.
-Commit a ratchet even if it is empty before enabling this workflow. A missing or invalid ratchet is
-an error; preparation does not create one or approve new debt.
-
-Preparation measures the working tree, not the Git index. It lowers or removes existing ceilings,
-then verifies configuration freshness and the complete repository. New violations and increased
-measurements still fail. If verification fails, any tightening already written remains available for
-review; the task does not roll back improvements or stage files.
-
-Use local preparation so source improvements and their lower ceilings can be reviewed in the same
-change, without repository-write credentials in CI. A scheduled post-merge tightening job cannot
-replace this step: stale ceilings already fail the required pre-merge check. This guide does not
-install a CI maintenance bot or approve exceptions automatically.
-
-## Optional Commit Hook
-
-The following native Git hook runs the preparation task for every commit, including deletion-only
-commits. It checks an isolated copy of the staged Git blobs, not the working tree. Unstaged edits,
-untracked files, local ignore rules, sparse checkouts, and checkout filters cannot affect that scan.
-It forwards no filenames, so verification remains unscoped.
-
-Copy [the snapshot helper](/sprawl-guard/examples/prepare_commit.py) to
-`scripts/sprawl-guard-commit.py` and commit it. It requires Python 3.11 or later and Git.
-For a project-local dependency, replace the command after `--` with `npm exec -- sprawl-guard`
-or `pnpm exec sprawl-guard`; package-manager resolution runs from the original repository.
-
-This optional workflow supports regular staged files only. It refuses symlinks and submodules,
-including symlinked config or ratchet files, rather than reading external contents. It also refuses
-filenames the local filesystem cannot preserve exactly.
-
-The helper copies every regular staged file, including excluded files, into temporary storage.
-Blob copying uses a fixed-size buffer, but disk usage and copy time scale with the entire staged
-tree. Exclusions affect measurements, not snapshot creation. LFS files are copied as committed
-pointers, without clean/smudge conversions.
-
-<Steps>
-
-1. Save this hook and commit it alongside the recipes:
-
-   ```sh title=".githooks/pre-commit"
-   #!/bin/sh
-   exec just sprawl-guard-prepare-commit
-   ```
-
-2. Enable it explicitly in your local checkout:
-
-   ```sh
-   chmod +x .githooks/pre-commit
-   git config --local core.hooksPath .githooks
-   ```
-
-   If the repository already manages hooks, integrate the recipe there instead of replacing its hook directory.
-
-3. Stage the intended source changes and commit. If tightening changes the ratchet, the hook stops without changing the index. Review and stage the ratchet, then retry. An unchanged ratchet lets the commit proceed; a failed verification still blocks it.
-
-</Steps>
-
-Only staged ignore/config/ratchet files participate. Preparation copies a changed ratchet back only
-if its working-tree bytes still match the staged ratchet, and never changes the index. An absent or
-invalid staged policy fails before publication. Avoid concurrent index or ratchet edits while the
-hook runs; an index change observed during verification requires a retry.
-
-For a read-only hook instead, use `just sprawl-guard`. With a hook manager such as pre-commit,
-disable filename forwarding and run on deletion-only commits:
-
-```yaml title=".pre-commit-config.yaml"
-repos:
-  - repo: local
-    hooks:
-      - id: sprawl-guard
-        name: Sprawl Guard
-        entry: just sprawl-guard
-        language: system
-        always_run: true
-        pass_filenames: false
-```
-
-## Add the CI job
-
-This GitHub Actions workflow runs on pull requests and pushes. Use the tab that matches the
-installation. Commit the snapshot helper described above even if you do not enable the local hook.
-CI uses its read-only `check` action to measure the same raw Git snapshot as commit preparation:
-
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
-
-```yaml title=".github/workflows/sprawl-guard.yml"
-name: Sprawl Guard
-
-on: [pull_request, push]
-
-permissions:
-  contents: read
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo install sprawl-guard --version <VERSION> --locked
-      - run: python3 scripts/sprawl-guard-commit.py check -- sprawl-guard
-```
-
-  </TabItem>
-  <TabItem label="npm">
-
-```yaml title=".github/workflows/sprawl-guard.yml"
-name: Sprawl Guard
-
-on: [pull_request, push]
-
-permissions:
-  contents: read
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-      - run: npm ci
-      - run: python3 scripts/sprawl-guard-commit.py check -- npm exec -- sprawl-guard
-```
-
-  </TabItem>
-  <TabItem label="pnpm">
-
-```yaml title=".github/workflows/sprawl-guard.yml"
-name: Sprawl Guard
-
-on: [pull_request, push]
-
-permissions:
-  contents: read
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: python3 scripts/sprawl-guard-commit.py check -- pnpm exec sprawl-guard
-```
-
-  </TabItem>
-</Tabs>
-
-Run the workflow's unscoped check from the repository root. Do not pass paths in the required CI
-job: a scoped check intentionally ignores files and stale ratchet entries outside its scope. Do not
-mutate the ratchet in the required CI gate. Run preparation locally, review its changes, and commit
-them with the source.
+To check exactly what is staged for a commit, see
+[check staged changes](/sprawl-guard/check-staged-changes/).
 
 ## Guide coding agents
 
 Add guidance like this to the repository's agent instructions:
 
 ```md
-Before declaring work complete, run `just sprawl-guard-prepare`, then review its ratchet changes.
-Use `just sprawl-guard` for read-only working-tree verification. The optional commit hook and CI
-verify the staged Git snapshot with `scripts/sprawl-guard-commit.py`.
+Before declaring work complete, run `sprawl-guard tighten --write`,
+`sprawl-guard config upgrade --check`, and `sprawl-guard check`, then review any ratchet changes.
 
 Resolve new violations with meaningful refactors. Split code into cohesive, clearly named modules
 with distinct responsibilities, and place each concern where it logically belongs. Do not create
 miscellaneous “helpers,” “utils,” “common,” or overflow files merely to satisfy a limit.
 
-Do not raise limits or rewrite the ratchet merely to make the check pass. When a refactor reduces
-an existing violation, the preparation task uses `tighten` to record the improvement. Commit the
-ratchet changes with the refactor. Approving new debt or raising ceilings requires explicit review.
+Do not raise limits or rewrite the ratchet file merely to make the check pass. Commit ratchet
+changes with the refactor that caused them. Recording new violations or raising ceilings requires
+explicit review.
 ```
 
 ## Choose output
@@ -293,14 +209,13 @@ pnpm exec sprawl-guard check --format sarif
   </TabItem>
 </Tabs>
 
-For `check`, treat exit code `0` as pass, `1` as a policy failure, and `2` as an operational
-failure. Preserve the output even when the command exits nonzero. Completed policy checks honor the
-selected structured format. Collected traversal failures produce structured JSON, but SARIF
-traversal failures produce only human-readable stderr. Other operational failures can also produce
-only stderr. Check the exit code before parsing stdout.
+For `check`, exit code `0` means pass, `1` means violations, and `2` means an error. Keep the output
+even when the command exits nonzero, and check the exit code before parsing stdout. When a path
+cannot be read, `check --format json` still prints a JSON report, and `check --format sarif` prints
+only a message on stderr, as it does for other errors.
 
-Before updating CI, change the pinned version locally, run a full check, and review any changes to
-configuration, classification, measurements, or ratchets.
+Before updating the pinned version in CI, update it locally, run a full check, and review any
+changes to the configuration, measurements, or ratchet file.
 
 See [CLI and output](/sprawl-guard/reference/cli-and-output/) for formats and diagnostic
 identifiers.

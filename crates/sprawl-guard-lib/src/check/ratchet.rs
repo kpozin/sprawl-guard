@@ -5,16 +5,16 @@ use crate::config::Config;
 use crate::ratchet::{
     DirectoryRatchetKey, FileRatchetKey, RatchetCount, RatchetFile, RatchetLookup,
 };
-use crate::{LanguageGroupId, LeafFiles, LocLimit, RelativePath, Result};
+use crate::{DirectFiles, LanguageGroupId, LineLimit, RelativePath, Result};
 
-use super::directory_fanout::{DirectoryFanoutCheck, DirectoryFanoutMeasurement};
-use super::report::{CheckViolation, DirectoryViolationKind, FileViolationKind};
+use super::directory_direct_files::{DirectoryDirectFilesCheck, DirectoryDirectFilesMeasurement};
+use super::report::{CheckViolation, DirectoryViolationKind, FileViolationKind, RatchetEntryCount};
 use super::report::{
     DirectoryRatchetIncreasedViolation, DirectoryRatchetStaleMeasuredViolation,
     FileRatchetIncreasedViolation, FileRatchetStaleMeasuredViolation, RatchetIncreasedViolation,
     RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleViolation, RatchetViolation,
 };
-use super::runner::{CheckScope, FileMeasurement, SourceCheck};
+use super::runner::{FileMeasurement, SelectedPaths, SourceCheck};
 
 mod missing;
 
@@ -26,7 +26,7 @@ pub(super) fn file_violations_with_ratchet(
     let Some(ratchet) = ratchet else {
         return source_check
             .into_violation()
-            .map(CheckViolation::FileLoc)
+            .map(CheckViolation::FileLines)
             .into_iter()
             .collect();
     };
@@ -37,18 +37,18 @@ pub(super) fn file_violations_with_ratchet(
 
 fn apply_file_ratchet(
     mut source_check: SourceCheck,
-    ceiling: Option<LocLimit>,
+    ceiling: Option<LineLimit>,
     current_policy: RatchetCurrentPolicy,
 ) -> Vec<CheckViolation> {
     let Some(ceiling) = ceiling else {
         return source_check
             .into_violation()
-            .map(CheckViolation::FileLoc)
+            .map(CheckViolation::FileLines)
             .into_iter()
             .collect();
     };
     let measurement = source_check.measurement();
-    let actual = measurement.current_loc();
+    let actual = measurement.current_lines();
     if source_check.has_violation() && actual.get() > ceiling.get() {
         if let Some(violation) = source_check.violation_mut() {
             violation.ratchet = Some(ceiling);
@@ -56,7 +56,7 @@ fn apply_file_ratchet(
         let ratchet_violation = increased_file_ratchet_violation(&measurement, ceiling);
         return source_check
             .into_violation()
-            .map(CheckViolation::FileLoc)
+            .map(CheckViolation::FileLines)
             .into_iter()
             .chain(std::iter::once(CheckViolation::Ratchet(ratchet_violation)))
             .collect();
@@ -74,13 +74,13 @@ fn apply_file_ratchet(
 
 fn increased_file_ratchet_violation(
     measurement: &FileMeasurement,
-    ceiling: LocLimit,
+    ceiling: LineLimit,
 ) -> RatchetViolation {
     RatchetViolation::Increased(RatchetIncreasedViolation::File(
         FileRatchetIncreasedViolation {
             kind: measurement.kind,
             path: measurement.path.clone(),
-            measurement: measurement.loc,
+            measurement: measurement.lines,
             limit: RatchetCount::from_loc_limit(measurement.limit),
             ratchet: RatchetCount::from_loc_limit(ceiling),
         },
@@ -89,13 +89,13 @@ fn increased_file_ratchet_violation(
 
 fn stale_file_ratchet_violation(
     measurement: &FileMeasurement,
-    ceiling: LocLimit,
+    ceiling: LineLimit,
 ) -> RatchetViolation {
     RatchetViolation::Stale(RatchetStaleViolation::Measured(
         RatchetStaleMeasuredViolation::File(FileRatchetStaleMeasuredViolation {
             kind: measurement.kind,
             path: measurement.path.clone(),
-            measurement: measurement.loc,
+            measurement: measurement.lines,
             limit: RatchetCount::from_loc_limit(measurement.limit),
             ratchet: RatchetCount::from_loc_limit(ceiling),
         }),
@@ -105,12 +105,12 @@ fn stale_file_ratchet_violation(
 pub(super) fn directory_violations_with_ratchet(
     ratchet: &Option<RatchetState>,
     current_policy: RatchetCurrentPolicy,
-    directory_check: DirectoryFanoutCheck,
+    directory_check: DirectoryDirectFilesCheck,
 ) -> Vec<CheckViolation> {
     let Some(ratchet) = ratchet else {
         return directory_check
             .into_violation()
-            .map(CheckViolation::DirectoryFanout)
+            .map(CheckViolation::DirectoryDirectFiles)
             .into_iter()
             .collect();
     };
@@ -121,14 +121,14 @@ pub(super) fn directory_violations_with_ratchet(
 }
 
 fn apply_directory_ratchet(
-    mut directory_check: DirectoryFanoutCheck,
-    ceiling: Option<LeafFiles>,
+    mut directory_check: DirectoryDirectFilesCheck,
+    ceiling: Option<DirectFiles>,
     current_policy: RatchetCurrentPolicy,
 ) -> Vec<CheckViolation> {
     let Some(ceiling) = ceiling else {
         return directory_check
             .into_violation()
-            .map(CheckViolation::DirectoryFanout)
+            .map(CheckViolation::DirectoryDirectFiles)
             .into_iter()
             .collect();
     };
@@ -141,7 +141,7 @@ fn apply_directory_ratchet(
         let ratchet_violation = increased_directory_ratchet_violation(&measurement, ceiling);
         return directory_check
             .into_violation()
-            .map(CheckViolation::DirectoryFanout)
+            .map(CheckViolation::DirectoryDirectFiles)
             .into_iter()
             .chain(std::iter::once(CheckViolation::Ratchet(ratchet_violation)))
             .collect();
@@ -158,52 +158,52 @@ fn apply_directory_ratchet(
 }
 
 fn increased_directory_ratchet_violation(
-    measurement: &DirectoryFanoutMeasurement,
-    ceiling: LeafFiles,
+    measurement: &DirectoryDirectFilesMeasurement,
+    ceiling: DirectFiles,
 ) -> RatchetViolation {
     RatchetViolation::Increased(RatchetIncreasedViolation::Directory(
         DirectoryRatchetIncreasedViolation {
             kind: measurement.kind,
             path: measurement.path.clone(),
             group: measurement.group.clone(),
-            actual: RatchetCount::from_leaf_files(measurement.actual),
-            limit: RatchetCount::from_leaf_files(
+            actual: RatchetCount::from_direct_files(measurement.actual),
+            limit: RatchetCount::from_direct_files(
                 measurement
                     .limit
                     .finite()
                     .expect("increased directory ratchet must have a finite configured limit"),
             ),
-            ratchet: RatchetCount::from_leaf_files(ceiling),
+            ratchet: RatchetCount::from_direct_files(ceiling),
         },
     ))
 }
 
 fn stale_directory_ratchet_violation(
-    measurement: &DirectoryFanoutMeasurement,
-    ceiling: LeafFiles,
+    measurement: &DirectoryDirectFilesMeasurement,
+    ceiling: DirectFiles,
 ) -> RatchetViolation {
     RatchetViolation::Stale(RatchetStaleViolation::Measured(
         RatchetStaleMeasuredViolation::Directory(DirectoryRatchetStaleMeasuredViolation {
             kind: measurement.kind,
             path: measurement.path.clone(),
             group: measurement.group.clone(),
-            actual: RatchetCount::from_leaf_files(measurement.actual),
+            actual: RatchetCount::from_direct_files(measurement.actual),
             limit: RatchetLimit::from(measurement.limit),
-            ratchet: RatchetCount::from_leaf_files(ceiling),
+            ratchet: RatchetCount::from_direct_files(ceiling),
         }),
     ))
 }
 
 pub(super) fn stale_missing_ratchets(
     ratchet: &Option<RatchetState>,
-    scope: &CheckScope,
+    selected_paths: &SelectedPaths,
     measured: &MeasuredRatchets,
 ) -> Vec<CheckViolation> {
     let Some(ratchet) = ratchet else {
         return Vec::new();
     };
     ratchet
-        .missing_in(scope, measured)
+        .missing_in(selected_paths, measured)
         .into_iter()
         .map(CheckViolation::Ratchet)
         .collect()
@@ -223,7 +223,7 @@ impl MeasuredRatchets {
         ));
     }
 
-    pub(super) fn record_directory(&mut self, measurement: &DirectoryFanoutMeasurement) {
+    pub(super) fn record_directory(&mut self, measurement: &DirectoryDirectFilesMeasurement) {
         self.directories.insert(DirectoryRatchetKey::new(
             measurement.path.clone(),
             measurement.kind.role(),
@@ -263,13 +263,18 @@ impl RatchetState {
         Ok(Some(Self::from_file(RatchetFile::read(&path)?)?))
     }
 
+    /// Returns the number of file and directory ceilings in the loaded ratchet file.
+    pub(super) fn entry_count(&self) -> RatchetEntryCount {
+        RatchetEntryCount::from_len(self.ratchets.files().len() + self.ratchets.directories().len())
+    }
+
     fn from_file(file: RatchetFile) -> Result<Self> {
         Ok(Self {
             ratchets: RatchetLookup::try_from(file)?,
         })
     }
 
-    fn file_ceiling(&self, kind: FileViolationKind, path: &RelativePath) -> Option<LocLimit> {
+    fn file_ceiling(&self, kind: FileViolationKind, path: &RelativePath) -> Option<LineLimit> {
         self.ratchets
             .file_ceiling(&FileRatchetKey::new(path.clone(), kind.role()))
     }
@@ -279,22 +284,26 @@ impl RatchetState {
         kind: DirectoryViolationKind,
         group: &LanguageGroupId,
         path: &RelativePath,
-    ) -> Option<LeafFiles> {
+    ) -> Option<DirectFiles> {
         let key = DirectoryRatchetKey::new(path.clone(), kind.role(), group.clone());
         self.ratchets.directory_ceiling(&key)
     }
 
-    fn missing_in(&self, scope: &CheckScope, measured: &MeasuredRatchets) -> Vec<RatchetViolation> {
+    fn missing_in(
+        &self,
+        selected_paths: &SelectedPaths,
+        measured: &MeasuredRatchets,
+    ) -> Vec<RatchetViolation> {
         let mut violations = Vec::new();
         violations.extend(missing::file_ratchets(
             self.ratchets.files(),
             &measured.files,
-            scope,
+            selected_paths,
         ));
         violations.extend(missing::directory_ratchets(
             self.ratchets.directories(),
             &measured.directories,
-            scope,
+            selected_paths,
         ));
         violations
     }

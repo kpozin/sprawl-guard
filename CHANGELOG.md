@@ -4,7 +4,67 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## Unreleased
 
-## [0.3.0-dev.0] - 2026-10-03
+This release renames configuration keys, ratchet keys, and machine-readable output to match the
+documentation's vocabulary. Configurations written for 0.2.0 (schema version 1) still upgrade with
+`sprawl-guard config upgrade --write`. Configuration and ratchet files written for 0.3.0-dev.0 keep
+their schema versions and need the renames below applied by hand.
+
+### Changed
+
+- Configuration keys:
+  - `max_leaf_files_per_directory` is now `max_direct_files_per_directory`, at the root, in
+    language groups, and in `[[overrides]]`.
+  - `[tests].check_path_tests` is now `[tests].check`.
+  - `[traversal].error_policy` is now `[traversal].unreadable_paths`.
+  - `included_line_types` is now `count_lines` and lists only `comments` and `blank_lines`. Code
+    lines always count, so remove `"code"` from the list.
+  - `[files].exclude` is now `[files].extend_exclude`.
+  - Language `additional_globs` is now `extend_include`.
+- Ratchet keys: `max_loc` is now `max_lines`, and `leaf_files` is now `max_direct_files`.
+- The `check --traversal-error-policy` option is now `--unreadable-paths`.
+- JSON violation kinds: `file_loc` and `test_file_loc` are now `file_lines` and
+  `test_file_lines`. `directory_fanout` and `test_directory_fanout` are now
+  `directory_direct_files` and `test_directory_direct_files`. Ratchet kinds follow the same
+  pattern.
+- SARIF rule IDs follow the same renames in kebab case: for example, `sprawl-guard/file-loc` is now
+  `sprawl-guard/file-lines`, and `sprawl-guard/directory-fanout` is now
+  `sprawl-guard/directory-direct-files`.
+- JSON report fields: `scope` is now `paths` (`"all"` or a list), and `traversal_incidents` is now
+  `unreadable_paths`.
+- In JSON violations, SARIF properties, and `explain` JSON, `included_line_types` is now
+  `count_lines` and no longer lists `"code"`. In `languages` JSON, `automatic_included_line_types`
+  is now `automatic_count_lines` and `additional_globs` is now `extend_include`.
+- `init` and `config upgrade` now preview by default; pass `--write` to save. `init --dry-run` is
+  removed, and `config upgrade --write` cannot be combined with `--check`.
+- Options now follow the command that uses them, for example `sprawl-guard check --root /repo`.
+  `--root`, `--config`, and `--quiet` are accepted only by commands that read a repository, and
+  `languages --root` requires `--detected`. Without `--root`, the current directory is the root.
+- The active config file is never checked as a source file, so
+  `extend_exclude = ["sprawl-guard.toml"]` is no longer needed. `explain` reports the file as
+  `config_excluded`.
+- For a path that does not exist, `explain` JSON reports `state: "not_found"` instead of
+  `"classified"`, and human output says the path was not found.
+- The npm wrapper accepts `--root` anywhere before `--`, mounts the current directory when it is
+  omitted, and exits with code `2` when the wrapper itself fails.
+- Human output uses the documentation's vocabulary. `check` starts with `Configuration: PATH`
+  instead of `Policy: ...`, uses headings such as "Files over the line limit", and reports
+  measurements as `src/big.rs: 700 lines (limit 400)`. Paths in every command's human output are
+  relative to the root, unquoted, and have control characters escaped.
+- `check --quiet` prints nothing when the check passes.
+- `explain` prints one labeled line per fact, and `languages` prints a table of names, keys, and
+  extensions. Use `--format json` for the full language details.
+- SARIF rule descriptions and messages use the same vocabulary.
+- Each command's help lists only its own `--format` values and states every default.
+- The documentation uses one vocabulary, defined on the "How checks work" page. "Run in CI" now
+  leads with a plain `config upgrade --check` and `check` job, and the staged-snapshot helper moved
+  to the optional "Check staged changes" page.
+
+### Added
+
+- The JSON `summary` reports `ratchet_entries`, and a passing human check prints how many ratchet
+  entries remain.
+
+## [0.3.0-dev.0] - 2026-10-22
 
 This development release changes command names and source-selection behavior. Run
 `sprawl-guard config upgrade` after upgrading, and replace `baseline` and `ratchet` commands with

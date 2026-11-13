@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tokei::LanguageType;
 
 use super::language_group::LanguageGroupId;
-use super::line_types::IncludedLineTypes;
+use super::line_types::CountLines;
 
 /// Error returned when a language identifier is not supported by `tokei`.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -78,7 +78,7 @@ impl LanguageId {
         self.0.is_literate()
     }
 
-    /// Returns the automatic directory fan-out group for this language.
+    /// Returns the automatic directory direct-file group for this language.
     pub fn automatic_group(self) -> LanguageGroupId {
         if self.is_literate() {
             LanguageGroupId::Documentation
@@ -87,8 +87,8 @@ impl LanguageId {
         }
     }
 
-    /// Applies the automatic literate-language policy to global included line types.
-    pub fn automatic_included_line_types(self, global: IncludedLineTypes) -> IncludedLineTypes {
+    /// Adds comments to the global `count_lines` for literate languages.
+    pub fn automatic_count_lines(self, global: CountLines) -> CountLines {
         if self.is_literate() {
             global.with_comments()
         } else {

@@ -90,3 +90,20 @@ mod when_a_schema_is_requested {
         assert_eq!(stderr(&output), "");
     }
 }
+
+mod when_project_options_are_passed {
+    use super::*;
+
+    #[test]
+    fn it_rejects_them() {
+        for option in ["--root", "--config", "--quiet"] {
+            let output = sprawl_guard_no_root()
+                .args(["schema", "config", option, "."])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert!(stderr(&output).contains("unexpected argument"), "{option}");
+        }
+    }
+}

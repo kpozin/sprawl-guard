@@ -1,12 +1,12 @@
 ---
 title: Sprawl Guard
-description: Keep source trees navigable with configurable file-length and directory fan-out limits.
+description: Check that source files stay short and directories stay small.
 template: splash
 hero:
   image:
     file: ../../assets/sprawl-guard-shield-clamp.svg
     alt: ""
-  tagline: Enforce configurable file-length and directory fan-out limits. Record existing violations so they can shrink but not grow.
+  tagline: Check that source files stay short and directories stay small. Record existing violations so they can shrink but not grow.
   actions:
     - text: Get started
       link: ./quick-start/
@@ -20,22 +20,22 @@ hero:
       icon: right-arrow
 ---
 
-Keep coding agents from adding oversized files and crowded directories. File-length limits measure
-logical lines of code (LOC).
+Keep coding agents from adding oversized files and crowded directories. Sprawl Guard counts the
+lines in each file, as [Tokei](https://github.com/XAMPPRocky/tokei) measures them, and the source
+files directly inside each directory.
 
-Sprawl Guard supports every language bundled with
-[Tokei](https://github.com/xampprocky/tokei), including Rust, TypeScript, JavaScript, Python, Go,
-Java, Kotlin, Swift, C, and C++. Run `sprawl-guard languages` for the complete list and default file
-paths. Code always counts; comments and blank lines are configurable, and literate-language prose
-counts by default.
+Sprawl Guard supports every language bundled with Tokei, including Rust, TypeScript, JavaScript,
+Python, Go, Java, Kotlin, Swift, C, and C++. Run `sprawl-guard languages` for the complete list and
+default file paths. Code always counts. Comments and blank lines are optional, and
+literate-language prose counts by default.
 
 ## Sprawl Guard or ESLint?
 
-If a JavaScript or TypeScript linter's file-length rule is enough, use the
-`max-lines` rule in [ESLint](https://eslint.org/docs/latest/rules/max-lines) or
+If a JavaScript or TypeScript linter's file-length rule is enough, use the `max-lines` rule in
+[ESLint](https://eslint.org/docs/latest/rules/max-lines) or
 [Oxlint](https://oxc.rs/docs/guide/usage/linter/rules/eslint/max-lines). Choose Sprawl Guard when
-you also need directory fan-out limits, separate limits for production and test code, existing
-violations that can shrink but not grow, or support for polyglot repositories.
+you also need limits on direct files per directory, separate limits for production and test code,
+existing violations that can shrink but not grow, or support for polyglot repositories.
 
 Browse the [source](https://github.com/kpozin/sprawl-guard) and
 [releases](https://github.com/kpozin/sprawl-guard/releases), or

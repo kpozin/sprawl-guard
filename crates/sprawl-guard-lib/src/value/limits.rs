@@ -5,7 +5,7 @@ use std::num::NonZeroU32;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// Finite or unlimited policy value.
+/// Finite or unlimited limit value.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FiniteOrUnlimited<Value> {
     /// Enforce the contained value.
@@ -111,7 +111,7 @@ enum RawFiniteOrUnlimited<Value> {
 /// Error returned when a configured limit value is invalid.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum LimitValueError {
-    /// A configured limit was zero, but policy limits must be positive.
+    /// A configured limit was zero, but limits must be positive.
     #[error("{kind} must be greater than zero")]
     Zero {
         /// Limit kind that received the invalid value.
@@ -123,40 +123,40 @@ pub enum LimitValueError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LimitValueKind {
     /// Maximum configured lines of code.
-    Loc,
-    /// Maximum count of direct leaf files.
-    LeafFiles,
+    Lines,
+    /// Maximum count of direct files.
+    DirectFiles,
 }
 
 impl fmt::Display for LimitValueKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Loc => formatter.write_str("LOC limit"),
-            Self::LeafFiles => formatter.write_str("leaf-file count"),
+            Self::Lines => formatter.write_str("line limit"),
+            Self::DirectFiles => formatter.write_str("leaf-file count"),
         }
     }
 }
 
-/// Positive configured LOC limit.
+/// Positive line limit.
 #[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct LocLimit(NonZeroU32);
+pub struct LineLimit(NonZeroU32);
 
-impl LocLimit {
-    /// Creates a configured LOC limit.
+impl LineLimit {
+    /// Creates a line limit.
     pub fn new(value: u32) -> Result<Self, LimitValueError> {
         let Some(value) = NonZeroU32::new(value) else {
             return Err(LimitValueError::Zero {
-                kind: LimitValueKind::Loc,
+                kind: LimitValueKind::Lines,
             });
         };
         Ok(Self(value))
     }
 
-    /// Creates a configured LOC limit from a trusted built-in value.
+    /// Creates a line limit from a trusted built-in value.
     pub(crate) const fn trusted(value: u32) -> Self {
         let Some(value) = NonZeroU32::new(value) else {
-            panic!("trusted LOC limit must be greater than zero");
+            panic!("trusted line limit must be greater than zero");
         };
         Self(value)
     }
@@ -167,29 +167,29 @@ impl LocLimit {
     }
 }
 
-impl fmt::Display for LocLimit {
+impl fmt::Display for LineLimit {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.get().fmt(formatter)
     }
 }
 
-/// Count of direct leaf files.
+/// Count of direct files.
 #[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct LeafFiles(NonZeroU32);
+pub struct DirectFiles(NonZeroU32);
 
-impl LeafFiles {
-    /// Creates a leaf-file count.
+impl DirectFiles {
+    /// Creates a direct-file count.
     pub fn new(value: u32) -> Result<Self, LimitValueError> {
         let Some(value) = NonZeroU32::new(value) else {
             return Err(LimitValueError::Zero {
-                kind: LimitValueKind::LeafFiles,
+                kind: LimitValueKind::DirectFiles,
             });
         };
         Ok(Self(value))
     }
 
-    /// Creates a leaf-file count from a trusted built-in value.
+    /// Creates a direct-file count from a trusted built-in value.
     pub(crate) const fn trusted(value: u32) -> Self {
         let Some(value) = NonZeroU32::new(value) else {
             panic!("trusted leaf-file count must be greater than zero");
@@ -203,16 +203,16 @@ impl LeafFiles {
     }
 }
 
-impl fmt::Display for LeafFiles {
+impl fmt::Display for DirectFiles {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.get().fmt(formatter)
     }
 }
 
-/// Finite or unlimited direct leaf-file budget.
-pub type LeafFileLimit = FiniteOrUnlimited<LeafFiles>;
+/// Finite or unlimited direct-file limit.
+pub type DirectFileLimit = FiniteOrUnlimited<DirectFiles>;
 
-impl<'de> Deserialize<'de> for LocLimit {
+impl<'de> Deserialize<'de> for LineLimit {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -221,7 +221,7 @@ impl<'de> Deserialize<'de> for LocLimit {
     }
 }
 
-impl<'de> Deserialize<'de> for LeafFiles {
+impl<'de> Deserialize<'de> for DirectFiles {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
