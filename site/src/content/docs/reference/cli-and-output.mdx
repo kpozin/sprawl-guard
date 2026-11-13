@@ -7,13 +7,14 @@ import CliCommandReference from "../../../components/CliCommandReference.astro";
 
 ## Command line
 
-Options belong to the commands that use them and follow the command name. Commands that read a
-repository use the current directory as the root unless `--root` selects another one.
+Write each option after the command it belongs to, as in `sprawl-guard check --format json`. Run
+commands from the repository root, or pass its path with `--root`.
 
 <CliCommandReference path="sprawl-guard" />
 
-Under the npm wrapper's WASI fallback, `--root` is the only path that may be absolute; use
-repository-relative paths for every other path argument:
+The npm package includes native builds for macOS (x64 and Arm), Linux (x64 and Arm with glibc, x64
+with musl), and Windows (x64). On other platforms it runs a slower WebAssembly build, which accepts
+an absolute path only for `--root`. Write other paths relative to the repository root:
 
 ```sh
 sprawl-guard check --root /repo src/file.rs
@@ -23,7 +24,7 @@ sprawl-guard check --root /repo src/file.rs
 
 ### `init`
 
-Previews `sprawl-guard.toml`, or the path selected by `--config`; `--write` creates it.
+Previews `sprawl-guard.toml`, or the file that `--config` names. `--write` creates it.
 
 <CliCommandReference path="sprawl-guard init" />
 
@@ -33,8 +34,8 @@ existing configuration when writing.
 ### `languages`
 
 Lists every supported language, or only the languages detected under the root. Human output is a
-table of language, key, and extensions. JSON adds bundled filenames, literate-language status,
-automatic language groups, and automatic `count_lines`. `--format` defaults to `human`.
+table of language, key, and extensions. JSON adds bundled filenames, automatic language groups,
+and automatic `count_lines`. `--format` defaults to `human`.
 
 <CliCommandReference path="sprawl-guard languages" />
 
@@ -50,14 +51,14 @@ source file is still an error.
 
 ### `update [PATHS]...`
 
-Adds ratchet entries for new violations. By default it previews only added or raised ceilings with
-their before-and-after values; `--write` saves the same changes. Existing
-ceilings remain unchanged unless you pass `--allow-increases`. Use `--format toml` to print the
-complete resulting ratchet file, including unchanged entries.
+Adds ratchet entries for new violations. By default it previews the added or raised ceilings with
+their before-and-after values, and `--write` saves them. Existing ceilings stay unchanged unless you
+pass `--allow-increases`. To print the complete resulting ratchet file, including unchanged
+entries, use `--format toml`.
 
 <CliCommandReference path="sprawl-guard update" />
 
-With no paths, it covers the whole repository; otherwise, only the selected paths.
+With no paths, `update` covers the whole repository. With paths, it covers only those paths.
 
 ### `tighten [PATHS]...`
 
@@ -65,17 +66,21 @@ Lowers existing ratchet ceilings after violations improve. It never creates or r
 
 <CliCommandReference path="sprawl-guard tighten" />
 
-With no paths it covers every ratchet entry; otherwise, only entries under the selected paths.
-Output lists lowered or removed ceilings; `--format toml` prints the complete resulting ratchet
-file. A write with no ceiling changes preserves the existing file.
+With no paths, `tighten` covers every ratchet entry. With paths, it covers only the entries under
+them. The output lists lowered or removed ceilings, and `--format toml` prints the complete
+resulting ratchet file. When no ceiling changes, `--write` leaves the file untouched.
 
 ### Inspect and upgrade the configuration
 
-`resolved` prints the built-in defaults merged with the root configuration, including each
-language's inherited line limits and automatic `count_lines`. To list only the languages found
-under the root, use `languages --detected`. `export` prints the complete configuration, ready to
-commit. `upgrade` previews the configuration upgraded to the current schema, `--write` saves it, and
-`--check` saves nothing and exits `1` when an upgrade is pending.
+The `config` command has three subcommands:
+
+- `config resolved` prints the built-in defaults merged with your configuration, including each
+  language's inherited line limits and automatic `count_lines`.
+- `config export` prints the complete configuration, ready to commit.
+- `config upgrade` previews the configuration upgraded to the current schema. `--write` saves it,
+  and `--check` saves nothing and exits `1` when an upgrade is pending.
+
+To list only the languages found in the repository, use `languages --detected`.
 
 ```sh title="Check that the configuration is current"
 sprawl-guard config upgrade --check
@@ -104,17 +109,19 @@ Shows, for one path, whether it is ignored or excluded, which language claims it
 test file, its limits, matching overrides, its current lines, and Rust `cfg(test)` handling.
 
 A path that does not exist is still classified by its name, so you can see how Sprawl Guard would
-classify a planned file. Human output says the path was not found; JSON reports `state: "not_found"`
-instead of `state: "measured"`. The active config file and the ratchet file are never checked as
-source files; `explain` reports them as `config_excluded` and `ratchet_excluded`.
+classify a planned file. Human output says the path was not found, and JSON reports
+`state: "not_found"` instead of `state: "measured"`.
+
+The active config file and the ratchet file are never checked as source files. `explain` reports
+them as `config_excluded` and `ratchet_excluded`.
 
 <CliCommandReference path="sprawl-guard explain" />
 
 ## Output formats
 
-- Human output starts with the configuration file the check used, then groups failures under "Files
-  over the line limit", "Test files over the line limit", "Directories with too many direct files",
-  "Test directories with too many direct files", and "Ratchet failures". Each failure reads like
+- Human output groups failures under "Files over the line limit", "Test files over the line limit",
+  "Directories with too many direct files", "Test directories with too many direct files", and
+  "Ratchet failures". Each failure reads like
   `src/big.rs: 700 lines (limit 400)`. Paths are relative to the root and never quoted; control
   characters in them are escaped.
 - JSON output is a structured report with the root, selected paths, where the configuration came
@@ -126,9 +133,9 @@ Human check output starts with `Configuration: PATH`, or with
 line appears even when the check stops on an unreadable path. With `--quiet`, a passing check prints
 nothing, and a failing check prints only the configuration line and its failures.
 
-For `check`, the default comes from `[output].format`; `check --format` takes precedence. Other
+`check` takes its default format from `[output].format`, and `check --format` overrides it. Other
 commands ignore `[output].format` and default to `human`. `update` and `tighten` also support
-`toml`; `languages` and `explain` also support `json`.
+`toml`, and `languages` and `explain` also support `json`.
 
 A JSON report with one file violation looks like:
 
@@ -209,7 +216,7 @@ Configuration, path, I/O, parsing, and unreadable-path problems are errors, not 
 
 ## Exit codes
 
-Check the exit code before parsing the output of a command such as:
+Check the exit code before you parse JSON or SARIF output:
 
 ```sh title="Check as JSON"
 sprawl-guard check --format json
@@ -217,10 +224,9 @@ sprawl-guard check --format json
 
 | Code | Meaning                                                                                              |
 | ---- | ---------------------------------------------------------------------------------------------------- |
-| `0`  | The command succeeded; a check found no violations.                                                  |
+| `0`  | The command succeeded. For a check, it found no violations.                                          |
 | `1`  | A check found violations, or `config upgrade --check` found a pending upgrade.                       |
 | `2`  | An error in configuration, arguments, paths, I/O, parsing, unreadable paths, or internal processing. |
 
-The npm wrapper forwards these exit codes after launching the native CLI or WASI fallback. If the
-wrapper itself fails to start, for example because of an invalid fallback invocation, it exits `2`
-with a message on stderr, like any other error.
+The npm package uses the same exit codes. If it can't start Sprawl Guard, it exits `2` with a
+message on stderr.

@@ -1,0 +1,63 @@
+---
+title: Work with the ratchet
+description: Record improvements, approve new exceptions, and keep coding agents from gaming the limits.
+---
+
+The ratchet file, `sprawl-guard.ratchet.toml`, records each violation you accepted. The size it had
+when you recorded it is its ceiling. `sprawl-guard check` fails when a recorded violation grows past
+its ceiling, and also when it shrinks below it, so that the file always matches the repository.
+Commit ratchet changes together with the source changes that caused them.
+
+## Record an improvement
+
+After you shorten a file or move files out of a crowded directory, the check reports the ratchet
+entry as stale. Preview the change, then write it:
+
+```sh
+sprawl-guard tighten
+sprawl-guard tighten --write
+```
+
+`tighten` lowers each ceiling to the new size, or removes the entry when the file or directory is
+back within its limit. It never raises a ceiling or adds an entry.
+
+## Approve a new violation
+
+When a file or directory has to exceed its limit for now, preview and write an entry for it. Pass
+the file or directory that is over its limit:
+
+```sh
+sprawl-guard update src/parser.rs
+sprawl-guard update src/parser.rs --write
+```
+
+`update` adds entries for new violations but leaves existing ceilings alone. To let a recorded
+violation grow, add `--allow-increases` to both commands. The preview marks each raised ceiling
+with `! raise`.
+
+For a permanent exception, such as a vendored file, set a higher limit with an
+[override](/sprawl-guard/configure-checks/#make-exceptions) instead. An override states its reason
+in the configuration.
+
+## Resolve a merge conflict in the ratchet file
+
+Keep the entries from both sides, and where they disagree, keep the higher ceiling. Then run
+`sprawl-guard tighten --write` to lower each ceiling to the size of the merged code, and run
+`sprawl-guard check`. If both branches grew the same file or directory, approve the combined size
+with `sprawl-guard update PATH --allow-increases --write`.
+
+## Guide coding agents
+
+Coding agents tend to satisfy a size limit by moving code into catch-all files or by raising the
+limit. Add instructions like these to the repository's agent instructions file:
+
+```md
+Before declaring work complete, run `sprawl-guard tighten --write` and `sprawl-guard check`.
+
+Resolve new violations with meaningful refactors. Split code into cohesive, clearly named modules
+with distinct responsibilities. Do not create miscellaneous "helpers," "utils," or "common" files
+merely to satisfy a limit.
+
+Do not raise limits, add overrides, or run `sprawl-guard update` to make the check pass. Recording
+a new violation requires review.
+```

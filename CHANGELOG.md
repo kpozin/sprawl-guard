@@ -55,14 +55,18 @@ their schema versions and need the renames below applied by hand.
   extensions. Use `--format json` for the full language details.
 - SARIF rule descriptions and messages use the same vocabulary.
 - Each command's help lists only its own `--format` values and states every default.
-- The documentation uses one vocabulary, defined on the "How checks work" page. "Run in CI" now
-  leads with a plain `config upgrade --check` and `check` job, and the staged-snapshot helper moved
-  to the optional "Check staged changes" page.
+- The documentation uses one vocabulary, defined on the "How checks work" page. The guide is now
+  four pages: "Get started", "Run in CI", "Work with the ratchet", and "Configure checks".
 
 ### Added
 
 - The JSON `summary` reports `ratchet_entries`, and a passing human check prints how many ratchet
   entries remain.
+
+### Removed
+
+- The staged-snapshot preparation hook and its documentation. To check before you commit, run
+  `sprawl-guard check` in a pre-commit hook, as described in "Run in CI".
 
 ## [0.3.0-dev.0] - 2026-10-22
 

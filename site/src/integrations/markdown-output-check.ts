@@ -66,13 +66,15 @@ async function verifyMarkdownOutput(
   await assert.rejects(readOutput(outputDirectory, "404.md"), /ENOENT/u);
 
   const quickStart = await readOutput(outputDirectory, "quick-start.md");
-  for (const packageManager of ["Cargo", "npm", "pnpm"]) {
-    assert.match(quickStart, new RegExp(`\\*\\*${packageManager}\\*\\*`, "u"));
-  }
   assert.match(
     quickStart,
-    /sprawl-guard init[\s\S]*sprawl-guard init --write[\s\S]*sprawl-guard languages --detected[\s\S]*sprawl-guard check/u,
+    /sprawl-guard init[\s\S]*sprawl-guard init --write[\s\S]*sprawl-guard check[\s\S]*sprawl-guard update --write/u,
   );
+
+  const runInCi = await readOutput(outputDirectory, "run-in-ci.md");
+  for (const packageManager of ["Cargo", "npm"]) {
+    assert.match(runInCi, new RegExp(`\\*\\*${packageManager}\\*\\*`, "u"));
+  }
 
   const cliReference = await readOutput(outputDirectory, "reference/cli-and-output.md");
   assert.match(cliReference, /`Usage: sprawl-guard <COMMAND>`/u);

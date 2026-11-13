@@ -12,6 +12,7 @@ description: Source files, line counts, direct files, limits, selected paths, an
 | source file                       | A file that one enabled language claims.                                                                          |
 | test file / production file       | A source file that matches a test glob, or one that does not.                                                     |
 | language group                    | Languages whose files share one direct-file count per directory.                                                  |
+| literate language                 | A language whose content is prose, such as Markdown. Tokei counts the prose as comments.                          |
 | lines                             | The counted lines of a file: code, plus comments or blank lines if configured.                                    |
 | direct files                      | Source files immediately inside a directory. Files in its subdirectories do not count.                            |
 | limit                             | The maximum set in the configuration.                                                                             |
@@ -49,9 +50,11 @@ every line and adds a warning. Rust test files are counted in full.
 
 ## Lines, direct files, and violations
 
-Sprawl Guard uses Tokei to count lines. Code always counts; comments and blank lines count when
-`count_lines` includes them. In literate languages such as Markdown, Sprawl Guard also counts
-comments unless the language's settings replace that. Sprawl Guard measures four things:
+Sprawl Guard uses Tokei to count lines. Code always counts. Comments and blank lines count when
+`count_lines` includes them. Sprawl Guard also counts comments in literate languages, so that their
+prose counts. A language's own `count_lines` overrides this.
+
+Sprawl Guard measures four things:
 
 - lines in each production file;
 - lines in each test file;
@@ -95,7 +98,7 @@ The counts are:
 `src/generated.ts` does not count because it is excluded. Markdown belongs to the automatic
 documentation group, so `src/README.md` does not count against the source group's limit. Custom
 groups can likewise separate related languages. The `feature` directory itself does not count
-toward `src`; its files count only toward `src/feature`.
+toward `src`, and its files count only toward `src/feature`.
 
 A source file counts even when it is empty or is an index file such as `index.ts`. Files from
 different languages in the same group share one count, as `api.ts` and `model.py` do above.
@@ -106,9 +109,8 @@ count. A test file counts only toward its directory's direct test files. When
 
 ## Ratchet file
 
-The ratchet file records a ceiling for each existing violation: the most lines, or direct files,
-that its path may have. Each entry stores only `max_lines` or `max_direct_files`. Reasons for
-permanent exceptions belong in `[[overrides]]`.
+The ratchet file records a ceiling for each existing violation. Each entry stores only `max_lines`
+or `max_direct_files`. Reasons for permanent exceptions belong in `[[overrides]]`.
 
 File entries are keyed by path and production or test role. Directory entries are keyed by path,
 role, and language group.
@@ -131,8 +133,9 @@ only with `--allow-increases`. `tighten` only lowers ceilings or removes stale e
 ## Selected paths
 
 Paths passed to `check`, `update`, or `tighten` select what they cover. Paths are relative to the
-repository root; absolute paths must still be inside it. A directory covers itself and everything
-under it. A file covers only itself, so `update` on a file never adds an entry for its directory.
+repository root, and absolute paths must still be inside it. A directory covers itself and
+everything under it. A file covers only itself, so `update` on a file never adds an entry for its
+directory.
 
 With selected paths, measurements and stale entries elsewhere are not reported. Run `check` with no
 paths to cover the whole repository, especially in CI.

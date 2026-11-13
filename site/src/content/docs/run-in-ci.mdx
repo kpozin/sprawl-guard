@@ -5,19 +5,10 @@ description: Check the whole repository on every pull request and push.
 
 import { TabItem, Tabs } from "@astrojs/starlight/components";
 
-Run two read-only commands in CI from the repository root:
-
-1. `sprawl-guard config upgrade --check` fails when `sprawl-guard.toml` needs an upgrade after a
-   tool update. It saves nothing.
-2. `sprawl-guard check` checks the whole repository. It also fails on stale ratchet entries, so
-   record improvements with `tighten --write` in the same change.
-
-The job needs a committed `sprawl-guard.toml`; without one, `config upgrade --check` exits `2`.
-
-## Add the CI job
-
-This GitHub Actions workflow runs on pull requests and pushes. Use the tab that matches the
-installation, and replace `<VERSION>` with a [pinned release](#pin-a-release).
+This GitHub Actions workflow checks the repository on every pull request and push. Before you add
+it, commit `sprawl-guard.toml` and, if you created one, `sprawl-guard.ratchet.toml`. Replace
+`<VERSION>` with a [release](https://github.com/kpozin/sprawl-guard/releases) so that a new
+release can't change the result of your CI without a commit.
 
 <Tabs syncKey="package-manager">
   <TabItem label="Cargo">
@@ -44,6 +35,12 @@ jobs:
   </TabItem>
   <TabItem label="npm">
 
+Pin the version in `package.json` first, and commit the updated lockfile:
+
+```sh
+npm install --save-dev --save-exact @kpozin/sprawl-guard@<VERSION>
+```
+
 ```yaml title=".github/workflows/sprawl-guard.yml"
 name: Sprawl Guard
 
@@ -66,156 +63,42 @@ jobs:
 ```
 
   </TabItem>
-  <TabItem label="pnpm">
-
-```yaml title=".github/workflows/sprawl-guard.yml"
-name: Sprawl Guard
-
-on: [pull_request, push]
-
-permissions:
-  contents: read
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec sprawl-guard config upgrade --check
-      - run: pnpm exec sprawl-guard check
-```
-
-  </TabItem>
 </Tabs>
 
-Do not pass paths in CI: a check on selected paths skips files and stale ratchet entries elsewhere.
-Do not write the ratchet file in CI. Run `tighten --write` locally, review the changes, and commit
-them with the source.
+The workflow runs two commands:
 
-## Pin a release
+- `sprawl-guard config upgrade --check` fails when the configuration file uses an older format.
+  After you update Sprawl Guard, run `sprawl-guard config upgrade --write` locally and commit the
+  result.
+- `sprawl-guard check` checks the whole repository. Don't pass it paths in CI, because a check on
+  selected paths can miss violations elsewhere.
 
-Choose a [published release](https://github.com/kpozin/sprawl-guard/releases) and replace
-`<VERSION>` above. Cargo installs the pinned binary in CI. For npm or pnpm, add the exact
-development dependency locally and commit the updated manifest and lockfile.
+CI never changes the ratchet file. Record improvements locally, as described in
+[Work with the ratchet](/sprawl-guard/ratchet/), and commit them.
 
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
+## Run the check before you commit
 
-```sh
-cargo install sprawl-guard --version <VERSION> --locked
+To catch failures before CI does, run `sprawl-guard check` in a Git pre-commit hook. For example,
+with the [pre-commit](https://pre-commit.com/) framework:
+
+```yaml title=".pre-commit-config.yaml"
+repos:
+  - repo: local
+    hooks:
+      - id: sprawl-guard
+        name: Sprawl Guard
+        entry: sprawl-guard check
+        language: system
+        always_run: true
+        pass_filenames: false
 ```
 
-  </TabItem>
-  <TabItem label="npm">
+`pass_filenames: false` makes the hook check the whole repository instead of only the changed
+files, and `always_run: true` runs it on commits that only delete files.
 
-```sh
-npm install --save-dev --save-exact @kpozin/sprawl-guard@<VERSION>
-```
+## Use the results in other tools
 
-  </TabItem>
-  <TabItem label="pnpm">
-
-```sh
-pnpm add --save-dev --save-exact @kpozin/sprawl-guard@<VERSION>
-```
-
-  </TabItem>
-</Tabs>
-
-The pnpm workflow reads the package-manager version from `package.json`. Pin it alongside the
-dependency:
-
-```json title="package.json"
-{
-  "packageManager": "pnpm@<PNPM_VERSION>"
-}
-```
-
-Do not run `npm install --save-dev` or `pnpm add --save-dev` in CI. Restore the committed
-lockfile instead.
-
-## Run the same check locally
-
-Run the same two commands before you push. If the repository already has a `check`, `verify`, or
-similar command, add them there so local runs and CI use the same check.
-
-For example, an optional Just recipe can pin the root and configuration to the justfile's
-directory:
-
-```just title="justfile"
-sprawl-guard:
-    sprawl-guard config upgrade --check --root "{{justfile_directory()}}" --config sprawl-guard.toml
-    sprawl-guard check --root "{{justfile_directory()}}" --config sprawl-guard.toml
-```
-
-For a project-local Node dependency, replace `sprawl-guard` with `npm exec -- sprawl-guard` or
-`pnpm exec sprawl-guard`.
-
-To check exactly what is staged for a commit, see
-[check staged changes](/sprawl-guard/check-staged-changes/).
-
-## Guide coding agents
-
-Add guidance like this to the repository's agent instructions:
-
-```md
-Before declaring work complete, run `sprawl-guard tighten --write`,
-`sprawl-guard config upgrade --check`, and `sprawl-guard check`, then review any ratchet changes.
-
-Resolve new violations with meaningful refactors. Split code into cohesive, clearly named modules
-with distinct responsibilities, and place each concern where it logically belongs. Do not create
-miscellaneous “helpers,” “utils,” “common,” or overflow files merely to satisfy a limit.
-
-Do not raise limits or rewrite the ratchet file merely to make the check pass. Commit ratchet
-changes with the refactor that caused them. Recording new violations or raising ceilings requires
-explicit review.
-```
-
-## Choose output
-
-Human-readable output is the default. Use JSON for custom automation or SARIF for code-scanning
-systems:
-
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
-
-```sh
-sprawl-guard check --format json
-sprawl-guard check --format sarif
-```
-
-  </TabItem>
-  <TabItem label="npm">
-
-```sh
-npm exec -- sprawl-guard check --format json
-npm exec -- sprawl-guard check --format sarif
-```
-
-  </TabItem>
-  <TabItem label="pnpm">
-
-```sh
-pnpm exec sprawl-guard check --format json
-pnpm exec sprawl-guard check --format sarif
-```
-
-  </TabItem>
-</Tabs>
-
-For `check`, exit code `0` means pass, `1` means violations, and `2` means an error. Keep the output
-even when the command exits nonzero, and check the exit code before parsing stdout. When a path
-cannot be read, `check --format json` still prints a JSON report, and `check --format sarif` prints
-only a message on stderr, as it does for other errors.
-
-Before updating the pinned version in CI, update it locally, run a full check, and review any
-changes to the configuration, measurements, or ratchet file.
-
-See [CLI and output](/sprawl-guard/reference/cli-and-output/) for formats and diagnostic
-identifiers.
+For code-scanning tools, use `sprawl-guard check --format sarif`. For your own scripts, use
+`--format json`. Read the exit code before you parse the output: `0` means the check passed, `1`
+means it found violations, and `2` means an error, which may leave the output empty. See
+[CLI and output](/sprawl-guard/reference/cli-and-output/#output-formats) for the formats.

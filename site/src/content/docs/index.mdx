@@ -6,28 +6,23 @@ hero:
   image:
     file: ../../assets/sprawl-guard-shield-clamp.svg
     alt: ""
-  tagline: Check that source files stay short and directories stay small. Record existing violations so they can shrink but not grow.
+  tagline: Check that source files stay short and directories stay small. Record existing violations so that you don't have to fix them all at once.
   actions:
     - text: Get started
       link: ./quick-start/
       icon: right-arrow
       variant: primary
-    - text: Adopt Sprawl Guard
-      link: ./adopt-existing-repository/
-      icon: right-arrow
     - text: Browse reference
       link: ./reference/cli-and-output/
       icon: right-arrow
 ---
 
 Keep coding agents from adding oversized files and crowded directories. Sprawl Guard counts the
-lines in each file, as [Tokei](https://github.com/XAMPPRocky/tokei) measures them, and the source
-files directly inside each directory.
+lines in each file (using [Tokei](https://github.com/XAMPPRocky/tokei)) and the source files
+directly inside each directory.
 
 Sprawl Guard supports every language bundled with Tokei, including Rust, TypeScript, JavaScript,
-Python, Go, Java, Kotlin, Swift, C, and C++. Run `sprawl-guard languages` for the complete list and
-default file paths. Code always counts. Comments and blank lines are optional, and
-literate-language prose counts by default.
+Python, Go, Java, Kotlin, Swift, C, and C++. Run `sprawl-guard languages` for the complete list.
 
 ## Sprawl Guard or ESLint?
 

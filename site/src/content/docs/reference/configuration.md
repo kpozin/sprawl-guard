@@ -3,9 +3,8 @@ title: Configuration reference
 description: Fields, defaults, and precedence rules for sprawl-guard.toml.
 ---
 
-Sprawl Guard looks only for `sprawl-guard.toml` in the repository root. `--config
-PATH` selects an explicit file, including alternative filenames such as `.sprawlrc.toml`. Unknown
-sections and fields are errors.
+Sprawl Guard looks only for `sprawl-guard.toml` in the repository root. To use another file, such as
+`.sprawlrc.toml`, pass `--config PATH`. Unknown sections and fields are errors.
 
 Every root configuration starts with an editor schema directive and declares its schema version:
 
@@ -61,8 +60,8 @@ after the upgrade, so error messages name the v2 keys.
 | `test`        | positive integer, `800` | Lines in a test file.                                 |
 
 Code lines always count. `count_lines` adds comment or blank lines and must not contain duplicates.
-For literate languages, Sprawl Guard adds `comments` automatically unless a language-specific
-`count_lines` replaces the global selection.
+For [literate languages](/sprawl-guard/reference/how-checks-work/#terms), such as Markdown, Sprawl
+Guard adds `comments` automatically unless the language sets its own `count_lines`.
 
 ### `[limits.max_direct_files_per_directory]`
 
@@ -99,12 +98,11 @@ instead of reading rules from the link's target.
 | `max_file_bytes`   | positive integer, `10485760` | Largest source file Sprawl Guard reads.                     |
 | `unreadable_paths` | enum, `"fail"`               | `fail` or `warn` for unreadable paths below the root.       |
 
-A source file larger than `max_file_bytes` is an error: the command stops and exits with code `2`.
-Exclude large generated files instead of raising the limit.
+A source file larger than `max_file_bytes` stops the command with exit code `2`. Exclude large
+generated files instead of raising the limit.
 
-Native builds honor `same_file_system`. WASI builds accept but ignore it. The npm package's WASI
-fallback exposes only the repository root, but it can still read mounted filesystems below that
-root. `config resolved` reports the configured value, not this platform-specific behavior.
+The WebAssembly build that the npm package runs on platforms without a native build ignores
+`same_file_system`, so it also reads filesystems mounted below the root.
 
 ### `[files]`
 
@@ -124,8 +122,8 @@ matched at any depth:
 
 ### `[tests]`
 
-`check` is a boolean that defaults to `true`. When false, test files are not checked. `globs`
-replaces the default array of test globs:
+`check` is a boolean that defaults to `true`. When false, test files are not checked. `globs` lists
+the patterns that mark test files. Setting it replaces these defaults:
 
 ```toml title="sprawl-guard.toml"
 [tests]
@@ -159,17 +157,16 @@ globs = [
 | `exclude_cfg_test` | boolean, `true` for Rust | Stop counting top-level Rust `cfg(test)` items in production files. Rust only. |
 
 Every Tokei language is enabled by default. Under `[languages.<id>.limits.max_lines_per_file]`,
-`production`, `test`, and `count_lines` are optional. Numeric fields replace the
-corresponding global limit. `count_lines` replaces the global or automatic
-literate-language selection. Run `sprawl-guard languages` to list all supported IDs and their
-bundled paths. IDs are case-insensitive.
+`production`, `test`, and `count_lines` are optional. Each replaces the corresponding global value,
+and `count_lines` also replaces the automatic comments for literate languages. Run
+`sprawl-guard languages` to list all supported IDs and their bundled paths. IDs are
+case-insensitive.
 
 ### `[language_groups.<name>]`
 
 Custom language groups give related languages one shared direct-file count and limit per
-directory.
-`languages` is a non-empty array of distinct supported language IDs. A language may belong to at
-most one custom group; disabled languages may remain listed.
+directory. `languages` is a non-empty array of distinct supported language IDs. A language may
+belong to at most one custom group, and disabled languages may remain listed.
 
 ```toml title="sprawl-guard.toml"
 [language_groups.frontend]
@@ -204,8 +201,8 @@ production = 20
 | `max_direct_files_per_directory.production` | optional positive integer or `"unlimited"` | Production direct-file limit.                      |
 | `max_direct_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test direct-file limit.                            |
 
-Each override must set at least one limit. Matching entries apply in order; later entries replace
-only the fields they set.
+Each override must set at least one limit. Matching entries apply in order, and later entries
+replace only the fields they set.
 
 ```toml title="sprawl-guard.toml"
 [[overrides]]
@@ -222,10 +219,9 @@ reason = "Upstream layout"
 | `file`            | path, `"sprawl-guard.ratchet.toml"` | Repository-relative ratchet file.           |
 | `require_current` | boolean, `true`                     | Fail checks when ratchet entries are stale. |
 
-This section names the ratchet file and whether `check` fails on stale entries; the ceilings
+This section names the ratchet file and whether `check` fails on stale entries. The ceilings
 themselves live in the ratchet file. See
-[Adopt Sprawl Guard in an existing repository](/sprawl-guard/adopt-existing-repository/) for its
-format and how to create it.
+[Record existing violations](/sprawl-guard/quick-start/#record-existing-violations) to create it.
 
 ### `[output]`
 

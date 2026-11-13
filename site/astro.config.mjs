@@ -43,16 +43,10 @@ export default defineConfig({
         {
           label: "Learn",
           items: [
-            { label: "Quick start", slug: "quick-start" },
-            { label: "Configure checks", slug: "configure-checks" },
-            {
-              label: "Adopt in an existing repository",
-              slug: "adopt-existing-repository",
-            },
+            { label: "Get started", slug: "quick-start" },
             { label: "Run in CI", slug: "run-in-ci" },
-            { label: "Clean up violations", slug: "clean-up-violations" },
-            { label: "Check staged changes", slug: "check-staged-changes" },
-            { label: "Troubleshoot", slug: "troubleshoot" },
+            { label: "Work with the ratchet", slug: "ratchet" },
+            { label: "Configure checks", slug: "configure-checks" },
           ],
         },
         {

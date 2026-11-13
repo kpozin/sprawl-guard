@@ -34,12 +34,13 @@ Checked 2 source files in 2 directories across 2 languages.
 ```
 
 If an existing repository exceeds the limits you want, keep the limits and
-[record the current violations in the ratchet file](https://kpozin.github.io/sprawl-guard/adopt-existing-repository/).
+[record the current violations in the ratchet file](https://kpozin.github.io/sprawl-guard/quick-start/#record-existing-violations).
 
 ## Documentation
 
-- [Quick start](https://kpozin.github.io/sprawl-guard/quick-start/)
+- [Get started](https://kpozin.github.io/sprawl-guard/quick-start/)
 - [Configure checks](https://kpozin.github.io/sprawl-guard/configure-checks/)
 - [Run in CI](https://kpozin.github.io/sprawl-guard/run-in-ci/)
+- [Work with the ratchet](https://kpozin.github.io/sprawl-guard/ratchet/)
 - [CLI and output reference](https://kpozin.github.io/sprawl-guard/reference/cli-and-output/)
 - [Source and issue tracker](https://github.com/kpozin/sprawl-guard)

@@ -1,75 +1,46 @@
 ---
-title: Quick start
-description: Install Sprawl Guard and run the first repository check.
+title: Get started
+description: Install Sprawl Guard, check a repository, and record the violations it already has.
 ---
 
-import { Steps, TabItem, Tabs } from "@astrojs/starlight/components";
+import { Steps } from "@astrojs/starlight/components";
 
-Install `sprawl-guard` with Cargo or as a project-local npm or pnpm development dependency. The
-Node package requires Node.js 22 or newer.
+## Install
 
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
+Install the command-line tool with Cargo:
 
 ```sh
 cargo install sprawl-guard
-sprawl-guard --version
 ```
 
-  </TabItem>
-
-  <TabItem label="npm">
+Or add it to a Node.js project (Node.js 22 or newer):
 
 ```sh
 npm install --save-dev @kpozin/sprawl-guard
-npm exec -- sprawl-guard --version
 ```
 
-  </TabItem>
+The examples on this site run `sprawl-guard` directly. In a Node.js project, run it as
+`npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
 
-  <TabItem label="pnpm">
+## Check a repository
 
-```sh
-pnpm add --save-dev @kpozin/sprawl-guard
-pnpm exec sprawl-guard --version
-```
-
-  </TabItem>
-</Tabs>
-
-All installations provide the same CLI. The steps below use `sprawl-guard` directly. For a
-project-local Node dependency, run it through `npm exec -- sprawl-guard` or
-`pnpm exec sprawl-guard` instead.
+Run these commands from the repository root.
 
 <Steps>
 
-1. Preview the configuration, then write `sprawl-guard.toml`.
+1. Create the configuration file, `sprawl-guard.toml`.
 
    ```sh title="Initialize a repository"
    sprawl-guard init
    sprawl-guard init --write
    ```
 
-   `init` previews the configuration that `init --write` creates. Neither command scans the
-   repository.
+   The first command shows the file, and the second writes it. Until you add settings to it,
+   Sprawl Guard uses its built-in limits: 400 lines per file (800 for test files) and 10 source
+   files directly inside each directory. To change them, see
+   [Configure checks](/sprawl-guard/configure-checks/).
 
-   The generated root configuration starts with its editor schema and required schema version:
-
-   ```toml title="sprawl-guard.toml"
-   #:schema https://kpozin.github.io/sprawl-guard/schemas/v2/sprawl-guard.schema.json
-   schema_version = 2
-   ```
-
-2. Inspect the detected languages.
-
-   ```sh
-   sprawl-guard languages --detected
-   ```
-
-   This lists the languages that claim files in the repository and how many source files each
-   claims.
-
-3. Run the first check.
+2. Run the check.
 
    ```sh title="Run the first check"
    sprawl-guard check
@@ -84,7 +55,7 @@ project-local Node dependency, run it through `npm exec -- sprawl-guard` or
    Checked 2 source files in 2 directories across 2 languages.
    ```
 
-   A file-limit failure looks like:
+   A failing check names each file or directory over its limit:
 
    ```text
    Configuration: sprawl-guard.toml
@@ -97,9 +68,56 @@ project-local Node dependency, run it through `npm exec -- sprawl-guard` or
 
 </Steps>
 
-Exit code `0` means that the check passed. Exit code `1` means that the check found violations;
-the output names each path, measurement, and limit. Exit code `2` means an error such as invalid
-configuration or an unreadable path.
+If the check passes, commit `sprawl-guard.toml` and [add the check to CI](/sprawl-guard/run-in-ci/).
 
-If the check passes, [add it to CI](/sprawl-guard/run-in-ci/). If the check fails on an existing
-repository, [record its existing violations](/sprawl-guard/adopt-existing-repository/).
+## Record existing violations
+
+An existing repository usually has files and directories over the limits. Instead of fixing them
+all before you can start, record them in a ratchet file, `sprawl-guard.ratchet.toml`. The check
+then allows each recorded violation at its current size. It fails if a recorded violation grows,
+and also if it shrinks, until you record the smaller size.
+
+<Steps>
+
+1. Preview the violations to record.
+
+   ```sh
+   sprawl-guard update
+   ```
+
+   ```text
+   Ratchet changes:
+   + add src/large.py (production lines): none -> 430
+   + add src/flat (production direct files, group source): none -> 12
+
+   Preview only; use --write to apply.
+   ```
+
+   A directory entry also names the language group whose files it counts, as
+   [How checks work](/sprawl-guard/reference/how-checks-work/) explains.
+
+   If the list includes generated or third-party code, exclude those paths in
+   [the configuration](/sprawl-guard/configure-checks/#choose-which-files-to-check) and preview
+   again.
+
+2. Write the ratchet file and run the check.
+
+   ```sh
+   sprawl-guard update --write
+   sprawl-guard check
+   ```
+
+   ```text
+   Configuration: sprawl-guard.toml
+
+   No sprawl-guard violations found.
+   Checked 14 source files in 2 directories across 1 language.
+   Passed with 2 ratchet entries remaining.
+   ```
+
+3. Commit `sprawl-guard.toml` and `sprawl-guard.ratchet.toml` together.
+
+</Steps>
+
+Next, [add the check to CI](/sprawl-guard/run-in-ci/), then read
+[Work with the ratchet](/sprawl-guard/ratchet/) to see how to record improvements.

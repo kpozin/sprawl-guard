@@ -32,8 +32,9 @@ With npm, run the same commands through `npm exec -- sprawl-guard`. `init --writ
 `sprawl-guard.toml`; commit it alongside your source code. Run `init` without `--write` to preview
 it first.
 
-Continue with the [quick start](https://kpozin.github.io/sprawl-guard/quick-start/) or the
-[existing-repository guide](https://kpozin.github.io/sprawl-guard/adopt-existing-repository/).
+If the check fails on an existing repository, you can
+[record its existing violations](https://kpozin.github.io/sprawl-guard/quick-start/#record-existing-violations)
+instead of fixing them all first.
 
 ## Links
 

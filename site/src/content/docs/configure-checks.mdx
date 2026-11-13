@@ -1,131 +1,82 @@
 ---
 title: Configure checks
-description: Choose which files count as source files and test files, and set their limits.
+description: Choose which files to check, set limits, and make exceptions.
 ---
 
-import { TabItem, Tabs } from "@astrojs/starlight/components";
+Use `sprawl-guard.toml` in the repository root to configure checks. Add only the settings you want
+to change. Everything else keeps its default. The
+[configuration reference](/sprawl-guard/reference/configuration/) lists every setting.
 
-Every root configuration starts with its editor schema and schema version:
+## Set limits
 
-```toml title="sprawl-guard.toml"
-#:schema https://kpozin.github.io/sprawl-guard/schemas/v2/sprawl-guard.schema.json
-schema_version = 2
-```
-
-Add only the sections needed to change the built-in defaults.
-
-## Select source files
-
-Every bundled language is enabled by default. Add a `[languages.<id>]` section only to customize or
-disable it. Language IDs are case-insensitive; use `sprawl-guard languages` to see accepted keys and
-bundled paths.
-
-```toml title="sprawl-guard.toml"
-[languages.rust]
-enabled = false
-
-[languages.typescript]
-include = ["src/**/*.ts"]
-extend_include = ["generated/**/*.ts"]
-exclude = ["src/generated/**"]
-```
-
-`[files].extend_exclude` removes paths before any language claims them. `include` replaces a
-language's bundled paths, `extend_include` extends them, and `exclude` removes matching paths from
-that language. A file that more than one enabled language claims is an error; disable one language
-or narrow its paths.
-
-## Set limits and classify tests
+These are the built-in limits. Change any of them:
 
 ```toml title="sprawl-guard.toml"
 [limits.max_lines_per_file]
-count_lines = []
 production = 400
 test = 800
 
 [limits.max_direct_files_per_directory]
 production = 10
 test = 10
-
-[tests]
-check = true
-globs = ["tests/**", "**/*.test.*"]
 ```
 
-A file that matches a global or language-specific test glob is a test file. Test files use the
-`test` limits, and production files use `production`. Setting `[tests].check` to `false` skips test
-files.
-
-Code lines always count, and `count_lines` adds comments or blank lines. In literate languages such
-as Markdown, Sprawl Guard also counts comments, so prose counts by default. A language-specific
-`count_lines` value replaces this.
-
-For production Rust files, Sprawl Guard can also stop counting top-level `cfg(test)` items.
-
-## Group related languages for directory limits
-
-Languages outside custom groups share the automatic `source` group's direct-file count. Literate
-languages such as Markdown go to the `documentation` group, which is unlimited by default. Define a
-custom group when a set of related languages should share its own direct-file limit:
+Test files have their own limits. By default, a file is a test file when its path matches a common
+test pattern, such as `tests/**` or `**/*.test.*`. To use your own patterns, set `[tests].globs`:
 
 ```toml title="sprawl-guard.toml"
-[language_groups.frontend]
-languages = ["javascript", "typescript", "jsx", "tsx"]
-
-[language_groups.frontend.limits.max_direct_files_per_directory]
-production = 12
+[tests]
+globs = ["tests/**", "**/*_test.py"]
 ```
 
-Omitted custom-group limits inherit the global values. Path overrides apply after group limits. One
-override can change both file and directory limits for matching paths without naming a language
-group.
+This list replaces the default patterns, so include any of them you still need.
 
-## Add overrides
+Sprawl Guard counts only lines of code by default. To also count comments or blank lines, set
+`count_lines = ["comments", "blank_lines"]` under `[limits.max_lines_per_file]`.
 
-Overrides apply in declaration order, and each one changes only the limit fields it sets. When two
-matching overrides set the same field, the later one wins.
+## Choose which files to check
+
+Sprawl Guard checks every file written in a language it recognizes. It skips hidden files and
+directories, and anything that `.gitignore` or a similar ignore file excludes. Run
+`sprawl-guard languages --detected` to see which languages it finds in the repository.
+
+To skip generated or third-party code, exclude it:
+
+```toml title="sprawl-guard.toml"
+[files]
+extend_exclude = ["vendor/**", "src/generated/**"]
+```
+
+To stop checking a language, disable it:
+
+```toml title="sprawl-guard.toml"
+[languages.markdown]
+enabled = false
+```
+
+## Make exceptions
+
+To give some paths different limits, add an override with a reason:
 
 ```toml title="sprawl-guard.toml"
 [[overrides]]
 paths = ["src/legacy/**"]
 max_lines_per_file = { production = 1000 }
-reason = "Legacy subsystem"
-
-[[overrides]]
-paths = ["src/legacy/small/**"]
-max_lines_per_file = { production = 500 }
-reason = "Smaller legacy modules"
+reason = "Legacy subsystem, scheduled for removal"
 ```
 
-Inspect the resolved configuration and a specific path before running the check:
+Use an override for an exception you intend to keep. For a violation you intend to fix, record it
+in the [ratchet file](/sprawl-guard/ratchet/) instead.
 
-<Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
+## Find out how a path is checked
+
+When a result surprises you, ask Sprawl Guard how it treats the path:
 
 ```sh
-sprawl-guard config resolved
 sprawl-guard explain src/example.rs
 ```
 
-  </TabItem>
-  <TabItem label="npm">
-
-```sh
-npm exec -- sprawl-guard config resolved
-npm exec -- sprawl-guard explain src/example.rs
-```
-
-  </TabItem>
-  <TabItem label="pnpm">
-
-```sh
-pnpm exec sprawl-guard config resolved
-pnpm exec sprawl-guard explain src/example.rs
-```
-
-  </TabItem>
-</Tabs>
-
-See the [configuration reference](/sprawl-guard/reference/configuration/) for every field and
-default. Once the limits match the repository,
-[record existing violations](/sprawl-guard/adopt-existing-repository/).
+`explain` shows whether the path is checked, its language, whether it is a test file, its limits,
+and the overrides that apply to it. For a path that doesn't exist yet, it shows the language and
+whether it would be a test file, so you can check where a new file would land. To see the whole
+configuration with defaults filled in, run `sprawl-guard config resolved`.
