@@ -47,6 +47,12 @@ async function verifyMarkdownOutput(
       [route.markdownPath],
       `${htmlRelativePath} must advertise its ${markdownRelativePath} alternate exactly once`,
     );
+    // The visible link lives in the right sidebar, which only pages with a table of contents have.
+    assert.equal(
+      html.includes(`<a href="${route.markdownPath}"`),
+      html.includes("<starlight-toc"),
+      `${htmlRelativePath} must link to ${markdownRelativePath} exactly when it has a table of contents`,
+    );
     assert.match(markdown, /^# .+/u, `${markdownRelativePath} must begin with its title`);
     assert.doesNotMatch(
       markdown,
