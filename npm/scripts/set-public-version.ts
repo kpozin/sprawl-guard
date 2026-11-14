@@ -26,6 +26,7 @@ const CARGO_METADATA_SCHEMA = z.object({
           req: z.string(),
         }),
       ),
+      manifest_path: z.string(),
       name: z.string(),
       version: PUBLIC_PACKAGE_VERSION_SCHEMA,
     }),
@@ -101,7 +102,6 @@ export type PublicPackageVersionConsistencyResult =
 
 /** Repository layout containing every authoritative public package version source. */
 export interface PublicPackageVersionLayout {
-  readonly kind: "nested" | "public";
   readonly workspaceRoot: string;
   readonly cliManifest: string;
   readonly libraryManifest: string;
@@ -113,14 +113,15 @@ export type ResolvePublicPackageVersionLayoutResult =
   | { readonly kind: "ok"; readonly layout: PublicPackageVersionLayout }
   | {
       readonly kind: "invalid_layout";
-      readonly candidates: readonly {
-        readonly kind: PublicPackageVersionLayout["kind"];
-        readonly missingPaths: readonly string[];
+      /** Each Cargo workspace above the npm workspace, nearest first, with why it was skipped. */
+      readonly rejectedWorkspaces: readonly {
         readonly workspaceRoot: string;
+        readonly detail: string;
       }[];
-      readonly reason: "ambiguous_match" | "no_match";
       readonly scriptPath: string;
     };
+
+type CargoPackage = z.infer<typeof CARGO_METADATA_SCHEMA>["packages"][number];
 
 /** Updates Cargo and npm version sources as one validated operation. */
 export function setPublicPackageVersion(args: {
@@ -237,64 +238,40 @@ export function checkPublicPackageVersionConsistency(
   return { kind: "ok", version: loaded.versions.cargoVersion };
 }
 
-/** Resolves and validates either the nested or exported public layout. */
+/**
+ * Finds the version sources next to the script's npm workspace.
+ *
+ * The Cargo packages live in the nearest Cargo workspace above the npm workspace that contains
+ * both of them, so the script works wherever the repository places its crates.
+ */
 export function resolvePublicPackageVersionLayout(
   scriptPath: string,
 ): ResolvePublicPackageVersionLayoutResult {
   const npmWorkspaceRoot = path.dirname(path.dirname(scriptPath));
-  const candidates: readonly PublicPackageVersionLayout[] = [
-    {
-      kind: "nested",
-      workspaceRoot: path.resolve(npmWorkspaceRoot, "../../.."),
-      cliManifest: path.resolve(
-        npmWorkspaceRoot,
-        "../../sprawl-guard/Cargo.toml",
-      ),
-      libraryManifest: path.resolve(
-        npmWorkspaceRoot,
-        "../../sprawl-guard-lib/Cargo.toml",
-      ),
-      npmVersion: path.join(npmWorkspaceRoot, "package-version.json"),
-    },
-    {
-      kind: "public",
-      workspaceRoot: path.resolve(npmWorkspaceRoot, ".."),
-      cliManifest: path.resolve(
-        npmWorkspaceRoot,
-        "../crates/sprawl-guard/Cargo.toml",
-      ),
-      libraryManifest: path.resolve(
-        npmWorkspaceRoot,
-        "../crates/sprawl-guard-lib/Cargo.toml",
-      ),
-      npmVersion: path.join(npmWorkspaceRoot, "package-version.json"),
-    },
-  ];
-  const diagnosedCandidates = candidates.map((candidate) => ({
-    layout: candidate,
-    missingPaths: [
-      path.join(candidate.workspaceRoot, "Cargo.toml"),
-      candidate.cliManifest,
-      candidate.libraryManifest,
-      candidate.npmVersion,
-    ].filter((candidatePath) => !isFile(candidatePath)),
-  }));
-  const matches = diagnosedCandidates.filter(
-    ({ missingPaths }) => missingPaths.length === 0,
-  );
-  if (matches.length === 1 && matches[0] !== undefined) {
-    return { kind: "ok", layout: matches[0].layout };
+  const rejectedWorkspaces: { workspaceRoot: string; detail: string }[] = [];
+  let workspaceRoot = path.dirname(npmWorkspaceRoot);
+  for (;;) {
+    if (isFile(path.join(workspaceRoot, "Cargo.toml"))) {
+      const packages = loadPublicCargoPackages(workspaceRoot);
+      if (packages.kind === "ok") {
+        return {
+          kind: "ok",
+          layout: {
+            workspaceRoot,
+            cliManifest: packages.cli.manifest_path,
+            libraryManifest: packages.library.manifest_path,
+            npmVersion: path.join(npmWorkspaceRoot, "package-version.json"),
+          },
+        };
+      }
+      rejectedWorkspaces.push({ workspaceRoot, detail: packages.detail });
+    }
+    const parent = path.dirname(workspaceRoot);
+    if (parent === workspaceRoot) {
+      return { kind: "invalid_layout", rejectedWorkspaces, scriptPath };
+    }
+    workspaceRoot = parent;
   }
-  return {
-    kind: "invalid_layout",
-    candidates: diagnosedCandidates.map(({ layout, missingPaths }) => ({
-      kind: layout.kind,
-      missingPaths,
-      workspaceRoot: layout.workspaceRoot,
-    })),
-    reason: matches.length === 0 ? "no_match" : "ambiguous_match",
-    scriptPath,
-  };
 }
 
 function isFile(candidatePath: string): boolean {
@@ -305,10 +282,13 @@ function isFile(candidatePath: string): boolean {
   }
 }
 
-function loadCurrentVersions(
-  layout: PublicPackageVersionLayout,
-):
-  | { readonly kind: "ok"; readonly versions: CurrentVersions }
+/** Reads the CLI and library packages from the Cargo workspace at `workspaceRoot`. */
+function loadPublicCargoPackages(workspaceRoot: string):
+  | {
+      readonly kind: "ok";
+      readonly cli: CargoPackage;
+      readonly library: CargoPackage;
+    }
   | Extract<
       SetPublicPackageVersionResult,
       { readonly kind: "invalid_workspace" }
@@ -316,7 +296,7 @@ function loadCurrentVersions(
   const metadataResult = spawnSync(
     "cargo",
     ["metadata", "--format-version", "1", "--no-deps"],
-    { cwd: layout.workspaceRoot, encoding: "utf8" },
+    { cwd: workspaceRoot, encoding: "utf8" },
   );
   if (metadataResult.error !== undefined) {
     return {
@@ -351,6 +331,22 @@ function loadCurrentVersions(
         "cargo metadata must contain exactly one public CLI and library package",
     };
   }
+  return { kind: "ok", cli: cliPackage, library: libraryPackage };
+}
+
+function loadCurrentVersions(
+  layout: PublicPackageVersionLayout,
+):
+  | { readonly kind: "ok"; readonly versions: CurrentVersions }
+  | Extract<
+      SetPublicPackageVersionResult,
+      { readonly kind: "invalid_workspace" }
+    > {
+  const packages = loadPublicCargoPackages(layout.workspaceRoot);
+  if (packages.kind !== "ok") {
+    return packages;
+  }
+  const { cli: cliPackage, library: libraryPackage } = packages;
   if (cliPackage.version !== libraryPackage.version) {
     return {
       kind: "invalid_workspace",
@@ -383,9 +379,9 @@ function loadCurrentVersions(
 }
 
 function uniquePackage(
-  packages: z.infer<typeof CARGO_METADATA_SCHEMA>["packages"],
+  packages: readonly CargoPackage[],
   name: PackageName,
-): z.infer<typeof CARGO_METADATA_SCHEMA>["packages"][number] | undefined {
+): CargoPackage | undefined {
   const matches = packages.filter((candidate) => candidate.name === name);
   return matches.length === 1 ? matches[0] : undefined;
 }

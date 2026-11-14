@@ -25,45 +25,45 @@ function createWorkspace(
     readonly npmVersion?: string;
   } = {},
 ): string {
-  const workspaceRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "sprawl-guard-public-version-"),
+  const workspaceRoot = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "sprawl-guard-public-version-")),
   );
   temporaryDirectories.push(workspaceRoot);
   const cargoVersion = args.cargoVersion ?? "0.1.0";
   const npmVersion = args.npmVersion ?? cargoVersion;
-  fs.mkdirSync(path.join(workspaceRoot, "tools/sprawl-guard/src"), {
+  fs.mkdirSync(path.join(workspaceRoot, "rust/cli/src"), {
     recursive: true,
   });
-  fs.mkdirSync(path.join(workspaceRoot, "tools/sprawl-guard-lib/src"), {
+  fs.mkdirSync(path.join(workspaceRoot, "rust/library/src"), {
     recursive: true,
   });
-  fs.mkdirSync(path.join(workspaceRoot, "tools/sprawl-guard-public/npm"), {
+  fs.mkdirSync(path.join(workspaceRoot, "js/npm"), {
     recursive: true,
   });
   fs.writeFileSync(
     path.join(workspaceRoot, "Cargo.toml"),
-    `[workspace]\nmembers = ["tools/sprawl-guard", "tools/sprawl-guard-lib"]\nresolver = "2"\n`,
+    `[workspace]\nmembers = ["rust/cli", "rust/library"]\nresolver = "2"\n`,
   );
   fs.writeFileSync(
-    path.join(workspaceRoot, "tools/sprawl-guard/Cargo.toml"),
-    `[package]\nname = "sprawl-guard"\nversion = "${cargoVersion}"\nedition = "2024"\n\n[dependencies]\nsprawl-guard-lib = { version = "=${cargoVersion}", path = "../sprawl-guard-lib" }\n`,
+    path.join(workspaceRoot, "rust/cli/Cargo.toml"),
+    `[package]\nname = "sprawl-guard"\nversion = "${cargoVersion}"\nedition = "2024"\n\n[dependencies]\nsprawl-guard-lib = { version = "=${cargoVersion}", path = "../library" }\n`,
   );
   fs.writeFileSync(
-    path.join(workspaceRoot, "tools/sprawl-guard/src/main.rs"),
+    path.join(workspaceRoot, "rust/cli/src/main.rs"),
     "fn main() {}\n",
   );
   fs.writeFileSync(
-    path.join(workspaceRoot, "tools/sprawl-guard-lib/Cargo.toml"),
+    path.join(workspaceRoot, "rust/library/Cargo.toml"),
     `[package]\nname = "sprawl-guard-lib"\nversion = "${cargoVersion}"\nedition = "2024"\n`,
   );
   fs.writeFileSync(
-    path.join(workspaceRoot, "tools/sprawl-guard-lib/src/lib.rs"),
+    path.join(workspaceRoot, "rust/library/src/lib.rs"),
     "pub fn marker() {}\n",
   );
   fs.writeFileSync(
     path.join(
       workspaceRoot,
-      "tools/sprawl-guard-public/npm/package-version.json",
+      "js/npm/package-version.json",
     ),
     `${JSON.stringify({ version: npmVersion }, null, 2)}\n`,
   );
@@ -71,8 +71,8 @@ function createWorkspace(
 }
 
 function createPublicWorkspace(): string {
-  const workspaceRoot = fs.mkdtempSync(
-    path.join(os.tmpdir(), "sprawl-guard-public-layout-version-"),
+  const workspaceRoot = fs.realpathSync(
+    fs.mkdtempSync(path.join(os.tmpdir(), "sprawl-guard-public-layout-version-")),
   );
   temporaryDirectories.push(workspaceRoot);
   fs.mkdirSync(path.join(workspaceRoot, "crates/sprawl-guard/src"), {
@@ -133,7 +133,7 @@ function resolveFixtureLayout(
   const resolved = resolvePublicPackageVersionLayout(
     path.join(
       workspaceRoot,
-      "tools/sprawl-guard-public/npm/scripts/set-public-version.ts",
+      "js/npm/scripts/set-public-version.ts",
     ),
   );
   assert.equal(resolved.kind, "ok");
@@ -141,32 +141,37 @@ function resolveFixtureLayout(
 }
 
 describe("resolvePublicPackageVersionLayout", () => {
-  describe("when the script is in the nested npm workspace", () => {
-    it("resolves nested Cargo and npm paths", () => {
+  describe("when the npm workspace is nested below the Cargo workspace", () => {
+    it("skips nearer Cargo workspaces that lack the packages", () => {
       const workspaceRoot = createWorkspace();
+      fs.writeFileSync(
+        path.join(workspaceRoot, "js/Cargo.toml"),
+        `[workspace]\nmembers = ["missing"]\n`,
+      );
 
       const resolved = resolvePublicPackageVersionLayout(
-        path.join(
-          workspaceRoot,
-          "tools/sprawl-guard-public/npm/scripts/set-public-version.ts",
-        ),
+        path.join(workspaceRoot, "js/npm/scripts/set-public-version.ts"),
       );
 
       assert.equal(resolved.kind, "ok");
-      assert.equal(resolved.layout.kind, "nested");
-      assert.equal(resolved.layout.workspaceRoot, workspaceRoot);
+      assert.deepEqual(resolved.layout, {
+        workspaceRoot,
+        cliManifest: path.join(workspaceRoot, "rust/cli/Cargo.toml"),
+        libraryManifest: path.join(workspaceRoot, "rust/library/Cargo.toml"),
+        npmVersion: path.join(workspaceRoot, "js/npm/package-version.json"),
+      });
     });
   });
 
-  describe("when the script is in the exported public npm workspace", () => {
-    it("checks and updates the exported Cargo and npm paths", () => {
+  describe("when the npm workspace sits at the Cargo workspace root", () => {
+    it("checks and updates the Cargo and npm versions", () => {
       const workspaceRoot = createPublicWorkspace();
       const resolved = resolvePublicPackageVersionLayout(
         path.join(workspaceRoot, "npm/scripts/set-public-version.ts"),
       );
 
       assert.equal(resolved.kind, "ok");
-      assert.equal(resolved.layout.kind, "public");
+      assert.equal(resolved.layout.workspaceRoot, workspaceRoot);
       assert.deepEqual(checkPublicPackageVersionConsistency(resolved.layout), {
         kind: "ok",
         version: "0.1.0",
@@ -197,66 +202,24 @@ describe("resolvePublicPackageVersionLayout", () => {
     });
   });
 
-  describe("when no supported repository layout is complete", () => {
-    it("reports the missing paths for every candidate", () => {
+  describe("when no Cargo workspace contains both packages", () => {
+    it("reports why each Cargo workspace was skipped", () => {
       const workspaceRoot = createWorkspace();
-      const npmVersionPath = path.join(
-        workspaceRoot,
-        "tools/sprawl-guard-public/npm/package-version.json",
+      fs.writeFileSync(
+        path.join(workspaceRoot, "Cargo.toml"),
+        `[workspace]\nmembers = ["rust/library"]\nresolver = "2"\n`,
       );
-      fs.rmSync(npmVersionPath);
 
       const resolved = resolvePublicPackageVersionLayout(
-        path.join(
-          workspaceRoot,
-          "tools/sprawl-guard-public/npm/scripts/set-public-version.ts",
-        ),
+        path.join(workspaceRoot, "js/npm/scripts/set-public-version.ts"),
       );
 
       assert.equal(resolved.kind, "invalid_layout");
-      assert.equal(resolved.reason, "no_match");
-      assert.equal(
-        resolved.candidates
-          .find(({ kind }) => kind === "nested")
-          ?.missingPaths.includes(npmVersionPath),
-        true,
-      );
-    });
-  });
-
-  describe("when both supported repository layouts are complete", () => {
-    it("reports the ambiguous candidates instead of choosing by order", () => {
-      const workspaceRoot = createWorkspace();
-      const nestedPublicRoot = path.join(
+      assert.deepEqual(resolved.rejectedWorkspaces[0], {
         workspaceRoot,
-        "tools/sprawl-guard-public",
-      );
-      for (const relativePath of [
-        "Cargo.toml",
-        "crates/sprawl-guard/Cargo.toml",
-        "crates/sprawl-guard-lib/Cargo.toml",
-      ]) {
-        const candidatePath = path.join(nestedPublicRoot, relativePath);
-        fs.mkdirSync(path.dirname(candidatePath), { recursive: true });
-        fs.writeFileSync(candidatePath, "");
-      }
-
-      const resolved = resolvePublicPackageVersionLayout(
-        path.join(
-          workspaceRoot,
-          "tools/sprawl-guard-public/npm/scripts/set-public-version.ts",
-        ),
-      );
-
-      assert.equal(resolved.kind, "invalid_layout");
-      assert.equal(resolved.reason, "ambiguous_match");
-      assert.equal(resolved.candidates.length, 2);
-      assert.equal(
-        resolved.candidates.every(
-          ({ missingPaths }) => missingPaths.length === 0,
-        ),
-        true,
-      );
+        detail:
+          "cargo metadata must contain exactly one public CLI and library package",
+      });
     });
   });
 });
@@ -281,7 +244,7 @@ describe("setPublicPackageVersion", () => {
       );
       assert.match(
         fs.readFileSync(
-          path.join(workspaceRoot, "tools/sprawl-guard/Cargo.toml"),
+          path.join(workspaceRoot, "rust/cli/Cargo.toml"),
           "utf8",
         ),
         /sprawl-guard-lib = \{ version = "=0\.2\.0-beta\.1"/u,
@@ -291,7 +254,7 @@ describe("setPublicPackageVersion", () => {
           fs.readFileSync(
             path.join(
               workspaceRoot,
-              "tools/sprawl-guard-public/npm/package-version.json",
+              "js/npm/package-version.json",
             ),
             "utf8",
           ),
@@ -325,11 +288,11 @@ describe("setPublicPackageVersion", () => {
       const workspaceRoot = createWorkspace({ npmVersion: "0.1.1" });
       const cargoManifestPath = path.join(
         workspaceRoot,
-        "tools/sprawl-guard/Cargo.toml",
+        "rust/cli/Cargo.toml",
       );
       const npmVersionPath = path.join(
         workspaceRoot,
-        "tools/sprawl-guard-public/npm/package-version.json",
+        "js/npm/package-version.json",
       );
       const originalCargoManifest = fs.readFileSync(cargoManifestPath, "utf8");
       const originalNpmVersion = fs.readFileSync(npmVersionPath, "utf8");
@@ -353,11 +316,11 @@ describe("setPublicPackageVersion", () => {
       const workspaceRoot = createWorkspace();
       const cliManifestPath = path.join(
         workspaceRoot,
-        "tools/sprawl-guard/Cargo.toml",
+        "rust/cli/Cargo.toml",
       );
       const libraryManifestPath = path.join(
         workspaceRoot,
-        "tools/sprawl-guard-lib/Cargo.toml",
+        "rust/library/Cargo.toml",
       );
       fs.writeFileSync(
         cliManifestPath,
@@ -365,8 +328,8 @@ describe("setPublicPackageVersion", () => {
           .readFileSync(cliManifestPath, "utf8")
           .replace('version = "0.1.0"', 'version="0.1.0"')
           .replace(
-            'sprawl-guard-lib = { version = "=0.1.0", path = "../sprawl-guard-lib" }',
-            'sprawl-guard-lib={version="=0.1.0",path="../sprawl-guard-lib"}',
+            'sprawl-guard-lib = { version = "=0.1.0", path = "../library" }',
+            'sprawl-guard-lib={version="=0.1.0",path="../library"}',
           ),
       );
       fs.writeFileSync(
@@ -389,7 +352,7 @@ describe("setPublicPackageVersion", () => {
       );
       assert.match(
         fs.readFileSync(cliManifestPath, "utf8"),
-        /sprawl-guard-lib=\{version="=0\.2\.0",path="\.\.\/sprawl-guard-lib"\}/u,
+        /sprawl-guard-lib=\{version="=0\.2\.0",path="\.\.\/library"\}/u,
       );
       assert.match(
         fs.readFileSync(libraryManifestPath, "utf8"),
@@ -402,11 +365,11 @@ describe("setPublicPackageVersion", () => {
     it("restores every source to its original contents", () => {
       const workspaceRoot = createWorkspace();
       const versionPaths = [
-        path.join(workspaceRoot, "tools/sprawl-guard/Cargo.toml"),
-        path.join(workspaceRoot, "tools/sprawl-guard-lib/Cargo.toml"),
+        path.join(workspaceRoot, "rust/cli/Cargo.toml"),
+        path.join(workspaceRoot, "rust/library/Cargo.toml"),
         path.join(
           workspaceRoot,
-          "tools/sprawl-guard-public/npm/package-version.json",
+          "js/npm/package-version.json",
         ),
       ];
       const originalContents = versionPaths.map((versionPath) =>
