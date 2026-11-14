@@ -19,9 +19,18 @@ interface ReleaseRuntimeTarget {
   readonly artifact_file_name: string;
 }
 
+/**
+ * Which native targets a CI run smoke-tests. macOS runners bill at ten times the Linux rate in
+ * private repositories, so pushes and pull requests skip them; the release workflow still runs
+ * every macOS binary, and a manual CI run covers all targets.
+ */
+export type CiRuntimePlatforms = "all" | "except-darwin";
+
 /** Builds the CI native-runtime matrix from the authoritative runtime target manifest. */
-export function ciRuntimeTargets(): readonly CiRuntimeTarget[] {
-  return NATIVE_RUNTIME_PACKAGE_DEFINITIONS.map((definition) => ({
+export function ciRuntimeTargets(platforms: CiRuntimePlatforms): readonly CiRuntimeTarget[] {
+  return NATIVE_RUNTIME_PACKAGE_DEFINITIONS.filter(
+    (definition) => platforms === "all" || definition.platform !== "darwin",
+  ).map((definition) => ({
     runner: definition.runner,
     rust_target: definition.rustTarget,
     built_binary_path: `target/${definition.rustTarget}/debug/${definition.artifactRelativePath}`,
@@ -50,13 +59,16 @@ function writeGithubOutput(name: string, value: unknown): void {
 function main(mode: string | undefined): void {
   switch (mode) {
     case "ci":
-      writeGithubOutput("matrix", ciRuntimeTargets());
+      writeGithubOutput("matrix", ciRuntimeTargets("all"));
+      break;
+    case "ci-except-darwin":
+      writeGithubOutput("matrix", ciRuntimeTargets("except-darwin"));
       break;
     case "release":
       writeGithubOutput("matrix", releaseRuntimeTargets());
       break;
     default:
-      throw new Error(`expected matrix mode "ci" or "release", got ${String(mode)}`);
+      throw new Error(`expected matrix mode "ci", "ci-except-darwin", or "release", got ${String(mode)}`);
   }
 }
 

@@ -244,21 +244,34 @@ function stepWithName<TStep extends { readonly name: string }>(
 
 describe("native runtime workflow coverage", () => {
   describe("when comparing CI with the release artifact matrix", () => {
-    it("smoke-tests every native release target", () => {
-      parseWorkflow(CI_WORKFLOW_URL, CI_WORKFLOW_SCHEMA);
-      const releaseWorkflow = parseWorkflow(
-        RELEASE_WORKFLOW_URL,
-        RELEASE_WORKFLOW_SCHEMA,
-      );
-
-      const ciTargets = ciRuntimeTargets().map(({ rust_target: rustTarget }) => rustTarget);
-      const releaseNativeTargets = releaseWorkflow.jobs[
-        "artifact-build"
-      ].strategy.matrix.include
-        .filter(({ package_target: packageTarget }) => packageTarget !== "wasm32-wasip1")
+    const releaseNativeTargets = (): readonly string[] =>
+      parseWorkflow(RELEASE_WORKFLOW_URL, RELEASE_WORKFLOW_SCHEMA)
+        .jobs["artifact-build"].strategy.matrix.include.filter(
+          ({ package_target: packageTarget }) => packageTarget !== "wasm32-wasip1",
+        )
         .map(({ rust_target: rustTarget }) => rustTarget);
 
-      assert.deepEqual(sortedTargets(ciTargets), sortedTargets(releaseNativeTargets));
+    describe("with all platforms", () => {
+      it("smoke-tests every native release target", () => {
+        parseWorkflow(CI_WORKFLOW_URL, CI_WORKFLOW_SCHEMA);
+
+        const ciTargets = ciRuntimeTargets("all").map(({ rust_target: rustTarget }) => rustTarget);
+
+        assert.deepEqual(sortedTargets(ciTargets), sortedTargets(releaseNativeTargets()));
+      });
+    });
+
+    describe("without darwin", () => {
+      it("smoke-tests every native release target except the macOS ones", () => {
+        const ciTargets = ciRuntimeTargets("except-darwin").map(
+          ({ rust_target: rustTarget }) => rustTarget,
+        );
+
+        assert.deepEqual(
+          sortedTargets(ciTargets),
+          sortedTargets(releaseNativeTargets().filter((target) => !target.endsWith("-apple-darwin"))),
+        );
+      });
     });
   });
 
