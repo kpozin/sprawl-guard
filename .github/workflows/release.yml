@@ -597,7 +597,7 @@ jobs:
     env:
       NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-wasm32-wasip1"
     steps:
-      - name: Check out the pinned npm scan fixture
+      - name: Check out the release commit to scan
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.release-metadata.outputs.release_commit }}
@@ -877,11 +877,10 @@ jobs:
     env:
       CARGO_HOME: ${{ github.workspace }}/cargo-home
     steps:
-      - name: Check out the pinned Rust scan fixture
+      - name: Check out the release commit to scan
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          repository: example/scan-fixture
-          ref: dc042d2f267bef4b410ef0f71cf9962c0e95a9da
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
           path: scan-fixture
           persist-credentials: false
 
@@ -1011,7 +1010,7 @@ jobs:
       NPM_NATIVE_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-gnu"
       NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-wasm32-wasip1"
     steps:
-      - name: Check out the pinned npm scan fixture
+      - name: Check out the release commit to scan
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.release-metadata.outputs.release_commit }}

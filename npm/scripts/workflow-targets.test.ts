@@ -658,20 +658,20 @@ describe("native runtime workflow coverage", () => {
   });
 
   describe("when verifying a Cargo registry installation", () => {
-    it("uses a fresh Cargo home and scans the pinned Rust repository", () => {
+    it("uses a fresh Cargo home and scans the release commit's Rust sources", () => {
       const releaseWorkflow = parseWorkflow(
         RELEASE_WORKFLOW_URL,
         RELEASE_WORKFLOW_SCHEMA,
       );
       const job = releaseWorkflow.jobs["verify-published-cargo"];
-      const fixtureCheckout = stepWithName(job.steps, "Check out the pinned Rust scan fixture");
+      const fixtureCheckout = stepWithName(job.steps, "Check out the release commit to scan");
       const runStep = stepWithName(job.steps, "Run the Cargo-installed CLI");
 
       assert.equal(job.env.CARGO_HOME, "${{ github.workspace }}/cargo-home");
-      assert.equal(fixtureCheckout.with?.repository, "example/scan-fixture");
+      assert.equal(fixtureCheckout.with?.repository, undefined);
       assert.equal(
         fixtureCheckout.with?.ref,
-        "dc042d2f267bef4b410ef0f71cf9962c0e95a9da",
+        "${{ needs.release-metadata.outputs.release_commit }}",
       );
       assert.match(runStep.run ?? "", /languages --detected --format json/u);
     });
@@ -684,7 +684,7 @@ describe("native runtime workflow coverage", () => {
         RELEASE_WORKFLOW_SCHEMA,
       );
       const job = releaseWorkflow.jobs["verify-published-npm-wasi"];
-      const fixture = stepWithName(job.steps, "Check out the pinned npm scan fixture");
+      const fixture = stepWithName(job.steps, "Check out the release commit to scan");
       const comparison = stepWithName(
         job.steps,
         "Compare registry-installed native and WASI scans",
