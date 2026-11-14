@@ -19,6 +19,9 @@ The npm package requires Node.js 22 or newer:
 npm install --save-dev @kpozin/sprawl-guard
 ```
 
+To build it from source in a Bazel workspace, see
+[Use with Bazel](https://kpozin.github.io/sprawl-guard/use-with-bazel/).
+
 ## Quick start
 
 From the repository root:

@@ -1,0 +1,61 @@
+load("@rules_rust//cargo:defs.bzl", "cargo_toml_env_vars")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load("@sprawl_guard_crates//:defs.bzl", "all_crate_deps")
+
+package(default_visibility = ["//visibility:private"])
+
+cargo_toml_env_vars(
+    name = "cargo_toml_env_vars",
+    src = "Cargo.toml",
+)
+
+rust_binary(
+    name = "sprawl-guard",
+    srcs = glob(
+        ["src/**/*.rs"],
+    ),
+    edition = "2024",
+    proc_macro_deps = [
+        "@sprawl_guard_crates//:indoc",
+    ],
+    rustc_env_files = [":cargo_toml_env_vars"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//crates/sprawl-guard-lib:sprawl_guard_lib",
+    ] + all_crate_deps(
+        normal = True,
+    ),
+)
+
+rust_test(
+    name = "unit_tests",
+    crate = ":sprawl-guard",
+    proc_macro_deps = all_crate_deps(
+        proc_macro_dev = True,
+    ),
+    deps = all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)
+
+rust_test(
+    name = "cli_tests",
+    srcs = glob(["tests/**/*.rs"]),
+    crate_root = "tests/cli/mod.rs",
+    data = [":sprawl-guard"],
+    edition = "2024",
+    proc_macro_deps = [
+        "@sprawl_guard_crates//:indoc",
+    ],
+    rustc_env = {
+        "BAZEL_BIN_EXE_sprawl-guard": "$(rootpath :sprawl-guard)",
+    },
+    rustc_env_files = [":cargo_toml_env_vars"],
+    deps = [
+        "//crates/sprawl-guard-lib:sprawl_guard_lib",
+    ] + all_crate_deps(
+        normal = True,
+        normal_dev = True,
+    ),
+)

@@ -1,0 +1,19 @@
+"""Depends on sprawl-guard from another Bazel workspace, as its users do."""
+
+module(name = "sprawl_guard_consumer_test")
+
+bazel_dep(name = "rules_rust", version = "0.75.0")
+bazel_dep(name = "sprawl_guard")
+local_path_override(
+    module_name = "sprawl_guard",
+    path = "../..",
+)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.100.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")

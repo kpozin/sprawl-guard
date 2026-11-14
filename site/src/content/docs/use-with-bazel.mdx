@@ -1,0 +1,59 @@
+---
+title: Use with Bazel
+description: Build the CLI and library from source in a Bazel workspace.
+---
+
+The repository is a Bazel module, so a Bazel workspace can build the `sprawl-guard` CLI and the
+`sprawl-guard-lib` library from source. The module isn't in the Bazel Central Registry, so add it
+from Git and pin a commit.
+
+## Add the module
+
+Your workspace needs [`rules_rust`](https://github.com/bazelbuild/rules_rust) and a Rust toolchain
+that supports the 2024 edition. Replace `<COMMIT>` with a commit from the
+[repository](https://github.com/kpozin/sprawl-guard):
+
+```starlark title="MODULE.bazel"
+bazel_dep(name = "rules_rust", version = "0.75.0")
+bazel_dep(name = "sprawl_guard")
+git_override(
+    module_name = "sprawl_guard",
+    commit = "<COMMIT>",
+    remote = "https://github.com/kpozin/sprawl-guard.git",
+)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2024",
+    versions = ["1.100.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+```
+
+## Use the targets
+
+The module provides two public targets:
+
+- `@sprawl_guard//crates/sprawl-guard` is the CLI.
+- `@sprawl_guard//crates/sprawl-guard-lib:sprawl_guard_lib` is the library.
+
+`bazel run` starts the CLI outside your workspace, so pass the workspace root to it:
+
+```sh
+bazel run @sprawl_guard//crates/sprawl-guard -- check --root "$PWD"
+```
+
+Or depend on the library from a Rust target:
+
+```starlark title="BUILD.bazel"
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+rust_binary(
+    name = "my_tool",
+    srcs = ["main.rs"],
+    edition = "2024",
+    deps = ["@sprawl_guard//crates/sprawl-guard-lib:sprawl_guard_lib"],
+)
+```

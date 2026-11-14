@@ -1,0 +1,33 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@sprawl_guard_crates//:defs.bzl", "all_crate_deps")
+
+package(default_visibility = ["//visibility:private"])
+
+# Crate Universe would build the patched Tokei from the directory recorded when the lockfile was
+# pinned, which other workspaces cannot reach. This package builds it from the source in this
+# repository instead.
+_TOKEI_DEPS = ["//third_party/rust/tokei-15.0.0-sprawl-guard:tokei"]
+
+_DEPS = [dep for dep in all_crate_deps(normal = True) if dep.package != "tokei-15.0.0"] + _TOKEI_DEPS
+
+# Tokei is only a normal dependency, so the development dependencies need no filter.
+_TEST_DEPS = _DEPS + all_crate_deps(normal_dev = True)
+
+rust_library(
+    name = "sprawl_guard_lib",
+    srcs = glob(["src/**/*.rs"]),
+    crate_root = "src/lib.rs",
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = _DEPS,
+)
+
+rust_test(
+    name = "unit_tests",
+    compile_data = glob(["testdata/**/*"]),
+    crate = ":sprawl_guard_lib",
+    proc_macro_deps = all_crate_deps(
+        proc_macro_dev = True,
+    ),
+    deps = _TEST_DEPS,
+)

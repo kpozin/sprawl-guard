@@ -48,6 +48,20 @@ jobs:
       - name: Dry-run publish library crate
         run: cargo publish --locked --dry-run -p sprawl-guard-lib
 
+  bazel:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      # The runner image provides Bazelisk as `bazel`; it reads `.bazelversion`.
+      - name: Test workspace
+        run: bazel test //...
+
+      - name: Build a workspace that depends on this one
+        working-directory: testing/consumer-workspace
+        run: USE_BAZEL_VERSION="$(cat ../../.bazelversion)" bazel build //...
+
   runtime-targets:
     runs-on: ubuntu-24.04
     outputs:

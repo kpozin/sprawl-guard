@@ -46,6 +46,7 @@ export default defineConfig({
           items: [
             { label: "Get started", slug: "quick-start" },
             { label: "Run in CI", slug: "run-in-ci" },
+            { label: "Use with Bazel", slug: "use-with-bazel" },
             { label: "Work with the ratchet", slug: "ratchet" },
             { label: "Configure checks", slug: "configure-checks" },
           ],

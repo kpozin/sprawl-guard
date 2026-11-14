@@ -1,0 +1,1 @@
+# The root package holds the Cargo workspace files that `MODULE.bazel` reads.

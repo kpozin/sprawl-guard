@@ -13,3 +13,6 @@
 site/node_modules/
 site/dist/
 site/.astro/
+/bazel-*
+/testing/consumer-workspace/bazel-*
+MODULE.bazel.lock

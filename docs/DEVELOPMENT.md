@@ -20,6 +20,21 @@ Run the development binary directly through Cargo:
 cargo run --locked --package sprawl-guard -- --version
 ```
 
+## Bazel
+
+The repository is also a Bazel module. Build and test it, then build the workspace in
+`testing/consumer-workspace`, which depends on this module the way other workspaces do:
+
+```sh
+bazel test //...
+cd testing/consumer-workspace && USE_BAZEL_VERSION="$(cat ../../.bazelversion)" bazel build //...
+```
+
+`cargo-bazel-lock.json` and `third_party/rust/tokei-15.0.0-sprawl-guard/BUILD.bazel` are pinned
+from `Cargo.lock`. Maintainers regenerate them whenever `Cargo.lock` changes. Bazel doesn't detect
+when they're out of date, because their digest covers the pinned dependency graph rather than
+`Cargo.lock` itself.
+
 ## npm wrapper
 
 Install the frozen workspace dependencies, then build and test the wrapper and release scripts:

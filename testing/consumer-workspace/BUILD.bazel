@@ -1,0 +1,15 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+rust_binary(
+    name = "uses_library",
+    srcs = ["main.rs"],
+    edition = "2024",
+    deps = ["@sprawl_guard//crates/sprawl-guard-lib:sprawl_guard_lib"],
+)
+
+genrule(
+    name = "cli_version",
+    outs = ["version.txt"],
+    cmd = "$(execpath @sprawl_guard//crates/sprawl-guard:sprawl-guard) --version > $@",
+    tools = ["@sprawl_guard//crates/sprawl-guard"],
+)
