@@ -68,6 +68,8 @@ their schema versions and need the renames below applied by hand.
   entries remain.
 - An agent skill, `skills/sprawl-guard/SKILL.md`, tells coding agents how to run the check and fix
   failures. The npm package includes it.
+- Release archives, crates, and npm packages come with signed provenance attestations.
+  `SECURITY.md` explains how to verify them.
 
 ### Fixed
 
