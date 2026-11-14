@@ -35,10 +35,15 @@ into the runtime packages. Building the TypeScript wrapper does not cross-compil
 
 ## Documentation site
 
-When changing or removing a command or option, regenerate the CLI reference and review the
-handwritten command reference, quick start, CI recipes, and coding-agent guidance. Generated option
-tables do not validate those instructions. Keep the executable examples covered by the documentation
-smoke tests, and run affected commands against both the native CLI and the npm/WASI wrapper.
+When changing or removing a command or option, regenerate the CLI reference:
+
+```sh
+cargo run --locked --package sprawl-guard -- machine generate-cli-reference-json > site/src/generated/cli-reference.json
+```
+
+Then review the handwritten command reference, quick start, CI recipes, and coding-agent guidance.
+Generated option tables do not validate those instructions. Run affected commands against both the
+native CLI and the npm/WASI wrapper.
 
 Install the frozen site dependencies and run its formatting, lint, type, and production-build
 checks:
