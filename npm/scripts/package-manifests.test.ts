@@ -20,19 +20,12 @@ describe("renderSourceWrapperPackageManifest", () => {
       const manifest = renderSourceWrapperPackageManifest();
 
       assert.equal(manifest.private, true);
-      assert.deepEqual(manifest.scripts, {
-        build:
-          "pnpm run clean && pnpm --dir .. exec tsc -p sprawl-guard/tsconfig.json",
-        clean:
-          "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-        prepack: "pnpm build",
-        test: "node --test dist/lib/*.test.js",
+      assert.equal(manifest.scripts.prepack, "pnpm build");
+      assert.deepEqual(manifest.devDependencies, {
+        "better-result": "3.0.1",
+        "vite-plus": "1.5.1",
       });
-      assert.deepEqual(manifest.files, [
-        "README.md",
-        "dist/",
-        "!dist/lib/*.test.js",
-      ]);
+      assert.deepEqual(manifest.files, ["README.md", "dist/"]);
       assert.ok(!("optionalDependencies" in manifest));
       assert.ok(!("publishConfig" in manifest));
     });
@@ -44,7 +37,8 @@ describe("renderPublishWrapperPackageManifest", () => {
     it("lists every runtime package and stays script-free", () => {
       const manifest = renderPublishWrapperPackageManifest();
 
-      assert.deepEqual(manifest.dependencies, { "better-result": "3.0.1" });
+      assert.ok(!("dependencies" in manifest));
+      assert.ok(!("devDependencies" in manifest));
       assert.deepEqual(
         manifest.optionalDependencies,
         Object.fromEntries(
@@ -64,7 +58,6 @@ describe("renderPublishWrapperPackageManifest", () => {
         "schema/",
         "skills/",
         "dist/",
-        "!dist/lib/*.test.js",
       ]);
       assert.ok(!("scripts" in manifest));
       assert.ok(!("private" in manifest));

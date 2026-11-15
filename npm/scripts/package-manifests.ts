@@ -64,19 +64,15 @@ interface SharedWrapperPackageManifestFields
   readonly engines: {
     readonly node: ">=22";
   };
-  readonly dependencies: {
-    readonly "better-result": "3.0.1";
-  };
 }
 
 interface SourceWrapperPackageManifest extends SharedWrapperPackageManifestFields {
   readonly private: true;
-  readonly files: readonly ["README.md", "dist/", "!dist/lib/*.test.js"];
-  readonly scripts: {
-    readonly build: "pnpm run clean && pnpm --dir .. exec tsc -p sprawl-guard/tsconfig.json";
-    readonly clean: "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"";
-    readonly prepack: "pnpm build";
-    readonly test: "node --test dist/lib/*.test.js";
+  readonly files: readonly ["README.md", "dist/"];
+  readonly scripts: typeof SOURCE_WRAPPER_SCRIPTS;
+  readonly devDependencies: {
+    readonly "better-result": "3.0.1";
+    readonly "vite-plus": "1.5.1";
   };
 }
 
@@ -147,6 +143,7 @@ export const PACKAGE_VERSION = loadPublicPackageVersion(
   fileURLToPath(new URL("../package-version.json", import.meta.url)),
 );
 const BETTER_RESULT_VERSION = trustedPublicPackageVersion("3.0.1");
+const VITE_PLUS_VERSION = trustedPublicPackageVersion("1.5.1");
 /** License files copied into each publishable npm package. */
 export const PUBLISH_LICENSE_FILE_NAMES = ["LICENSE-MIT", "LICENSE-APACHE"] as const;
 const LICENSE_EXPRESSION = "(MIT OR Apache-2.0)" as const satisfies LicenseExpression;
@@ -184,10 +181,15 @@ const SHARED_WRAPPER_PACKAGE_MANIFEST_FIELDS: SharedWrapperPackageManifestFields
   engines: {
     node: ">=22",
   },
-  dependencies: {
-    "better-result": BETTER_RESULT_VERSION,
-  },
 };
+
+const SOURCE_WRAPPER_SCRIPTS = {
+  build: "pnpm --dir .. exec tsc -p sprawl-guard/tsconfig.json --noEmit && vp pack",
+  prepack: "pnpm build",
+  test:
+    "node -e \"require('node:fs').rmSync('.test-dist', { recursive: true, force: true })\" && " +
+    "pnpm --dir .. exec tsc -p sprawl-guard/tsconfig.json && node --test \".test-dist/lib/*.test.js\"",
+} as const;
 
 const PUBLISH_WORKSPACE_ROOT_MANIFEST: PublishWorkspaceRootManifest = {
   name: "@kpozin/sprawl-guard-publish-workspace",
@@ -200,6 +202,13 @@ const PUBLISH_WORKSPACE_ROOT_MANIFEST: PublishWorkspaceRootManifest = {
 
 /** Runtime package metadata shared by manifest rendering and payload staging. */
 export const RUNTIME_PACKAGE_DEFINITIONS = SHARED_RUNTIME_PACKAGE_DEFINITIONS;
+
+/** Files emitted by the wrapper build and required in the published archive. */
+export const PUBLISH_WRAPPER_BUILD_FILES = [
+  "dist/bin/sprawl-guard.js",
+  "dist/lib/run-wasi.js",
+  "dist/LICENSE-better-result",
+] as const;
 
 /**
  * Documents that the user-facing npm wrapper ships alongside its code: the JSON Schemas for editor
@@ -225,7 +234,6 @@ const PUBLISH_WRAPPER_FILES = [
   "schema/",
   "skills/",
   "dist/",
-  "!dist/lib/*.test.js",
 ] as const;
 
 /** Renders the checked-in source wrapper manifest. */
@@ -233,12 +241,11 @@ export function renderSourceWrapperPackageManifest(): SourceWrapperPackageManife
   return {
     ...SHARED_WRAPPER_PACKAGE_MANIFEST_FIELDS,
     private: true,
-    files: ["README.md", "dist/", "!dist/lib/*.test.js"],
-    scripts: {
-      build: "pnpm run clean && pnpm --dir .. exec tsc -p sprawl-guard/tsconfig.json",
-      clean: "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-      prepack: "pnpm build",
-      test: "node --test dist/lib/*.test.js",
+    files: ["README.md", "dist/"],
+    scripts: SOURCE_WRAPPER_SCRIPTS,
+    devDependencies: {
+      "better-result": BETTER_RESULT_VERSION,
+      "vite-plus": VITE_PLUS_VERSION,
     },
   };
 }
