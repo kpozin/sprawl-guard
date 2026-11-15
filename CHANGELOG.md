@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-15
+
 ### Added
 
 - `explain DIR` explains a directory. It lists each kind and language group of source files
