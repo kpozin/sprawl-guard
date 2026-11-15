@@ -8,6 +8,31 @@ when you recorded it is its ceiling. `sprawl-guard check` fails when a recorded 
 its ceiling, and also when it shrinks below it, so that the file always matches the repository.
 Commit ratchet changes together with the source changes that caused them.
 
+This ratchet file records a 640-line parser and a directory with 14 source files, both over the
+default limits:
+
+```toml
+#:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.ratchet.schema.json
+schema_version = 1
+
+[[files]]
+path = "src/parser.rs"
+role = "production"
+max_lines = 640
+
+[[directories]]
+path = "src/handlers"
+role = "production"
+group = "source"
+max_direct_files = 14
+```
+
+Each entry's `role` says whether the production or the test limit applies. A directory entry's
+`group` names the [language group](/sprawl-guard/reference/configuration/#language_groupsname)
+whose files it counts. Languages outside custom groups use `source`, except literate languages such
+as Markdown, which use `documentation`. The commands below write the file. Edit it by hand only to
+resolve a merge conflict.
+
 ## Record an improvement
 
 After you shorten a file or move files out of a crowded directory, the check reports the ratchet
