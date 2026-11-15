@@ -3,6 +3,7 @@ use indoc::indoc;
 
 use super::common::*;
 
+mod import;
 mod preview;
 
 mod when_writing_the_initial_update {

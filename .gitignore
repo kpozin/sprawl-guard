@@ -9,6 +9,7 @@
 /npm-publication-candidate/
 /npm/sprawl-guard/dist/
 /npm/sprawl-guard/node_modules/
+/npm/linter-import/node_modules/
 /npm/packages/*/node_modules/
 site/node_modules/
 site/dist/

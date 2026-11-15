@@ -112,7 +112,9 @@ jobs:
         with:
           node-version: "24"
           cache: "pnpm"
-          cache-dependency-path: npm/pnpm-lock.yaml
+          cache-dependency-path: |
+            npm/pnpm-lock.yaml
+            npm/linter-import/pnpm-lock.yaml
 
       - name: Install musl linker
         if: ${{ matrix.rust_target == 'x86_64-unknown-linux-musl' }}
@@ -140,6 +142,15 @@ jobs:
         working-directory: npm
         shell: bash
         run: node scripts/workflow-checks/check-cli.ts -- "${SPRAWL_GUARD_BINARY}"
+        env:
+          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
+      - name: Test ESLint and Oxlint import
+        working-directory: npm/linter-import
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile
+          node test.mjs "${SPRAWL_GUARD_BINARY}"
         env:
           SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
 

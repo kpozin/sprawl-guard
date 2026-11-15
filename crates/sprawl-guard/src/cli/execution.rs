@@ -198,6 +198,10 @@ fn execute_config(default_root: PathBuf, command: ConfigCommand) -> Result<Comma
         ConfigSubcommand::Export(project) => {
             config_cli::execute_config_export(&project.load_options(default_root))?
         }
+        ConfigSubcommand::Import(args) => {
+            let stdout = config_cli::execute_config_import(default_root, args)?;
+            return Ok(CommandOutcome::new(0, stdout, String::new()));
+        }
         ConfigSubcommand::Upgrade(args) => {
             let quiet = args.quiet.quiet;
             let execution = config_cli::execute_config_migrate(default_root, args)?;
