@@ -24,12 +24,13 @@ sprawl-guard check --root /repo src/file.rs
 
 ### `init`
 
-Previews `sprawl-guard.toml`, or the file that `--config` names. `--write` creates it.
+Prints a starter configuration for `sprawl-guard.toml`, or for the file you pass with `--config`.
+With `--write`, `init` saves the configuration to that file instead.
 
 <CliCommandReference path="sprawl-guard init" />
 
-`init` enables every supported language through the built-in defaults and refuses to overwrite an
-existing configuration when writing.
+The starter configuration sets only `schema_version`, so every supported language uses the
+built-in defaults. `--write` fails if the file already exists.
 
 ### `languages`
 
