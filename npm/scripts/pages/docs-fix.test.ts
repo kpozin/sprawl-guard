@@ -45,7 +45,10 @@ interface FixtureCommits {
   readonly unmerged: string;
 }
 
-/** A release tag, documentation and code commits after it, and a fresh clone of them. */
+/**
+ * A release tag, its documentation branch, documentation and code commits after it, and a fresh
+ * clone of them.
+ */
 interface Fixture {
   readonly clone: string;
   readonly commits: FixtureCommits;
@@ -82,7 +85,7 @@ function createFixture(): Fixture {
   const quotedName = commitFiles(work, "Add café guide", { "site/src/content/docs/café.md": "coffee\n" });
   git(work, "switch", "--quiet", "--create", "feature", released);
   const unmerged = commitFiles(work, "Draft guide", { "site/src/content/docs/draft.md": "draft\n" });
-  git(work, "push", "--quiet", "origin", "main", "feature", RELEASE_TAG);
+  git(work, "push", "--quiet", "origin", "main", "feature", RELEASE_TAG, `${released}:${DOCS_BRANCH}`);
   git(root, "clone", "--quiet", origin, clone);
 
   return { clone, commits: { code, conflicting, docs, followUp, intoDocs, quotedName, released, unmerged }, origin };
@@ -98,9 +101,38 @@ function originBranch(fixture: Fixture): string | null {
 }
 
 describe("applyDocsFix", () => {
-  describe("when the documentation branch does not exist yet", () => {
+  describe("when the documentation branch does not exist", () => {
+    it("rejects the commit without creating the branch", () => {
+      const fixture = createFixture();
+      git(fixture.origin, "update-ref", "-d", DOCS_BRANCH);
+
+      const result = apply(fixture, fixture.commits.docs);
+
+      assert.deepEqual(result, { kind: "docs_branch_missing", releaseTag: RELEASE_TAG });
+      assert.equal(originBranch(fixture), null);
+    });
+  });
+
+  describe("when the documentation branch does not descend from the release tag", () => {
+    it("rejects the commit and leaves the branch as it is", () => {
+      const fixture = createFixture();
+      const unrelated = git(fixture.origin, "commit-tree", "-m", "Same files, other history", `${RELEASE_TAG}^{tree}`);
+      git(fixture.origin, "update-ref", DOCS_BRANCH, unrelated);
+
+      const result = apply(fixture, fixture.commits.docs);
+
+      assert.deepEqual(result, {
+        kind: "docs_branch_not_from_release",
+        branchHead: unrelated,
+        releaseTag: RELEASE_TAG,
+      });
+      assert.equal(originBranch(fixture), unrelated);
+    });
+  });
+
+  describe("when the documentation branch is at the release tag", () => {
     describe("and the commit changes only documentation", () => {
-      it("creates the branch from the release tag with the commit applied", () => {
+      it("adds the commit on top of the release", () => {
         const fixture = createFixture();
 
         const result = apply(fixture, fixture.commits.docs);
@@ -121,13 +153,13 @@ describe("applyDocsFix", () => {
     });
 
     describe("and the commit also changes code", () => {
-      it("rejects it without creating the branch", () => {
+      it("rejects it and leaves the branch as it is", () => {
         const fixture = createFixture();
 
         const result = apply(fixture, fixture.commits.code);
 
         assert.deepEqual(result, { kind: "non_documentation_paths", paths: ["src/lib.rs"] });
-        assert.equal(originBranch(fixture), null);
+        assert.equal(originBranch(fixture), fixture.commits.released);
       });
     });
 
@@ -138,7 +170,7 @@ describe("applyDocsFix", () => {
         const result = apply(fixture, fixture.commits.intoDocs);
 
         assert.deepEqual(result, { kind: "non_documentation_paths", paths: ["src/notes.txt"] });
-        assert.equal(originBranch(fixture), null);
+        assert.equal(originBranch(fixture), fixture.commits.released);
       });
     });
 
@@ -169,7 +201,7 @@ describe("applyDocsFix", () => {
         const result = apply(fixture, fixture.commits.unmerged);
 
         assert.deepEqual(result, { kind: "docs_commit_not_on_main", docsCommit: fixture.commits.unmerged });
-        assert.equal(originBranch(fixture), null);
+        assert.equal(originBranch(fixture), fixture.commits.released);
       });
     });
   });

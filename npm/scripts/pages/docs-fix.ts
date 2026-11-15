@@ -6,6 +6,10 @@
  * A fix is a commit on `main` that changes only documentation content. It is cherry-picked onto
  * `docs/<release tag>`, a branch that starts at the release tag and collects such fixes, so the
  * deployed site keeps describing the released version rather than unreleased work on `main`.
+ *
+ * The owner creates each release's branch. GitHub refuses to let the workflow's token create a
+ * branch whose workflow files differ from the default branch's, as a release tag's usually do. The
+ * token may still add commits that leave workflow files unchanged.
  */
 
 import fs from "node:fs";
@@ -71,14 +75,20 @@ export type ApplyDocsFixResult =
   | Extract<ParseReleaseTagResult, { readonly kind: "invalid_release_tag" }>
   | { readonly kind: "docs_commit_not_on_main"; readonly docsCommit: ReleaseCommit }
   | { readonly kind: "docs_commit_released"; readonly docsCommit: ReleaseCommit }
+  | { readonly kind: "docs_branch_missing"; readonly releaseTag: ReleaseTag }
+  | {
+      readonly kind: "docs_branch_not_from_release";
+      readonly branchHead: ReleaseCommit;
+      readonly releaseTag: ReleaseTag;
+    }
   | { readonly kind: "cherry_pick_failed"; readonly detail: string }
   | { readonly kind: "non_documentation_paths"; readonly paths: readonly string[] }
   | GitFailure;
 
 /**
- * Cherry-picks a documentation commit onto the release's documentation branch, creating the
- * branch from the release tag on first use, and pushes it. The branch is pushed only if its whole
- * difference from the release tag stays inside the documentation content directory.
+ * Cherry-picks a documentation commit onto the release's existing documentation branch and pushes
+ * it. The branch is pushed only if its whole difference from the release tag stays inside the
+ * documentation content directory.
  */
 export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
   const docsCommit = RELEASE_COMMIT_SCHEMA.safeParse(args.docsCommit);
@@ -125,8 +135,21 @@ export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
   if (existingBranch.kind === "failed" && existingBranch.exitCode !== GIT_NO_EXIT_CODE) {
     return gitFailure("rev-parse", existingBranch.detail);
   }
-  const base = existingBranch.kind === "ok" ? branchTrackingRef : release.releaseRef;
-  const checkedOut = git("checkout", "--quiet", "--detach", base);
+  if (existingBranch.kind === "failed") {
+    return { kind: "docs_branch_missing", releaseTag: release.releaseTag };
+  }
+  const branchHead = RELEASE_COMMIT_SCHEMA.safeParse(existingBranch.stdout);
+  if (!branchHead.success) {
+    return gitFailure("rev-parse", `not a full commit SHA: ${existingBranch.stdout}`);
+  }
+  const fromRelease = ancestry(git, release.releaseRef, branchHead.data);
+  if (fromRelease.kind === "git_failed") {
+    return fromRelease;
+  }
+  if (fromRelease.kind === "not_ancestor") {
+    return { kind: "docs_branch_not_from_release", branchHead: branchHead.data, releaseTag: release.releaseTag };
+  }
+  const checkedOut = git("checkout", "--quiet", "--detach", branchHead.data);
   if (checkedOut.kind === "failed") {
     return gitFailure("checkout", checkedOut.detail);
   }
@@ -220,6 +243,24 @@ function main(): number {
       return 1;
     case "docs_commit_released":
       console.error(`documentation commit is already part of the latest release: ${result.docsCommit}`);
+      return 1;
+    case "docs_branch_missing":
+      console.error(
+        [
+          `docs/${result.releaseTag} does not exist. Create it from a clone of this repository with:`,
+          `git push origin '${result.releaseTag}^{commit}:refs/heads/docs/${result.releaseTag}'`,
+        ].join("\n"),
+      );
+      return 1;
+    case "docs_branch_not_from_release":
+      console.error(
+        [
+          `docs/${result.releaseTag} (at ${result.branchHead}) does not start from ${result.releaseTag}.`,
+          "Check which of its commits to keep. Then replace it, unless it has moved since, with:",
+          `git push --force-with-lease=refs/heads/docs/${result.releaseTag}:${result.branchHead} origin '${result.releaseTag}^{commit}:refs/heads/docs/${result.releaseTag}'`,
+          "and run the workflow again for each fix to keep.",
+        ].join("\n"),
+      );
       return 1;
     case "cherry_pick_failed":
       console.error(`documentation commit does not apply to the release's documentation:\n${result.detail}`);
