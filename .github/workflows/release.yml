@@ -169,7 +169,19 @@ jobs:
           sudo apt-get install --yes musl-tools
       - name: Build release artifact
         shell: bash
-        run: cargo build --locked --release --package sprawl-guard --target "${RUST_TARGET}"
+        run: |
+          case "${RUST_TARGET}" in
+            wasm32-wasip1)
+              export CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+              ;;
+            *-pc-windows-msvc)
+              # Keep Cargo's defaults until the size settings have been validated on Windows.
+              export CARGO_PROFILE_RELEASE_LTO=false
+              export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+              export CARGO_PROFILE_RELEASE_STRIP=none
+              ;;
+          esac
+          cargo build --locked --release --package sprawl-guard --target "${RUST_TARGET}"
         env:
           RUST_TARGET: ${{ matrix.rust_target }}
 
