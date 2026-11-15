@@ -130,6 +130,12 @@ jobs:
           CI: "true"
         run: pnpm install --frozen-lockfile
 
+      # The release's install checks start npm differently on Windows; this runs them against
+      # fixture archives on each platform before a release is tagged.
+      - name: Test release install check
+        working-directory: npm
+        run: node --test scripts/workflow-checks/check-npm-install.test.ts
+
       - name: Check native CLI
         working-directory: npm
         shell: bash

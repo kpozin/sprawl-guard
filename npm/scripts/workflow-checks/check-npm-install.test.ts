@@ -151,8 +151,8 @@ describe("checkNpmInstall", () => {
             "install",
             "--save-exact",
             "--omit=optional",
-            path.join("/candidate", `kpozin-sprawl-guard-${RELEASE_VERSION}.tgz`),
-            path.join("/candidate", `kpozin-sprawl-guard-linux-x64-musl-${RELEASE_VERSION}.tgz`),
+            path.resolve("/candidate", `kpozin-sprawl-guard-${RELEASE_VERSION}.tgz`),
+            path.resolve("/candidate", `kpozin-sprawl-guard-linux-x64-musl-${RELEASE_VERSION}.tgz`),
           ],
           ["--prefix", projectDirectory, "exec", "--", "sprawl-guard", "--version"],
           ["--prefix", projectDirectory, "exec", "--", "sprawl-guard", "--help"],
@@ -471,10 +471,10 @@ function runScript(candidateDirectory: string): ReturnType<typeof spawnSync> {
 
 describe("npmSpawn", () => {
   describe("on Windows", () => {
-    it("starts npm through the shell with each argument quoted", () => {
+    it("starts npm through the shell by its bare name, with each argument quoted", () => {
       assert.deepEqual(npmSpawn("win32", ["install", "C:\\Temp Dir\\wrapper.tgz"]), {
         kind: "shell",
-        commandLine: '"npm" "install" "C:\\Temp Dir\\wrapper.tgz"',
+        commandLine: 'npm "install" "C:\\Temp Dir\\wrapper.tgz"',
       });
     });
   });

@@ -341,13 +341,15 @@ export type NpmSpawn =
 /**
  * Returns how to start npm on a platform.
  *
- * On Windows npm is a `.cmd` script, which Node.js starts only through a shell. Each argument
- * is quoted; none can contain a double quote, which Windows paths, npm package names,
- * versions, and dist-tags never do.
+ * On Windows npm is a `.cmd` script, which Node.js starts only through a shell. The name `npm`
+ * stays unquoted: when cmd.exe finds a quoted batch name on `PATH`, the script sees the current
+ * directory as its own and fails to find npm's JavaScript entry point. Each argument is quoted;
+ * none can contain a double quote, which Windows paths, npm package names, versions, and
+ * dist-tags never do.
  */
 export function npmSpawn(platform: NodeJS.Platform, args: readonly string[]): NpmSpawn {
   return platform === "win32"
-    ? { kind: "shell", commandLine: ["npm", ...args].map((arg) => `"${arg}"`).join(" ") }
+    ? { kind: "shell", commandLine: ["npm", ...args.map((arg) => `"${arg}"`)].join(" ") }
     : { kind: "direct", args };
 }
 
