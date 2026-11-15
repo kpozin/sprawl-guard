@@ -4,26 +4,111 @@ on:
   release:
     types:
       - released
+  # Run at `main` with `docs_commit` to publish a documentation fix for the latest release, or at a
+  # release tag to redeploy that release without its documentation fixes.
   workflow_dispatch:
+    inputs:
+      docs_commit:
+        description: Full SHA of a commit on main that changes only site/src/content
+        required: false
 
 permissions:
   contents: read
 
+# Each queued run publishes something different, so a new run waits behind pending ones instead of
+# replacing them.
 concurrency:
   group: pages
   cancel-in-progress: false
+  queue: max
 
 jobs:
+  # Resolves the commit and version to build. Its token can push the documentation branch, so the
+  # job runs only the lockfile-pinned release tooling, and the site's dependencies install and run
+  # in the read-only build job.
+  source:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.docs.outputs.commit || steps.release.outputs.release_commit }}
+      version: ${{ steps.docs.outputs.release_version || steps.release.outputs.release_version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        if: ${{ !inputs.docs_commit }}
+        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
+        with:
+          toolchain: stable
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+        with:
+          version: 11.28.11
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+          cache: "pnpm"
+          cache-dependency-path: npm/pnpm-lock.yaml
+
+      - name: Install release tooling dependencies
+        working-directory: npm
+        env:
+          CI: "true"
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate release tag and package versions
+        if: ${{ !inputs.docs_commit }}
+        id: release
+        working-directory: npm
+        env:
+          GITHUB_EVENT_COMMIT: ${{ github.sha }}
+          # Pages deploys only published stable releases, which npm publishes under `latest`.
+          NPM_DIST_TAG: latest
+        run: pnpm run release:metadata
+
+      - name: Verify manual deployment uses a published stable release
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.docs_commit }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+        run: |
+          is_stable="$(gh release view "${RELEASE_TAG}" --json isDraft,isPrerelease --jq '.isDraft == false and .isPrerelease == false')"
+          if [[ "${is_stable}" != "true" ]]; then
+            echo "release must be published and stable: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+
+      # GitHub's latest release is always published and stable.
+      - name: Apply documentation fix to the latest release
+        if: ${{ inputs.docs_commit }}
+        id: docs
+        working-directory: npm
+        env:
+          DOCS_COMMIT: ${{ inputs.docs_commit }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh auth setup-git
+          RELEASE_TAG="$(gh release view --json tagName --jq .tagName)"
+          export RELEASE_TAG
+          node scripts/pages/docs-fix.ts
+
   build:
+    needs: source
     runs-on: ubuntu-24.04
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
         with:
-          toolchain: stable
+          ref: ${{ needs.source.outputs.commit }}
+          persist-credentials: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
@@ -40,33 +125,6 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
 
-      - name: Install release tooling dependencies
-        working-directory: npm
-        env:
-          CI: "true"
-        run: pnpm install --frozen-lockfile
-
-      - name: Validate release tag and package versions
-        id: release
-        working-directory: npm
-        env:
-          GITHUB_EVENT_COMMIT: ${{ github.sha }}
-          # Pages deploys only published stable releases, which npm publishes under `latest`.
-          NPM_DIST_TAG: latest
-        run: pnpm run release:metadata
-
-      - name: Verify manual deployment uses a published stable release
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
-        run: |
-          is_stable="$(gh release view "${RELEASE_TAG}" --json isDraft,isPrerelease --jq '.isDraft == false and .isPrerelease == false')"
-          if [[ "${is_stable}" != "true" ]]; then
-            echo "release must be published and stable: ${RELEASE_TAG}" >&2
-            exit 1
-          fi
-
       - name: Install documentation dependencies
         working-directory: site
         env:
@@ -76,7 +134,7 @@ jobs:
       - name: Build documentation
         working-directory: site
         env:
-          PUBLIC_SPRAWL_GUARD_VERSION: ${{ steps.release.outputs.release_version }}
+          PUBLIC_SPRAWL_GUARD_VERSION: ${{ needs.source.outputs.version }}
         run: pnpm run build
 
       - name: Upload Pages artifact

@@ -23,7 +23,7 @@
     "release:replace-assets": "node ./scripts/release-assets.ts replace",
     "stage:publish-payloads": "node ./scripts/stage-publish-payloads.ts",
     "sync:source-wrapper-manifest": "node ./scripts/sync-source-wrapper-manifest.ts",
-    "test": "pnpm run check:source-wrapper-manifest && node --test scripts/*.test.ts scripts/workflow-checks/*.test.ts && pnpm run build && pnpm --filter @kpozin/sprawl-guard test",
+    "test": "pnpm run check:source-wrapper-manifest && node --test scripts/*.test.ts scripts/workflow-checks/*.test.ts scripts/pages/*.test.ts && pnpm run build && pnpm --filter @kpozin/sprawl-guard test",
     "typecheck:scripts": "pnpm exec tsc -p tsconfig.json",
     "verify:source-wrapper-pack": "node ./scripts/verify-packed-files.ts ./sprawl-guard --require dist/bin/sprawl-guard.js --forbid-suffix .test.js",
     "verify:staged-payload-packs": "node ./scripts/verify-staged-payload-packs.ts"

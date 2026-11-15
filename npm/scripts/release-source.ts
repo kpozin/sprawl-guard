@@ -133,12 +133,17 @@ export function inspectReleaseSource(args: {
   });
 }
 
-function runGit(
-  workspaceRoot: string,
-  args: readonly string[],
-):
+/** Result of one Git command; a failure keeps the exit status, which some commands use as an answer. */
+export type GitResult =
   | { readonly kind: "ok"; readonly stdout: string }
-  | { readonly kind: "failed"; readonly detail: string } {
+  | {
+      readonly kind: "failed";
+      readonly detail: string;
+      readonly exitCode: number | null;
+    };
+
+/** Runs one Git command in a repository with bounded time and output. */
+export function runGit(workspaceRoot: string, args: readonly string[]): GitResult {
   const result = spawnSync("git", args, {
     cwd: workspaceRoot,
     encoding: "utf8",
@@ -151,6 +156,7 @@ function runGit(
   }
   return {
     kind: "failed",
+    exitCode: result.status,
     detail: [result.stdout, result.stderr, result.error?.message]
       .filter(
         (value): value is string => value !== undefined && value.length > 0,
