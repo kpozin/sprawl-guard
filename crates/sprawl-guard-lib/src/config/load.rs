@@ -126,7 +126,7 @@ pub fn authored_config_json_schema() -> Schema {
     let mut schema = authored_toml_schema_generator().into_root_schema_for::<PartialConfig>();
     schema.insert(
         "id".to_owned(),
-        ConfigSchemaVersion::CURRENT.schema_url().as_str().into(),
+        ConfigSchemaVersion::CURRENT_SCHEMA_URL.as_str().into(),
     );
     schema
 }

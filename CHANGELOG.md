@@ -9,6 +9,14 @@ All notable changes to `sprawl-guard` will be documented in this file.
 - The agent skill is shorter and explains how to fix a violation by reorganizing: split a file
   along its responsibilities, and group a directory's files by the feature they serve.
 
+### Removed
+
+- The documentation site no longer publishes the v1 configuration schema. Run
+  `sprawl-guard config upgrade --write` to move a configuration to schema v2.
+- In the `sprawl-guard-lib` crate, `TomlSchemaUrl::ConfigV1` is removed.
+  `ConfigSchemaVersion::schema_url()` and `schema_directive()` are replaced by
+  `ConfigSchemaVersion::CURRENT_SCHEMA_URL` and `ConfigSchemaVersion::current_schema_directive()`.
+
 ## [0.3.2] - 2026-11-15
 
 Version 0.3.1 was tagged but never published. This release contains the changes planned for it.

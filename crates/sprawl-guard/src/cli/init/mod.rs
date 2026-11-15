@@ -115,7 +115,7 @@ fn render_minimal_config() -> Result<String> {
     let toml = toml::to_string_pretty(&root).map_err(|source| CliError::RenderConfig { source })?;
     Ok(format!(
         "{}\n{}{toml}",
-        ConfigSchemaVersion::CURRENT.schema_directive(),
+        ConfigSchemaVersion::current_schema_directive(),
         minimal_config_header()
     ))
 }

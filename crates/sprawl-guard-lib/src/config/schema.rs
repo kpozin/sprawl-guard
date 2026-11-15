@@ -36,17 +36,13 @@ impl ConfigSchemaVersion {
     /// Schema version emitted by this build.
     pub const CURRENT: Self = Self::V2;
 
-    /// Returns the published JSON Schema for this version.
-    pub fn schema_url(self) -> TomlSchemaUrl {
-        match self {
-            Self::V1 => TomlSchemaUrl::ConfigV1,
-            Self::V2 => TomlSchemaUrl::ConfigV2,
-        }
-    }
+    /// Published JSON Schema for the current version. Older versions have no published schema;
+    /// `config upgrade` moves them to the current one.
+    pub const CURRENT_SCHEMA_URL: TomlSchemaUrl = TomlSchemaUrl::ConfigV2;
 
-    /// Returns the Taplo directive for this version's published schema.
-    pub fn schema_directive(self) -> TomlSchemaDirective {
-        TomlSchemaDirective::new(self.schema_url())
+    /// Returns the Taplo directive for the current version's published schema.
+    pub fn current_schema_directive() -> TomlSchemaDirective {
+        TomlSchemaDirective::new(Self::CURRENT_SCHEMA_URL)
     }
 }
 

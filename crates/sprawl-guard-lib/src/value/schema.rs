@@ -8,8 +8,6 @@ const TOML_SCHEMA_META_SCHEMA: &str = "http://json-schema.org/draft-04/schema#";
 /// Published JSON Schema location for a Sprawl Guard TOML format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TomlSchemaUrl {
-    /// Version 1 root-configuration schema.
-    ConfigV1,
     /// Version 2 root-configuration schema.
     ConfigV2,
     /// Version 1 ratchet-file schema.
@@ -20,9 +18,6 @@ impl TomlSchemaUrl {
     /// Returns the URL as text.
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ConfigV1 => {
-                "https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.schema.json"
-            }
             Self::ConfigV2 => {
                 "https://kpozin.github.io/sprawl-guard/schemas/v2/sprawl-guard.schema.json"
             }

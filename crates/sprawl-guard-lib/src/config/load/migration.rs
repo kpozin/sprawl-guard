@@ -301,7 +301,7 @@ fn rewrite_authored_config(
     document["schema_version"] = toml_edit::value(i64::from(ConfigSchemaVersion::CURRENT));
     document.as_table_mut().decor_mut().set_prefix(format!(
         "{}\n",
-        ConfigSchemaVersion::CURRENT.schema_directive()
+        ConfigSchemaVersion::current_schema_directive()
     ));
     let rendered = document.to_string();
     let rendered = match line_ending {
@@ -316,7 +316,7 @@ fn has_current_schema_directive(contents: &str) -> bool {
         .find('\n')
         .map_or(contents.len(), |index| index + 1);
     contents[..first_line_end].trim_end_matches(['\r', '\n'])
-        == ConfigSchemaVersion::CURRENT.schema_directive().to_string()
+        == ConfigSchemaVersion::current_schema_directive().to_string()
 }
 
 fn is_schema_directive(line: &str) -> bool {

@@ -58,7 +58,7 @@ pub(super) fn render_authored_toml(document: &impl Serialize) -> Result<String> 
         toml::to_string_pretty(document).map_err(|source| CliError::RenderConfig { source })?;
     Ok(format!(
         "{}\n{toml}",
-        sprawl_guard_lib::config::ConfigSchemaVersion::CURRENT.schema_directive()
+        sprawl_guard_lib::config::ConfigSchemaVersion::current_schema_directive()
     ))
 }
 
