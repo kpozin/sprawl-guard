@@ -3,8 +3,8 @@
 /**
  * Publishes a documentation fix for the latest release without a new release.
  *
- * A fix is a commit on `main` that changes only documentation content. It is cherry-picked onto
- * `docs/<release tag>`, a branch that starts at the release tag and collects such fixes, so the
+ * A fix is a commit on `main` that changes only documentation pages and images. It is cherry-picked
+ * onto `docs/<release tag>`, a branch that starts at the release tag and collects such fixes, so the
  * deployed site keeps describing the released version rather than unreleased work on `main`.
  *
  * The owner creates each release's branch. GitHub refuses to let the workflow's token create a
@@ -27,8 +27,8 @@ import {
   type ReleaseCommit,
 } from "../release-source.ts";
 
-/** The repository directory whose files a documentation fix may change. */
-export const DOCUMENTATION_CONTENT_DIRECTORY = "site/src/content/";
+/** The repository directories whose files a documentation fix may change: pages and their images. */
+export const DOCUMENTATION_DIRECTORIES = ["site/src/content/", "site/src/assets/"] as const;
 
 /** Git options that record cherry-picked commits as GitHub's Actions bot. */
 const COMMITTER_OPTIONS = [
@@ -88,7 +88,7 @@ export type ApplyDocsFixResult =
 /**
  * Cherry-picks a documentation commit onto the release's existing documentation branch and pushes
  * it. The branch is pushed only if its whole difference from the release tag stays inside the
- * documentation content directory.
+ * documentation directories.
  */
 export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
   const docsCommit = RELEASE_COMMIT_SCHEMA.safeParse(args.docsCommit);
@@ -174,7 +174,9 @@ export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
   }
   const outside = changed.stdout
     .split("\0")
-    .filter((file) => file.length > 0 && !file.startsWith(DOCUMENTATION_CONTENT_DIRECTORY));
+    .filter(
+      (file) => file.length > 0 && !DOCUMENTATION_DIRECTORIES.some((directory) => file.startsWith(directory)),
+    );
   if (outside.length > 0) {
     return { kind: "non_documentation_paths", paths: outside };
   }
@@ -268,7 +270,7 @@ function main(): number {
     case "non_documentation_paths":
       console.error(
         [
-          `documentation fixes may change only ${DOCUMENTATION_CONTENT_DIRECTORY}, not:`,
+          `documentation fixes may change only ${DOCUMENTATION_DIRECTORIES.join(" and ")}, not:`,
           ...result.paths.map((file) => `- ${file}`),
         ].join("\n"),
       );

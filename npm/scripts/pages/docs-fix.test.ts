@@ -35,6 +35,7 @@ function commitFiles(directory: string, message: string, files: Readonly<Record<
 
 /** Commits on the fixture's `main` after the release, and one on a feature branch. */
 interface FixtureCommits {
+  readonly asset: string;
   readonly code: string;
   readonly conflicting: string;
   readonly docs: string;
@@ -83,12 +84,13 @@ function createFixture(): Fixture {
   git(work, "commit", "--quiet", "--message", "Move notes into the docs");
   const intoDocs = git(work, "rev-parse", "HEAD");
   const quotedName = commitFiles(work, "Add café guide", { "site/src/content/docs/café.md": "coffee\n" });
+  const asset = commitFiles(work, "Add illustration", { "site/src/assets/tree.svg": "<svg/>\n" });
   git(work, "switch", "--quiet", "--create", "feature", released);
   const unmerged = commitFiles(work, "Draft guide", { "site/src/content/docs/draft.md": "draft\n" });
   git(work, "push", "--quiet", "origin", "main", "feature", RELEASE_TAG, `${released}:${DOCS_BRANCH}`);
   git(root, "clone", "--quiet", origin, clone);
 
-  return { clone, commits: { code, conflicting, docs, followUp, intoDocs, quotedName, released, unmerged }, origin };
+  return { clone, commits: { asset, code, conflicting, docs, followUp, intoDocs, quotedName, released, unmerged }, origin };
 }
 
 function apply(fixture: Fixture, docsCommit: string) {
@@ -149,6 +151,17 @@ describe("applyDocsFix", () => {
           git(fixture.origin, "log", "-1", "--format=%B", result.commit),
           new RegExp(`\\(cherry picked from commit ${fixture.commits.docs}\\)`, "u"),
         );
+      });
+    });
+
+    describe("and the commit changes only a documentation asset", () => {
+      it("adds the commit on top of the release", () => {
+        const fixture = createFixture();
+
+        const result = apply(fixture, fixture.commits.asset);
+
+        assert.ok(result.kind === "applied");
+        assert.equal(originBranch(fixture), result.commit);
       });
     });
 
