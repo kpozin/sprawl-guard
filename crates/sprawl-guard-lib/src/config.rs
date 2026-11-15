@@ -31,7 +31,7 @@ pub use limits::{Limits, MaxDirectFilesPerDirectoryLimits, MaxLinesPerFileLimits
 pub use load::{
     ConfigUpgrade, LoadOptions, LoadedConfig, MigratedAuthoredConfigDocument,
     PreparedConfigUpgrade, authored_config_json_schema, load_resolved_config,
-    prepare_config_upgrade,
+    prepare_config_upgrade, render_effective_config_toml,
 };
 pub use output::{OutputConfig, OutputFormat};
 pub use overrides::{

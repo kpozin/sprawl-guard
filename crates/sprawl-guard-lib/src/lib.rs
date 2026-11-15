@@ -30,7 +30,7 @@ pub use config::{
     AuthoredConfigPath, ConfigSource, OverrideLimits, OverridePaths, OverridePathsError,
     OverrideReason, OverrideReasonError, ResolvedConfig, UnreadablePathPolicy,
 };
-pub use error::{Result, SprawlError};
+pub use error::{ConfigUpgradeCommand, Result, SprawlError};
 pub use ratchet::{
     DirectoryRatchet, DirectoryRatchetKey, FileRatchet, FileRatchetKey, RatchetCount, RatchetFile,
     RatchetLookup, RatchetSchemaVersion, authored_ratchet_json_schema,

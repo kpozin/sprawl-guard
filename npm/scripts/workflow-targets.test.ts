@@ -115,7 +115,6 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
           include: z.array(
             z.object({
               package_name: z.string().min(1),
-              package_slug: z.string().min(1),
             }),
           ),
         }),
@@ -240,6 +239,25 @@ function stepWithName<TStep extends { readonly name: string }>(
   const step = matchingSteps[0];
   assert.ok(step !== undefined);
   return step;
+}
+
+/** Release jobs that install the npm packages and check that the wrapper runs. */
+const NPM_INSTALL_CHECK_JOB_NAMES = [
+  "verify-npm-candidate-native",
+  "verify-npm-candidate-musl",
+  "verify-npm-candidate-wasi",
+  "verify-published-npm-native",
+  "verify-published-npm-musl",
+  "verify-published-npm-wasi",
+] as const;
+/** Matches a check that a languages report found TypeScript sources. */
+const LANGUAGES_REPORT_CHECK_PATTERN = /check-languages-report\.ts (?:[^\n]|\\\n)*--language typescript/u;
+
+/** Asserts that a script writes two scan reports and compares them byte for byte. */
+function assertComparesScanReports(script: string): void {
+  const reports = [...script.matchAll(/> (\S+)/gu)].map(([, report = ""]) => report);
+  assert.equal(reports.length, 2, "expected one native and one WASI scan report");
+  assert.ok(script.includes(`cmp ${reports.join(" ")}`), "expected the two reports to be compared");
 }
 
 describe("native runtime workflow coverage", () => {
@@ -583,6 +601,7 @@ describe("native runtime workflow coverage", () => {
         "draft-release",
         "publish-cargo",
         "publish-npm",
+        ...NPM_INSTALL_CHECK_JOB_NAMES,
       ] as const) {
         const checkoutSteps = releaseWorkflow.jobs[jobName].steps.filter(
           (step) => step.uses?.startsWith("actions/checkout@") === true,
@@ -652,10 +671,8 @@ describe("native runtime workflow coverage", () => {
         const commands = releaseWorkflow.jobs[jobName].steps
           .flatMap(({ run }) => run ?? [])
           .join("\n");
-        assert.match(commands, /\.tgz/u);
-        assert.match(commands, /--omit=optional/u);
-        assert.match(commands, /unset SPRAWL_GUARD_BINARY/u);
-        assert.doesNotMatch(commands, /@kpozin\/sprawl-guard@/u);
+        assert.match(commands, /--candidate-directory /u);
+        assert.doesNotMatch(commands, /--dist-tag /u);
         assert.ok(releaseWorkflow.jobs["draft-release"].needs.includes(jobName));
       }
 
@@ -663,10 +680,8 @@ describe("native runtime workflow coverage", () => {
         releaseWorkflow.jobs["verify-npm-candidate-wasi"].steps,
         "Compare exact candidate native and WASI scans",
       );
-      assert.match(wasiComparison, /native-languages\.json/u);
-      assert.match(wasiComparison, /wasi-languages\.json/u);
-      assert.match(wasiComparison, /config_key === "typescript"/u);
-      assert.match(wasiComparison, /cmp native-languages\.json wasi-languages\.json/u);
+      assert.match(wasiComparison, LANGUAGES_REPORT_CHECK_PATTERN);
+      assertComparesScanReports(wasiComparison);
     });
   });
 
@@ -697,21 +712,19 @@ describe("native runtime workflow coverage", () => {
         RELEASE_WORKFLOW_SCHEMA,
       );
       const job = releaseWorkflow.jobs["verify-published-npm-wasi"];
-      const fixture = stepWithName(job.steps, "Check out the release commit to scan");
+      const fixture = job.steps.find((step) => step.uses?.startsWith("actions/checkout@") === true);
       const comparison = stepWithName(
         job.steps,
         "Compare registry-installed native and WASI scans",
       );
+      assert.ok(fixture !== undefined);
       assert.equal(fixture.with?.repository, undefined);
       assert.equal(
         fixture.with?.ref,
         "${{ needs.release-metadata.outputs.release_commit }}",
       );
-      assert.equal(fixture.with?.path, "scan-fixture");
-      assert.match(comparison.run ?? "", /native-languages\.json/u);
-      assert.match(comparison.run ?? "", /wasi-languages\.json/u);
-      assert.match(comparison.run ?? "", /config_key === "typescript"/u);
-      assert.match(comparison.run ?? "", /cmp native-languages\.json wasi-languages\.json/u);
+      assert.match(comparison.run ?? "", LANGUAGES_REPORT_CHECK_PATTERN);
+      assertComparesScanReports(comparison.run ?? "");
     });
   });
 
@@ -774,13 +787,8 @@ describe("native runtime workflow coverage", () => {
       ] as const) {
         const job = releaseWorkflow.jobs[jobName];
         const commands = job.steps.flatMap(({ run }) => run ?? []).join("\n");
-        assert.match(commands, /npm --prefix/u);
-        assert.match(commands, /@kpozin\/sprawl-guard@\$\{NPM_DIST_TAG\}/u);
-        assert.match(commands, /installed_(?:native_|wasi_)?wrapper_version/u);
-        assert.match(commands, /createRequire\([^\n]*package\.json/u);
-        assert.match(commands, /unset SPRAWL_GUARD_BINARY/u);
-        assert.doesNotMatch(commands, /npm --prefix [^\n]+ exec -- node/u);
-        assert.doesNotMatch(commands, /pnpm --dir/u);
+        assert.match(commands, /--dist-tag "\$\{NPM_DIST_TAG\}"/u);
+        assert.doesNotMatch(commands, /--candidate-directory /u);
       }
     });
   });

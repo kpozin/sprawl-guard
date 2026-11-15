@@ -490,6 +490,8 @@ jobs:
           ARTIFACT_DIGEST: ${{ steps.npm-publication-candidate.outputs.artifact-digest }}
 
   verify-npm-candidate-native:
+    # Installs local archives once; a hang means npm or the runner is stuck.
+    timeout-minutes: 20
     needs:
       - package-assembly
       - release-metadata
@@ -499,109 +501,21 @@ jobs:
         include:
           - runner: macos-15
             package_name: "@kpozin/sprawl-guard-darwin-arm64"
-            package_slug: darwin-arm64
           - runner: macos-15-intel
             package_name: "@kpozin/sprawl-guard-darwin-x64"
-            package_slug: darwin-x64
           - runner: ubuntu-24.04-arm
             package_name: "@kpozin/sprawl-guard-linux-arm64-gnu"
-            package_slug: linux-arm64-gnu
           - runner: ubuntu-24.04
             package_name: "@kpozin/sprawl-guard-linux-x64-gnu"
-            package_slug: linux-x64-gnu
           - runner: windows-2025
             package_name: "@kpozin/sprawl-guard-win32-x64-msvc"
-            package_slug: win32-x64-msvc
     runs-on: ${{ matrix.runner }}
     steps:
-      - name: Download assembled npm publication candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: npm-publication-candidate
-          path: npm-publication-candidate
-
-      - name: Install Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "22"
-
-      - name: Install the exact wrapper and native carrier candidates
-        shell: bash
-        run: |
-          test ! -e install-smoke
-          mkdir install-smoke
-          printf '{"private":true}\n' > install-smoke/package.json
-          candidate_directory="$(node --eval "process.stdout.write(require('node:path').resolve('npm-publication-candidate'))")"
-          wrapper_archive="${candidate_directory}/kpozin-sprawl-guard-${SPRAWL_GUARD_VERSION}.tgz"
-          runtime_archive="${candidate_directory}/kpozin-sprawl-guard-${PACKAGE_SLUG}-${SPRAWL_GUARD_VERSION}.tgz"
-          test -f "${wrapper_archive}"
-          test -f "${runtime_archive}"
-          npm --prefix install-smoke install --save-exact --omit=optional "${wrapper_archive}" "${runtime_archive}"
-          node --eval \
-            "require('node:module').createRequire(require('node:path').resolve('install-smoke/package.json')).resolve(process.env.NATIVE_PACKAGE_NAME + '/package.json')"
-        env:
-          NATIVE_PACKAGE_NAME: ${{ matrix.package_name }}
-          PACKAGE_SLUG: ${{ matrix.package_slug }}
-          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
-
-      - name: Run the candidate-installed native wrapper
-        shell: bash
-        run: |
-          unset SPRAWL_GUARD_BINARY
-          test "$(npm --prefix install-smoke exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
-          npm --prefix install-smoke exec -- sprawl-guard --help
-        env:
-          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
-
-  verify-npm-candidate-musl:
-    needs:
-      - package-assembly
-      - release-metadata
-    runs-on: ubuntu-24.04
-    env:
-      NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-musl"
-    steps:
-      - name: Download assembled npm publication candidate
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: npm-publication-candidate
-          path: npm-publication-candidate
-
-      - name: Run the exact candidate wrapper and carrier on Linux musl
-        shell: bash
-        run: |
-          docker run --rm \
-            --env NPM_RUNTIME_PACKAGE_NAME \
-            --env SPRAWL_GUARD_VERSION \
-            --volume "${PWD}/npm-publication-candidate:/candidate:ro" \
-            node:22-alpine sh -euxc '
-            mkdir /install-smoke
-            printf "{\"private\":true}\n" > /install-smoke/package.json
-            npm --prefix /install-smoke install --save-exact --omit=optional \
-              "/candidate/kpozin-sprawl-guard-${SPRAWL_GUARD_VERSION}.tgz" \
-              "/candidate/kpozin-sprawl-guard-linux-x64-musl-${SPRAWL_GUARD_VERSION}.tgz"
-            node --eval \
-              "require(\"node:module\").createRequire(\"/install-smoke/package.json\").resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + \"/package.json\")"
-            unset SPRAWL_GUARD_BINARY
-            test "$(npm --prefix /install-smoke exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
-            npm --prefix /install-smoke exec -- sprawl-guard --help
-          '
-        env:
-          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
-
-  verify-npm-candidate-wasi:
-    needs:
-      - package-assembly
-      - release-metadata
-    runs-on: ubuntu-24.04
-    env:
-      NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-wasm32-wasip1"
-    steps:
-      - name: Check out the release commit to scan
+      - name: Check out the release commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.release-metadata.outputs.release_commit }}
-          path: scan-fixture
+          path: release-source
           persist-credentials: false
 
       - name: Download assembled npm publication candidate
@@ -615,24 +529,98 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install exact native and WASI-only candidate fixtures
+      - name: Install and run the exact wrapper and native carrier candidates
         shell: bash
         run: |
-          test ! -e install-native
-          test ! -e install-wasi
-          mkdir install-native install-wasi
-          printf '{"private":true}\n' > install-native/package.json
-          printf '{"private":true}\n' > install-wasi/package.json
-          candidate_directory="$(node --eval "process.stdout.write(require('node:path').resolve('npm-publication-candidate'))")"
-          wrapper_archive="${candidate_directory}/kpozin-sprawl-guard-${SPRAWL_GUARD_VERSION}.tgz"
-          npm --prefix install-native install --save-exact --omit=optional \
-            "${wrapper_archive}" \
-            "${candidate_directory}/kpozin-sprawl-guard-linux-x64-gnu-${SPRAWL_GUARD_VERSION}.tgz"
-          npm --prefix install-wasi install --save-exact --omit=optional \
-            "${wrapper_archive}" \
-            "${candidate_directory}/kpozin-sprawl-guard-wasm32-wasip1-${SPRAWL_GUARD_VERSION}.tgz"
-          node --eval \
-            "require('node:module').createRequire(require('node:path').resolve('install-wasi/package.json')).resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + '/package.json')"
+          node release-source/npm/scripts/workflow-checks/check-npm-install.ts \
+            --project install-smoke \
+            --version "${SPRAWL_GUARD_VERSION}" \
+            --runtime-package "${NATIVE_PACKAGE_NAME}" \
+            --candidate-directory npm-publication-candidate
+        env:
+          NATIVE_PACKAGE_NAME: ${{ matrix.package_name }}
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  verify-npm-candidate-musl:
+    # Installs local archives once; a hang means npm or the runner is stuck.
+    timeout-minutes: 20
+    needs:
+      - package-assembly
+      - release-metadata
+    runs-on: ubuntu-24.04
+    env:
+      NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-musl"
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Download assembled npm publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-publication-candidate
+          path: npm-publication-candidate
+
+      - name: Install and run the exact candidate wrapper and carrier on Linux musl
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "${PWD}/release-source:/release-source:ro" \
+            --volume "${PWD}/npm-publication-candidate:/candidate:ro" \
+            node:22-alpine \
+            node /release-source/npm/scripts/workflow-checks/check-npm-install.ts \
+              --project /install-smoke \
+              --version "${SPRAWL_GUARD_VERSION}" \
+              --runtime-package "${NPM_RUNTIME_PACKAGE_NAME}" \
+              --candidate-directory /candidate
+        env:
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  verify-npm-candidate-wasi:
+    # Installs local archives once; a hang means npm or the runner is stuck.
+    timeout-minutes: 20
+    needs:
+      - package-assembly
+      - release-metadata
+    runs-on: ubuntu-24.04
+    env:
+      NPM_NATIVE_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-gnu"
+      NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-wasm32-wasip1"
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Download assembled npm publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: npm-publication-candidate
+          path: npm-publication-candidate
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+
+      - name: Install and run exact native and WASI-only candidate fixtures
+        shell: bash
+        run: |
+          node release-source/npm/scripts/workflow-checks/check-npm-install.ts \
+            --project install-native \
+            --version "${SPRAWL_GUARD_VERSION}" \
+            --runtime-package "${NPM_NATIVE_PACKAGE_NAME}" \
+            --candidate-directory npm-publication-candidate
+          node release-source/npm/scripts/workflow-checks/check-npm-install.ts \
+            --project install-wasi \
+            --version "${SPRAWL_GUARD_VERSION}" \
+            --runtime-package "${NPM_RUNTIME_PACKAGE_NAME}" \
+            --candidate-directory npm-publication-candidate
         env:
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
@@ -640,22 +628,13 @@ jobs:
         shell: bash
         run: |
           unset SPRAWL_GUARD_BINARY
-          test "$(npm --prefix install-native exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
-          test "$(npm --prefix install-wasi exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
-          npm --prefix install-wasi exec -- sprawl-guard --help
           npm --prefix install-native exec -- sprawl-guard languages --detected --format json \
-            --root "${PWD}/scan-fixture" > native-languages.json
+            --root "${PWD}/release-source" > native-languages.json
           npm --prefix install-wasi exec -- sprawl-guard languages --detected --format json \
-            --root "${PWD}/scan-fixture" > wasi-languages.json
-          node --eval '
-            const report = require("./wasi-languages.json");
-            if (report.mode !== "detected") process.exit(1);
-            if (!report.languages.some((language) =>
-              language.config_key === "typescript" && language.source_files > 0)) process.exit(1);
-          '
+            --root "${PWD}/release-source" > wasi-languages.json
+          node release-source/npm/scripts/workflow-checks/check-languages-report.ts \
+            --report wasi-languages.json --language typescript
           cmp native-languages.json wasi-languages.json
-        env:
-          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
   draft-release:
     if: ${{ always() && needs.cargo-candidate.result == 'success' && needs.package-assembly.result == 'success' && needs.release-metadata.result == 'success' && needs.verify-npm-candidate-musl.result == 'success' && needs.verify-npm-candidate-native.result == 'success' && needs.verify-npm-candidate-wasi.result == 'success' && (needs.artifact-attestation.result == 'success' || needs.artifact-attestation.result == 'skipped') }}
@@ -889,6 +868,11 @@ jobs:
         with:
           toolchain: 1.100.0
 
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
       - name: Install the published CLI into an absent root
         shell: bash
         run: |
@@ -905,16 +889,15 @@ jobs:
           cargo-install/bin/sprawl-guard --help
           cargo-install/bin/sprawl-guard languages --detected --format json \
             --root scan-fixture > cargo-languages.json
-          node --eval '
-            const report = require("./cargo-languages.json");
-            if (report.mode !== "detected") process.exit(1);
-            if (!report.languages.some((language) =>
-              language.config_key === "rust" && language.source_files > 0)) process.exit(1);
-          '
+          node scan-fixture/npm/scripts/workflow-checks/check-languages-report.ts \
+            --report cargo-languages.json --language rust
         env:
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
   verify-published-npm-native:
+    # Covers registry retries while npm propagates the release, and stops the job if npm keeps
+    # stalling.
+    timeout-minutes: 60
     if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
@@ -936,37 +919,36 @@ jobs:
             package_name: "@kpozin/sprawl-guard-win32-x64-msvc"
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Check out the release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+          path: release-source
+          persist-credentials: false
+
       - name: Install Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
 
-      - name: Install the published wrapper into an absent project
+      - name: Install and run the published wrapper
         shell: bash
         run: |
-          test ! -e install-smoke
-          mkdir install-smoke
-          printf '{"private":true}\n' > install-smoke/package.json
-          npm --prefix install-smoke install --save-exact "@kpozin/sprawl-guard@${NPM_DIST_TAG}"
-          installed_wrapper_version="$(node --eval "process.stdout.write(require('node:module').createRequire(require('node:path').resolve('install-smoke/package.json'))('@kpozin/sprawl-guard/package.json').version)")"
-          test "${installed_wrapper_version}" = "${SPRAWL_GUARD_VERSION}"
-          node --eval \
-            "require('node:module').createRequire(require('node:path').resolve('install-smoke/package.json')).resolve(process.env.NATIVE_PACKAGE_NAME + '/package.json')"
+          node release-source/npm/scripts/workflow-checks/check-npm-install.ts \
+            --project install-smoke \
+            --version "${SPRAWL_GUARD_VERSION}" \
+            --runtime-package "${NATIVE_PACKAGE_NAME}" \
+            --dist-tag "${NPM_DIST_TAG}" \
+            --runtime-installation automatic
         env:
           NATIVE_PACKAGE_NAME: ${{ matrix.package_name }}
           NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
-      - name: Run the registry-installed native wrapper
-        shell: bash
-        run: |
-          unset SPRAWL_GUARD_BINARY
-          test "$(npm --prefix install-smoke exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
-          npm --prefix install-smoke exec -- sprawl-guard --help
-        env:
-          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
-
   verify-published-npm-musl:
+    # Covers registry retries while npm propagates the release, and stops the job if npm keeps
+    # stalling.
+    timeout-minutes: 60
     if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
@@ -976,30 +958,33 @@ jobs:
     env:
       NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-musl"
     steps:
-      - name: Run the registry-installed wrapper on Linux musl
+      - name: Check out the release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Install and run the published wrapper on Linux musl
         shell: bash
         run: |
           docker run --rm \
-            --env NPM_RUNTIME_PACKAGE_NAME \
-            --env NPM_DIST_TAG \
-            --env SPRAWL_GUARD_VERSION \
-            node:22-alpine sh -euxc '
-            mkdir /install-smoke
-            printf "{\"private\":true}\n" > /install-smoke/package.json
-            npm --prefix /install-smoke install --save-exact "@kpozin/sprawl-guard@${NPM_DIST_TAG}"
-            installed_wrapper_version="$(node --eval "process.stdout.write(require(\"node:module\").createRequire(\"/install-smoke/package.json\")(\"@kpozin/sprawl-guard/package.json\").version)")"
-            test "${installed_wrapper_version}" = "${SPRAWL_GUARD_VERSION}"
-            node --eval \
-              "require('node:module').createRequire('/install-smoke/package.json').resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + '/package.json')"
-            unset SPRAWL_GUARD_BINARY
-            test "$(npm --prefix /install-smoke exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
-            npm --prefix /install-smoke exec -- sprawl-guard --help
-          '
+            --volume "${PWD}/release-source:/release-source:ro" \
+            node:22-alpine \
+            node /release-source/npm/scripts/workflow-checks/check-npm-install.ts \
+              --project /install-smoke \
+              --version "${SPRAWL_GUARD_VERSION}" \
+              --runtime-package "${NPM_RUNTIME_PACKAGE_NAME}" \
+              --dist-tag "${NPM_DIST_TAG}" \
+              --runtime-installation automatic
         env:
           NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
   verify-published-npm-wasi:
+    # Covers registry retries while npm propagates the release, and stops the job if npm keeps
+    # stalling.
+    timeout-minutes: 60
     if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
@@ -1010,11 +995,11 @@ jobs:
       NPM_NATIVE_PACKAGE_NAME: "@kpozin/sprawl-guard-linux-x64-gnu"
       NPM_RUNTIME_PACKAGE_NAME: "@kpozin/sprawl-guard-wasm32-wasip1"
     steps:
-      - name: Check out the release commit to scan
+      - name: Check out the release commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ needs.release-metadata.outputs.release_commit }}
-          path: scan-fixture
+          path: release-source
           persist-credentials: false
 
       - name: Install Node.js
@@ -1022,27 +1007,21 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install native and WASI-only registry fixtures
+      - name: Install and run native and WASI-only registry fixtures
         shell: bash
         run: |
-          test ! -e install-native
-          test ! -e install-wasi
-          mkdir install-native install-wasi
-          printf '{"private":true}\n' > install-native/package.json
-          printf '{"private":true}\n' > install-wasi/package.json
-          npm --prefix install-native install --save-exact \
-            "@kpozin/sprawl-guard@${NPM_DIST_TAG}"
-          npm --prefix install-wasi install --save-exact --omit=optional \
-            "@kpozin/sprawl-guard@${NPM_DIST_TAG}" \
-            "${NPM_RUNTIME_PACKAGE_NAME}@${SPRAWL_GUARD_VERSION}"
-          installed_native_wrapper_version="$(node --eval "process.stdout.write(require('node:module').createRequire(require('node:path').resolve('install-native/package.json'))('@kpozin/sprawl-guard/package.json').version)")"
-          installed_wasi_wrapper_version="$(node --eval "process.stdout.write(require('node:module').createRequire(require('node:path').resolve('install-wasi/package.json'))('@kpozin/sprawl-guard/package.json').version)")"
-          test "${installed_native_wrapper_version}" = "${SPRAWL_GUARD_VERSION}"
-          test "${installed_wasi_wrapper_version}" = "${SPRAWL_GUARD_VERSION}"
-          node --eval \
-            "require('node:module').createRequire(require('node:path').resolve('install-native/package.json')).resolve(process.env.NPM_NATIVE_PACKAGE_NAME + '/package.json')"
-          node --eval \
-            "require('node:module').createRequire(require('node:path').resolve('install-wasi/package.json')).resolve(process.env.NPM_RUNTIME_PACKAGE_NAME + '/package.json')"
+          node release-source/npm/scripts/workflow-checks/check-npm-install.ts \
+            --project install-native \
+            --version "${SPRAWL_GUARD_VERSION}" \
+            --runtime-package "${NPM_NATIVE_PACKAGE_NAME}" \
+            --dist-tag "${NPM_DIST_TAG}" \
+            --runtime-installation automatic
+          node release-source/npm/scripts/workflow-checks/check-npm-install.ts \
+            --project install-wasi \
+            --version "${SPRAWL_GUARD_VERSION}" \
+            --runtime-package "${NPM_RUNTIME_PACKAGE_NAME}" \
+            --dist-tag "${NPM_DIST_TAG}" \
+            --runtime-installation explicit
         env:
           NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
@@ -1051,19 +1030,10 @@ jobs:
         shell: bash
         run: |
           unset SPRAWL_GUARD_BINARY
-          test "$(npm --prefix install-native exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
-          test "$(npm --prefix install-wasi exec -- sprawl-guard --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
-          npm --prefix install-wasi exec -- sprawl-guard --help
           npm --prefix install-native exec -- sprawl-guard languages --detected --format json \
-            --root "${PWD}/scan-fixture" > native-languages.json
+            --root "${PWD}/release-source" > native-languages.json
           npm --prefix install-wasi exec -- sprawl-guard languages --detected --format json \
-            --root "${PWD}/scan-fixture" > wasi-languages.json
-          node --eval '
-            const report = require("./wasi-languages.json");
-            if (report.mode !== "detected") process.exit(1);
-            if (!report.languages.some((language) =>
-              language.config_key === "typescript" && language.source_files > 0)) process.exit(1);
-          '
+            --root "${PWD}/release-source" > wasi-languages.json
+          node release-source/npm/scripts/workflow-checks/check-languages-report.ts \
+            --report wasi-languages.json --language typescript
           cmp native-languages.json wasi-languages.json
-        env:
-          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}

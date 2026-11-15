@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use crate::classification::SourceKind;
 use crate::config::Config;
 use crate::ratchet::{
     DirectoryRatchetKey, FileRatchetKey, RatchetCount, RatchetFile, RatchetLookup,
@@ -8,7 +9,7 @@ use crate::ratchet::{
 use crate::{DirectFiles, LanguageGroupId, LineLimit, RelativePath, Result};
 
 use super::directory_direct_files::{DirectoryDirectFilesCheck, DirectoryDirectFilesMeasurement};
-use super::report::{CheckViolation, DirectoryViolationKind, FileViolationKind, RatchetEntryCount};
+use super::report::{CheckViolation, FileViolationKind, RatchetEntryCount};
 use super::report::{
     DirectoryRatchetStaleMeasuredViolation, FileRatchetStaleMeasuredViolation, RatchetLimit,
     RatchetStaleMeasuredViolation, RatchetViolation,
@@ -97,8 +98,11 @@ pub(super) fn directory_violations_with_ratchet(
             .collect();
     };
     let measurement = directory_check.measurement();
-    let ceiling =
-        ratchet.directory_ceiling(measurement.kind, &measurement.group, &measurement.path);
+    let ceiling = ratchet.directory_ceiling(
+        measurement.kind.role(),
+        &measurement.group,
+        &measurement.path,
+    );
     apply_directory_ratchet(directory_check, ceiling, current_policy)
 }
 
@@ -203,12 +207,14 @@ impl RatchetCurrentPolicy {
     }
 }
 
-pub(super) struct RatchetState {
+/// Ceilings from the ratchet file, indexed for lookup by measured path.
+pub(crate) struct RatchetState {
     ratchets: RatchetLookup,
 }
 
 impl RatchetState {
-    pub(super) fn load_if_present(root: &Path, config: &Config) -> Result<Option<Self>> {
+    /// Reads the configured ratchet file, or returns `None` when the file does not exist.
+    pub(crate) fn load_if_present(root: &Path, config: &Config) -> Result<Option<Self>> {
         let path = root.join(config.ratchet.file.as_str());
         if !path
             .try_exists()
@@ -238,13 +244,14 @@ impl RatchetState {
             .file_ceiling(&FileRatchetKey::new(path.clone(), kind.role()))
     }
 
-    fn directory_ceiling(
+    /// Returns the direct-file ceiling for one directory's production or test files in `group`.
+    pub(crate) fn directory_ceiling(
         &self,
-        kind: DirectoryViolationKind,
+        role: SourceKind,
         group: &LanguageGroupId,
         path: &RelativePath,
     ) -> Option<DirectFiles> {
-        let key = DirectoryRatchetKey::new(path.clone(), kind.role(), group.clone());
+        let key = DirectoryRatchetKey::new(path.clone(), role, group.clone());
         self.ratchets.directory_ceiling(&key)
     }
 

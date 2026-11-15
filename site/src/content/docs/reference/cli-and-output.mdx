@@ -74,9 +74,14 @@ resulting ratchet file. When no ceiling changes, `--write` leaves the file untou
 
 The `config` command has three subcommands:
 
-- `config resolved` prints the built-in defaults merged with your configuration, including each
-  language's inherited line limits and automatic `count_lines`.
-- `config export` prints the complete configuration, ready to commit.
+- `config resolved` prints the effective settings: the built-in defaults merged with your
+  configuration, including each language's inherited line limits. It spells values out as checks
+  use them. `count_lines` lists every counted line type, including `code`, and `[files].exclude`
+  lists the built-in and added excludes together, and a language with an explicit `include` lists
+  its added globs there. This output is for reading, not for loading, and starts with a comment
+  that says so.
+- `config export` prints the complete configuration, ready to commit. It uses the same keys and
+  values as a hand-written file, so `count_lines = []` means only code lines count.
 - `config upgrade` previews the configuration upgraded to the current schema. `--write` saves it,
   and `--check` saves nothing and exits `1` when an upgrade is pending.
 
@@ -111,6 +116,15 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
 A path that does not exist is still classified by its name, so you can see how Sprawl Guard would
 classify a planned file. Human output says the path was not found, and JSON reports
 `state: "not_found"` instead of `state: "measured"`.
+
+For a directory, `explain` lists each kind and language group of source files directly inside it.
+Each entry shows the files, their count against the direct-file limit, any ratchet ceiling, and the
+overrides that matched. JSON reports `kind: "directory"` with one entry per kind and group in
+`measurements`. When paths under the directory cannot be read, `explain` still reports the
+counts, warns that they may be incomplete, and lists the paths in `unreadable_paths`. It does this
+even when `[traversal].unreadable_paths = "fail"`. A directory that `check` skips, such as a hidden
+or gitignored one, is reported as ignored. A symlink to a directory is explained as a directory
+when `[traversal].follow_symlinks` follows directories.
 
 The active config file and the ratchet file are never checked as source files. `explain` reports
 them as `config_excluded` and `ratchet_excluded`.

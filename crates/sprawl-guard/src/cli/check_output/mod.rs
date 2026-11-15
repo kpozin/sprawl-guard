@@ -253,7 +253,8 @@ fn write_unreadable_paths(output: &mut String, report: &CheckReport) {
     }
 }
 
-fn unreadable_path_message(unreadable_path: &UnreadablePath) -> String {
+/// Describes one unreadable path on a single line: what failed, where, and the backend detail.
+pub(super) fn unreadable_path_message(unreadable_path: &UnreadablePath) -> String {
     let path = display_relative(
         unreadable_path
             .path
@@ -310,7 +311,7 @@ fn violation_message(violation: &FileLinesViolation) -> String {
 }
 
 /// Formats the ratchet ceiling that a violation grew above, if it has one.
-fn ceiling_message(ceiling: Option<impl std::fmt::Display>) -> String {
+pub(super) fn ceiling_message(ceiling: Option<impl std::fmt::Display>) -> String {
     ceiling
         .map(|ceiling| format!(", ceiling {ceiling}"))
         .unwrap_or_default()
@@ -422,7 +423,7 @@ fn directory_violation_message(violation: &DirectoryDirectFilesViolation) -> Str
         .map(|file| format!("    {}\n", display_relative(file.as_str())))
         .collect::<String>();
     format!(
-        "  {}: {} direct files (limit {}{}), group {}\n{files}\n",
+        "  {}: {} direct files (limit {}{}, group: {})\n{files}\n",
         display_relative(violation.path.as_str()),
         violation.actual,
         violation.limit,
@@ -589,14 +590,14 @@ mod tests {
             assert!(output.ends_with(indoc! {"
                 Directories with too many direct files:
 
-                  src: 3 direct files (limit 2), group source
+                  src: 3 direct files (limit 2, group: source)
                     src/a.rs
                     src/b.rs
                     src/c.rs
 
                 Test directories with too many direct files:
 
-                  tests: 3 direct files (limit 2), group source
+                  tests: 3 direct files (limit 2, group: source)
                     tests/a.rs
                     tests/b.rs
                     tests/c.rs
@@ -740,7 +741,7 @@ mod tests {
 
             let output = human_check_report(&report, false);
 
-            assert!(output.contains("  src: 3 direct files (limit 1, ceiling 2), group source\n"));
+            assert!(output.contains("  src: 3 direct files (limit 1, ceiling 2, group: source)\n"));
         }
 
         #[test]

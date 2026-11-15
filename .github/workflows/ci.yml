@@ -99,22 +99,6 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.rust_target }}
 
-      - name: Resolve CLI version
-        run: >-
-          node --eval
-          "const assert = require('node:assert/strict');
-          const metadata = JSON.parse(
-          require('node:child_process').execFileSync(
-          'cargo',
-          ['metadata', '--no-deps', '--format-version', '1'],
-          { encoding: 'utf8' }));
-          const packages = metadata.packages.filter(
-          (candidate) => candidate.name === 'sprawl-guard');
-          assert.equal(packages.length, 1);
-          require('node:fs').appendFileSync(
-          process.env.GITHUB_ENV,
-          'SPRAWL_GUARD_VERSION=' + packages[0].version + '\n')"
-
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
@@ -140,64 +124,27 @@ jobs:
       - name: Build native CLI
         run: cargo build --locked --package sprawl-guard --target "${{ matrix.rust_target }}"
 
-      - name: Run native CLI
-        run: >-
-          node --eval
-          "require('node:child_process').execFileSync(
-          process.env.SPRAWL_GUARD_BINARY,
-          ['--help'],
-          { stdio: 'inherit' })"
-        env:
-          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
-
-      - name: Check native CLI version
-        run: >-
-          node --eval
-          "const assert = require('node:assert/strict');
-          const result = require('node:child_process').spawnSync(
-          process.env.SPRAWL_GUARD_BINARY,
-          ['--version'],
-          { encoding: 'utf8' });
-          assert.equal(result.error, undefined);
-          assert.equal(result.status, 0);
-          assert.equal(
-          result.stdout,
-          'sprawl-guard ' + process.env.SPRAWL_GUARD_VERSION + '\n');
-          assert.equal(result.stderr, '')"
-        env:
-          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
-
       - name: Install npm workspace dependencies
         working-directory: npm
         env:
           CI: "true"
         run: pnpm install --frozen-lockfile
 
+      - name: Check native CLI
+        working-directory: npm
+        shell: bash
+        run: node scripts/workflow-checks/check-cli.ts -- "${SPRAWL_GUARD_BINARY}"
+        env:
+          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
       - name: Build npm wrapper
         working-directory: npm
         run: pnpm run build
 
-      - name: Run npm wrapper
+      - name: Check npm wrapper
         working-directory: npm
-        run: node ./sprawl-guard/dist/bin/sprawl-guard.js --help
-        env:
-          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
-
-      - name: Check npm wrapper version
-        working-directory: npm
-        run: >-
-          node --eval
-          "const assert = require('node:assert/strict');
-          const result = require('node:child_process').spawnSync(
-          process.execPath,
-          ['./sprawl-guard/dist/bin/sprawl-guard.js', '--version'],
-          { encoding: 'utf8' });
-          assert.equal(result.error, undefined);
-          assert.equal(result.status, 0);
-          assert.equal(
-          result.stdout,
-          'sprawl-guard ' + process.env.SPRAWL_GUARD_VERSION + '\n');
-          assert.equal(result.stderr, '')"
+        shell: bash
+        run: node scripts/workflow-checks/check-cli.ts -- node ./sprawl-guard/dist/bin/sprawl-guard.js
         env:
           SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
 

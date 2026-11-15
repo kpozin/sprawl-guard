@@ -8,7 +8,8 @@ use crate::value::path::{normalize_under_root, resolve_root};
 use crate::{RelativePath, Result, SprawlError};
 
 use super::classifier::Classifier;
-use super::traversal::{is_source_file_candidate, is_walked_file};
+use super::explain_directory::explain_directory;
+use super::traversal::{is_source_file_candidate, is_walked_directory, is_walked_file};
 use super::types::{ClassifiedSource, PathClassification, SourceExplanation};
 
 /// Explains how source discovery classifies one path.
@@ -24,9 +25,11 @@ use super::types::{ClassifiedSource, PathClassification, SourceExplanation};
 /// requested path. Missing paths are still classified by pattern so users can
 /// debug config before creating a file.
 ///
-/// Existing non-files return `PathClassification::NonFile`. Existing files go
-/// through ignore-aware traversal, language matching, and production/test
-/// classification.
+/// Existing directories that the walk reaches return `PathClassification::Directory`
+/// with the direct file counts that `check` measures there; directories it skips
+/// return `PathClassification::Ignored`. Other existing non-files return
+/// `PathClassification::NonFile`. Existing files go through ignore-aware
+/// traversal, language matching, and production/test classification.
 pub fn explain_path(root: &Path, path: &Path, config: &Config) -> Result<PathClassification> {
     let lexical_root = absolute_lexical_root(root)?;
     let root = resolve_root(root)?;
@@ -38,13 +41,19 @@ pub fn explain_path(root: &Path, path: &Path, config: &Config) -> Result<PathCla
     match path.symlink_metadata() {
         Ok(metadata) => {
             let file_type = metadata.file_type();
+            let followed_directory_link = file_type.is_symlink()
+                && config.traversal.follow_symlinks.follows_directories()
+                && path.is_dir();
+            if file_type.is_dir() || followed_directory_link {
+                let relative = normalize_explain_path(&root, &lexical_root, &path)?;
+                if !is_walked_directory(&root, &root.join(relative.to_path_buf()), config)? {
+                    return Ok(PathClassification::Ignored { path: relative });
+                }
+                return explain_directory(&root, relative, config)
+                    .map(PathClassification::Directory);
+            }
             if !is_source_file_candidate(&path, file_type, config)? {
-                let path_for_relative = if metadata.file_type().is_dir() {
-                    path.canonicalize().unwrap_or_else(|_| path.clone())
-                } else {
-                    path.clone()
-                };
-                let relative = normalize_explain_path(&root, &lexical_root, &path_for_relative)?;
+                let relative = normalize_explain_path(&root, &lexical_root, &path)?;
                 return Ok(PathClassification::NonFile { path: relative });
             }
             let relative = normalize_explain_path(&root, &lexical_root, &path)?;
@@ -496,7 +505,7 @@ mod tests {
             use super::*;
 
             #[test]
-            fn it_reports_the_directory_as_a_non_file() {
+            fn it_reports_the_directory() {
                 let tempdir = tempfile::tempdir().unwrap();
                 write_rust_enabled_config(tempdir.path());
                 fs::create_dir_all(tempdir.path().join("src/lib.rs")).unwrap();
@@ -508,7 +517,191 @@ mod tests {
                 )
                 .unwrap();
 
-                assert!(matches!(classification, PathClassification::NonFile { .. }));
+                let PathClassification::Directory(directory) = classification else {
+                    panic!("expected directory explanation");
+                };
+                assert_eq!(directory.path.as_str(), "src/lib.rs");
+            }
+        }
+
+        mod when_explaining_a_directory_the_walk_skips {
+            use super::*;
+
+            fn explain_directory_path(root: &Path, path: &str) -> PathClassification {
+                explain_path(root, Path::new(path), &load_config(root)).unwrap()
+            }
+
+            #[test]
+            fn it_reports_a_gitignored_directory_as_ignored() {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_rust_enabled_config(tempdir.path());
+                fs::write(tempdir.path().join(".gitignore"), "generated/\n").unwrap();
+                write_source_file(tempdir.path(), "generated/lib.rs");
+
+                let classification = explain_directory_path(tempdir.path(), "generated");
+
+                assert!(matches!(classification, PathClassification::Ignored { .. }));
+            }
+
+            #[test]
+            fn it_reports_a_hidden_directory_as_ignored() {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_rust_enabled_config(tempdir.path());
+                write_source_file(tempdir.path(), ".hidden/lib.rs");
+
+                let classification = explain_directory_path(tempdir.path(), ".hidden");
+
+                assert!(matches!(classification, PathClassification::Ignored { .. }));
+            }
+        }
+
+        mod when_the_directory_has_a_malformed_ignore_file {
+            use super::*;
+
+            #[test]
+            fn it_measures_the_directory_and_reports_the_ignore_file() {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_rust_enabled_config(tempdir.path());
+                write_source_file(tempdir.path(), "src/lib.rs");
+                fs::write(tempdir.path().join("src/.gitignore"), "{a\n").unwrap();
+
+                let classification = explain_path(
+                    tempdir.path(),
+                    Path::new("src"),
+                    &load_config(tempdir.path()),
+                )
+                .unwrap();
+
+                let PathClassification::Directory(directory) = classification else {
+                    panic!("expected directory explanation");
+                };
+                assert_eq!(directory.measurements[0].files[0].as_str(), "src/lib.rs");
+                assert!(!directory.unreadable_paths.is_empty());
+            }
+        }
+
+        mod when_explaining_the_root_directory {
+            use super::*;
+
+            #[test]
+            fn it_counts_the_files_directly_in_the_root() {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_rust_enabled_config(tempdir.path());
+                write_source_file(tempdir.path(), "build.rs");
+                write_source_file(tempdir.path(), "src/lib.rs");
+
+                let classification =
+                    explain_path(tempdir.path(), Path::new("."), &load_config(tempdir.path()))
+                        .unwrap();
+
+                let PathClassification::Directory(directory) = classification else {
+                    panic!("expected directory explanation");
+                };
+                let [measurement] = directory.measurements.as_slice() else {
+                    panic!("expected one measurement");
+                };
+                assert_eq!(measurement.files[0].as_str(), "build.rs");
+            }
+        }
+
+        #[cfg(unix)]
+        mod when_explaining_a_symlinked_directory {
+            use super::*;
+
+            fn explain_linked(symlinks: &str) -> PathClassification {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_config(
+                    tempdir.path(),
+                    &format!(
+                        "[traversal]\nfollow_symlinks = \"{symlinks}\"\n\n\
+                         [languages.rust]\nenabled = true\n"
+                    ),
+                );
+                write_source_file(tempdir.path(), "real/lib.rs");
+                std::os::unix::fs::symlink("real", tempdir.path().join("linked")).unwrap();
+                explain_path(
+                    tempdir.path(),
+                    Path::new("linked"),
+                    &load_config(tempdir.path()),
+                )
+                .unwrap()
+            }
+
+            #[test]
+            fn it_counts_files_under_the_link_name_when_directory_links_are_followed() {
+                let PathClassification::Directory(directory) = explain_linked("directories") else {
+                    panic!("expected directory explanation");
+                };
+                assert_eq!(directory.path.as_str(), "linked");
+                assert_eq!(directory.measurements[0].files[0].as_str(), "linked/lib.rs");
+            }
+
+            #[test]
+            fn it_keeps_the_link_name_for_a_directory_under_the_link() {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_config(
+                    tempdir.path(),
+                    indoc! {r#"
+                        [traversal]
+                        follow_symlinks = "directories"
+
+                        [languages.rust]
+                        enabled = true
+
+                        [[overrides]]
+                        paths = ["linked/sub"]
+                        max_direct_files_per_directory = { production = 1 }
+                        reason = "alias only"
+                    "#},
+                );
+                write_source_file(tempdir.path(), "real/sub/lib.rs");
+                std::os::unix::fs::symlink("real", tempdir.path().join("linked")).unwrap();
+
+                let classification = explain_path(
+                    tempdir.path(),
+                    Path::new("linked/sub"),
+                    &load_config(tempdir.path()),
+                )
+                .unwrap();
+
+                let PathClassification::Directory(directory) = classification else {
+                    panic!("expected directory explanation");
+                };
+                assert_eq!(directory.path.as_str(), "linked/sub");
+                assert_eq!(directory.measurements[0].limit.matched_overrides.len(), 1);
+            }
+
+            #[test]
+            fn it_reports_a_non_file_when_directory_links_are_not_followed() {
+                assert!(matches!(
+                    explain_linked("files"),
+                    PathClassification::NonFile { .. }
+                ));
+            }
+        }
+
+        #[cfg(unix)]
+        mod when_explaining_a_directory_through_a_symlinked_root {
+            use super::*;
+
+            #[test]
+            fn it_counts_the_files_directly_inside_it() {
+                let parent = tempfile::tempdir().unwrap();
+                let real_root = parent.path().join("real");
+                let link_root = parent.path().join("link");
+                fs::create_dir(&real_root).unwrap();
+                write_rust_enabled_config(&real_root);
+                write_source_file(&real_root, "src/lib.rs");
+                std::os::unix::fs::symlink(&real_root, &link_root).unwrap();
+
+                let classification =
+                    explain_path(&link_root, &link_root.join("src"), &load_config(&real_root))
+                        .unwrap();
+
+                let PathClassification::Directory(directory) = classification else {
+                    panic!("expected directory explanation");
+                };
+                assert_eq!(directory.measurements[0].files[0].as_str(), "src/lib.rs");
             }
         }
 

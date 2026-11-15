@@ -1,0 +1,402 @@
+#!/usr/bin/env node
+
+/**
+ * Installs Sprawl Guard's npm wrapper into a new project and checks that it runs.
+ *
+ * The release workflow runs this with Node.js 22 on fresh runners and in a bare Node.js
+ * container, before any workspace dependencies are installed, so it uses only Node.js 22
+ * built-ins and validates its arguments without Zod.
+ */
+
+import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+
+const WRAPPER_PACKAGE_NAME = "@kpozin/sprawl-guard";
+const RUNTIME_PACKAGE_PREFIX = `${WRAPPER_PACKAGE_NAME}-`;
+const RUNTIME_PACKAGE_PATTERN = /^@kpozin\/sprawl-guard-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+const DIST_TAG_PATTERN = /^[a-z][a-z0-9._-]*$/u;
+
+/**
+ * How many times a registry install is tried. npm's CDN can serve an older dist-tag or miss a
+ * new archive for several minutes after the publisher sees the release.
+ */
+export const REGISTRY_INSTALL_ATTEMPTS = 30;
+const REGISTRY_INSTALL_INTERVAL_MILLISECONDS = 20_000;
+/**
+ * How long one npm command may run before it is stopped and counts as a failed attempt. npm
+ * waits up to five minutes for each registry request, so a stalled connection could otherwise
+ * hold one attempt far longer than the whole retry schedule.
+ */
+const NPM_COMMAND_TIMEOUT_MILLISECONDS = 120_000;
+
+// These brands mirror the workspace's package-version and dist-tag schemas, which this
+// built-ins-only script can't import.
+
+/** An absolute filesystem path. */
+export type AbsolutePath = string & { readonly __brand: "AbsolutePath" };
+/** A Sprawl Guard platform package name, such as `@kpozin/sprawl-guard-linux-x64-musl`. */
+export type RuntimePackageName = string & { readonly __brand: "RuntimePackageName" };
+/** A SemVer package version without a `v` prefix. */
+export type PackageVersion = string & { readonly __brand: "PackageVersion" };
+/** An npm dist-tag, such as `latest`. */
+export type DistTag = string & { readonly __brand: "DistTag" };
+
+/**
+ * Where the packages come from.
+ *
+ * Candidate archives are installed exactly, with optional dependencies omitted. From the
+ * registry, npm either picks the platform package itself (`automatic`) or installs the named
+ * one with optional dependencies omitted (`explicit`), as a platform without a native package
+ * would.
+ */
+export type InstallSource =
+  | { readonly kind: "candidate"; readonly directory: AbsolutePath }
+  | {
+      readonly kind: "registry";
+      readonly distTag: DistTag;
+      readonly runtimeInstallation: "automatic" | "explicit";
+    };
+
+/** One install check. */
+export interface NpmInstallCheck {
+  readonly projectDirectory: AbsolutePath;
+  readonly runtimePackageName: RuntimePackageName;
+  readonly source: InstallSource;
+  readonly version: PackageVersion;
+}
+
+/** The outcome of one npm command. */
+export type NpmCommandResult =
+  | { readonly kind: "ok"; readonly stdout: string }
+  | { readonly kind: "failed"; readonly detail: string };
+
+/** Side effects that tests replace. */
+export interface NpmInstallCheckOperations {
+  readonly runNpm: (args: readonly string[]) => NpmCommandResult;
+  readonly sleepBeforeRetry: () => Promise<void>;
+}
+
+/** One of the two packages that an install check installs. */
+type CheckedPackageName = typeof WRAPPER_PACKAGE_NAME | RuntimePackageName;
+
+/** Why an install did not produce the release. A registry install may still catch up. */
+type InstallFailure =
+  | { readonly kind: "install_failed"; readonly detail: string }
+  | { readonly kind: "package_missing"; readonly packageName: CheckedPackageName }
+  | {
+      readonly kind: "version_mismatch";
+      /** The version in the installed manifest, which need not be valid SemVer. */
+      readonly installedVersion: string;
+      readonly packageName: CheckedPackageName;
+    };
+
+/** The result of an install check. */
+export type NpmInstallCheckResult =
+  | { readonly kind: "ok" }
+  | { readonly kind: "project_exists"; readonly projectDirectory: AbsolutePath }
+  | InstallFailure
+  | { readonly kind: "command_failed"; readonly command: string; readonly detail: string }
+  | { readonly kind: "unexpected_version_output"; readonly output: string };
+
+/** Installs the packages, retrying registry installs, then runs the installed wrapper. */
+export async function checkNpmInstall(
+  check: NpmInstallCheck,
+  operations: NpmInstallCheckOperations,
+): Promise<NpmInstallCheckResult> {
+  if (existsSync(check.projectDirectory)) {
+    return { kind: "project_exists", projectDirectory: check.projectDirectory };
+  }
+  const attempts = check.source.kind === "registry" ? REGISTRY_INSTALL_ATTEMPTS : 1;
+  let installed: InstallFailure | { readonly kind: "ok" } = {
+    kind: "install_failed",
+    detail: "no install attempted",
+  };
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    installed = installOnce(check, operations);
+    if (installed.kind === "ok") {
+      break;
+    }
+    if (attempt < attempts) {
+      console.error(`${describeFailure(installed)}; retrying (attempt ${attempt + 1} of ${attempts})`);
+      rmSync(check.projectDirectory, { force: true, recursive: true });
+      await operations.sleepBeforeRetry();
+    }
+  }
+  return installed.kind === "ok" ? runInstalledWrapper(check, operations) : installed;
+}
+
+/** Installs into a new project and confirms that both packages have the release version. */
+function installOnce(
+  check: NpmInstallCheck,
+  operations: NpmInstallCheckOperations,
+): InstallFailure | { readonly kind: "ok" } {
+  mkdirSync(check.projectDirectory, { recursive: true });
+  writeFileSync(path.join(check.projectDirectory, "package.json"), '{"private":true}\n');
+  const installed = operations.runNpm([
+    "--prefix",
+    check.projectDirectory,
+    "install",
+    "--save-exact",
+    ...installArguments(check),
+  ]);
+  if (installed.kind === "failed") {
+    return { kind: "install_failed", detail: installed.detail };
+  }
+  for (const packageName of [WRAPPER_PACKAGE_NAME, check.runtimePackageName] as const) {
+    const installedVersion = readInstalledVersion(check.projectDirectory, packageName);
+    if (installedVersion === null) {
+      return { kind: "package_missing", packageName };
+    }
+    if (installedVersion !== check.version) {
+      return { kind: "version_mismatch", installedVersion, packageName };
+    }
+  }
+  return { kind: "ok" };
+}
+
+/** Returns the npm install flags and package specifiers for the check's source. */
+function installArguments(check: NpmInstallCheck): readonly string[] {
+  switch (check.source.kind) {
+    case "candidate": {
+      const runtimeSlug = check.runtimePackageName.slice(RUNTIME_PACKAGE_PREFIX.length);
+      return [
+        "--omit=optional",
+        path.join(check.source.directory, `kpozin-sprawl-guard-${check.version}.tgz`),
+        path.join(
+          check.source.directory,
+          `kpozin-sprawl-guard-${runtimeSlug}-${check.version}.tgz`,
+        ),
+      ];
+    }
+    case "registry": {
+      const wrapper = `${WRAPPER_PACKAGE_NAME}@${check.source.distTag}`;
+      // `--prefer-online` because npm otherwise reuses cached registry metadata for minutes, so a
+      // retry would see the same stale dist-tag.
+      switch (check.source.runtimeInstallation) {
+        case "automatic":
+          return ["--prefer-online", wrapper];
+        case "explicit":
+          return [
+            "--prefer-online",
+            "--omit=optional",
+            wrapper,
+            `${check.runtimePackageName}@${check.version}`,
+          ];
+      }
+    }
+  }
+}
+
+/** Reads the version of a package installed at the top of the project's `node_modules`. */
+function readInstalledVersion(
+  projectDirectory: AbsolutePath,
+  packageName: CheckedPackageName,
+): string | null {
+  const manifestPath = path.join(
+    projectDirectory,
+    "node_modules",
+    ...packageName.split("/"),
+    "package.json",
+  );
+  if (!existsSync(manifestPath)) {
+    return null;
+  }
+  const manifest: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
+  return typeof manifest === "object" &&
+    manifest !== null &&
+    "version" in manifest &&
+    typeof manifest.version === "string"
+    ? manifest.version
+    : null;
+}
+
+/** Runs the installed wrapper's `--version` and `--help` through npm's bin links. */
+function runInstalledWrapper(
+  check: NpmInstallCheck,
+  operations: NpmInstallCheckOperations,
+): NpmInstallCheckResult {
+  const execPrefix = ["--prefix", check.projectDirectory, "exec", "--", "sprawl-guard"];
+  const versionOutput = operations.runNpm([...execPrefix, "--version"]);
+  if (versionOutput.kind === "failed") {
+    return {
+      kind: "command_failed",
+      command: "sprawl-guard --version",
+      detail: versionOutput.detail,
+    };
+  }
+  const output = versionOutput.stdout.trim();
+  if (output !== `sprawl-guard ${check.version}`) {
+    return { kind: "unexpected_version_output", output };
+  }
+  const help = operations.runNpm([...execPrefix, "--help"]);
+  return help.kind === "failed"
+    ? { kind: "command_failed", command: "sprawl-guard --help", detail: help.detail }
+    : { kind: "ok" };
+}
+
+/** Explains a failed check in one line. */
+function describeFailure(failure: Exclude<NpmInstallCheckResult, { readonly kind: "ok" }>): string {
+  switch (failure.kind) {
+    case "project_exists":
+      return `project directory already exists: ${failure.projectDirectory}`;
+    case "install_failed":
+      return `npm install failed: ${failure.detail}`;
+    case "package_missing":
+      return `npm did not install ${failure.packageName}`;
+    case "version_mismatch":
+      return `npm installed ${failure.packageName}@${failure.installedVersion}`;
+    case "command_failed":
+      return `${failure.command} failed: ${failure.detail}`;
+    case "unexpected_version_output":
+      return `sprawl-guard --version printed "${failure.output}"`;
+  }
+}
+
+/** The result of parsing command-line arguments. */
+export type ParseNpmInstallCheckArgumentsResult =
+  | { readonly kind: "ok"; readonly check: NpmInstallCheck }
+  | { readonly kind: "invalid_arguments"; readonly detail: string };
+
+const USAGE =
+  "usage: check-npm-install.ts --project DIR --version VERSION --runtime-package NAME " +
+  "(--candidate-directory DIR | --dist-tag TAG --runtime-installation automatic|explicit)";
+
+/** Parses and validates the command line. */
+export function parseNpmInstallCheckArguments(
+  argv: readonly string[],
+): ParseNpmInstallCheckArgumentsResult {
+  let values;
+  try {
+    ({ values } = parseArgs({
+      args: [...argv],
+      options: {
+        "candidate-directory": { type: "string" },
+        "dist-tag": { type: "string" },
+        project: { type: "string" },
+        "runtime-installation": { type: "string" },
+        "runtime-package": { type: "string" },
+        version: { type: "string" },
+      },
+      strict: true,
+    }));
+  } catch (error) {
+    return { kind: "invalid_arguments", detail: String(error) };
+  }
+  const invalid = (detail: string): ParseNpmInstallCheckArgumentsResult => ({
+    kind: "invalid_arguments",
+    detail: `${detail}\n${USAGE}`,
+  });
+
+  const { project, version } = values;
+  const runtimePackage = values["runtime-package"];
+  if (project === undefined || version === undefined || runtimePackage === undefined) {
+    return invalid("--project, --version, and --runtime-package are required");
+  }
+  if (!VERSION_PATTERN.test(version)) {
+    return invalid(`--version must be a SemVer version without a v prefix: ${version}`);
+  }
+  if (!RUNTIME_PACKAGE_PATTERN.test(runtimePackage)) {
+    return invalid(`--runtime-package must name a Sprawl Guard platform package: ${runtimePackage}`);
+  }
+
+  const candidateDirectory = values["candidate-directory"];
+  const distTag = values["dist-tag"];
+  const runtimeInstallation = values["runtime-installation"];
+  let source: InstallSource;
+  if (candidateDirectory !== undefined && distTag === undefined && runtimeInstallation === undefined) {
+    source = { kind: "candidate", directory: path.resolve(candidateDirectory) as AbsolutePath };
+  } else if (candidateDirectory === undefined && distTag !== undefined) {
+    if (!DIST_TAG_PATTERN.test(distTag)) {
+      return invalid(`--dist-tag must be an npm dist-tag: ${distTag}`);
+    }
+    if (runtimeInstallation !== "automatic" && runtimeInstallation !== "explicit") {
+      return invalid("--dist-tag needs --runtime-installation automatic or explicit");
+    }
+    source = { kind: "registry", distTag: distTag as DistTag, runtimeInstallation };
+  } else {
+    return invalid("give either --candidate-directory or --dist-tag with --runtime-installation");
+  }
+
+  return {
+    kind: "ok",
+    check: {
+      projectDirectory: path.resolve(project) as AbsolutePath,
+      runtimePackageName: runtimePackage as RuntimePackageName,
+      source,
+      version: version as PackageVersion,
+    },
+  };
+}
+
+/** How to start npm with some arguments: as one shell command line, or directly. */
+export type NpmSpawn =
+  | { readonly kind: "shell"; readonly commandLine: string }
+  | { readonly kind: "direct"; readonly args: readonly string[] };
+
+/**
+ * Returns how to start npm on a platform.
+ *
+ * On Windows npm is a `.cmd` script, which Node.js starts only through a shell. Each argument
+ * is quoted; none can contain a double quote, which Windows paths, npm package names,
+ * versions, and dist-tags never do.
+ */
+export function npmSpawn(platform: NodeJS.Platform, args: readonly string[]): NpmSpawn {
+  return platform === "win32"
+    ? { kind: "shell", commandLine: ["npm", ...args].map((arg) => `"${arg}"`).join(" ") }
+    : { kind: "direct", args };
+}
+
+/**
+ * Runs npm with the wrapper's binary override removed, so the installed platform package is
+ * the one that runs.
+ */
+function runNpm(args: readonly string[]): NpmCommandResult {
+  const env = { ...process.env };
+  delete env.SPRAWL_GUARD_BINARY;
+  const spawn = npmSpawn(process.platform, args);
+  const options: SpawnSyncOptionsWithStringEncoding = {
+    encoding: "utf8",
+    env,
+    // npm can outlive SIGTERM, and `spawnSync` waits for the process to exit.
+    killSignal: "SIGKILL",
+    stdio: ["ignore", "pipe", "inherit"],
+    timeout: NPM_COMMAND_TIMEOUT_MILLISECONDS,
+  };
+  const result =
+    spawn.kind === "shell"
+      ? spawnSync(spawn.commandLine, { ...options, shell: true })
+      : spawnSync("npm", spawn.args, options);
+  process.stdout.write(result.stdout ?? "");
+  if (result.error !== undefined) {
+    return { kind: "failed", detail: result.error.message };
+  }
+  return result.status === 0
+    ? { kind: "ok", stdout: result.stdout }
+    : { kind: "failed", detail: `npm ${args.join(" ")} exited with ${result.status ?? result.signal}` };
+}
+
+async function main(): Promise<number> {
+  const parsed = parseNpmInstallCheckArguments(process.argv.slice(2));
+  if (parsed.kind === "invalid_arguments") {
+    console.error(parsed.detail);
+    return 2;
+  }
+  const result = await checkNpmInstall(parsed.check, {
+    runNpm,
+    sleepBeforeRetry: () => sleep(REGISTRY_INSTALL_INTERVAL_MILLISECONDS),
+  });
+  if (result.kind !== "ok") {
+    console.error(describeFailure(result));
+    return 1;
+  }
+  return 0;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  process.exit(await main());
+}

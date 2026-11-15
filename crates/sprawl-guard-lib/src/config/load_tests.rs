@@ -68,8 +68,64 @@ mod when_config_schema_version_is_read {
 
         assert!(matches!(
             error,
-            SprawlError::UnsupportedConfigSchemaVersion { version: 1 }
+            SprawlError::OutdatedConfigSchemaVersion {
+                version: ConfigSchemaVersion::V1,
+                ..
+            }
         ));
+    }
+
+    mod when_naming_the_upgrade_command {
+        use super::*;
+
+        fn message(path: &str, current_dir: Option<&str>) -> String {
+            outdated_config_error(
+                Path::new(path),
+                ConfigSchemaVersion::V1,
+                current_dir.map(Path::new),
+            )
+            .to_string()
+        }
+
+        #[test]
+        fn it_omits_the_config_path_for_the_default_file_in_the_current_directory() {
+            assert_eq!(
+                message("/repo/sprawl-guard.toml", Some("/repo")),
+                indoc! {"
+                    sprawl-guard.toml uses schema version 1; this version reads version 2.
+                    Run `sprawl-guard config upgrade --write` to upgrade it."}
+            );
+        }
+
+        #[test]
+        fn it_names_a_file_under_the_current_directory_relatively() {
+            assert_eq!(
+                message("/repo/sub/sprawl-guard.toml", Some("/repo")),
+                indoc! {"
+                    sub/sprawl-guard.toml uses schema version 1; this version reads version 2.
+                    Run `sprawl-guard config upgrade --write --config sub/sprawl-guard.toml` to upgrade it."}
+            );
+        }
+
+        #[test]
+        fn it_quotes_a_config_path_that_the_shell_would_split() {
+            assert_eq!(
+                message("/repo/my repo/it's.toml", Some("/repo")),
+                indoc! {r"
+                    my repo/it's.toml uses schema version 1; this version reads version 2.
+                    Run `sprawl-guard config upgrade --write --config 'my repo/it'\''s.toml'` to upgrade it."}
+            );
+        }
+
+        #[test]
+        fn it_names_a_file_outside_the_current_directory_absolutely() {
+            assert_eq!(
+                message("/other/custom.toml", Some("/repo")),
+                indoc! {"
+                    /other/custom.toml uses schema version 1; this version reads version 2.
+                    Run `sprawl-guard config upgrade --write --config /other/custom.toml` to upgrade it."}
+            );
+        }
     }
 
     #[test]

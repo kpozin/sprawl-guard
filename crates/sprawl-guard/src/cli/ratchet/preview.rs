@@ -22,7 +22,7 @@ pub(super) fn render_changes(previous: &RatchetFile, next: &RatchetFile) -> Resu
         next.directories(),
         |key| {
             format!(
-                "{} ({} direct files, group {})",
+                "{} ({} direct files, group: {})",
                 display_relative(key.path().as_str()),
                 key.role(),
                 key.group()

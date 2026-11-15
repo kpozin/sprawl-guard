@@ -260,3 +260,84 @@ mod when_explaining_a_missing_path {
         assert!(json.get("measurement").is_none());
     }
 }
+
+mod when_explaining_a_directory {
+    use super::*;
+
+    fn write_fixture(root: &TempDir) {
+        write_config(
+            root,
+            indoc! {r#"
+                [languages.rust]
+                enabled = true
+
+                [[overrides]]
+                paths = ["src"]
+                max_direct_files_per_directory = { production = 1 }
+                reason = "flat module"
+            "#},
+        );
+        write_file(
+            root,
+            "sprawl-guard.ratchet.toml",
+            indoc! {r#"
+                schema_version = 1
+
+                [[directories]]
+                path = "src"
+                role = "production"
+                group = "source"
+                max_direct_files = 2
+            "#},
+        );
+        write_file(root, "src/a.rs", "fn a() {}\n");
+        write_file(root, "src/b.rs", "fn b() {}\n");
+        write_file(root, "src/nested/c.rs", "fn c() {}\n");
+    }
+
+    #[test]
+    fn it_reports_the_direct_file_count_limit_ceiling_and_overrides() {
+        let root = TempDir::new().unwrap();
+        write_fixture(&root);
+
+        let output = sprawl_guard(&root)
+            .args(["explain", "src"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            stdout(&output),
+            indoc! {"
+                src
+                  production: 2 direct files (limit 1, ceiling 2, group: source)
+                    overrides: #1 paths=[src]
+                    src/a.rs
+                    src/b.rs
+            "}
+        );
+        assert_eq!(stderr(&output), "");
+    }
+
+    #[test]
+    fn it_reports_the_measurements_as_structured_output() {
+        let root = TempDir::new().unwrap();
+        write_fixture(&root);
+
+        let (output, json) = run_json(&root, &["explain", "--format", "json", "src"]);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(json["kind"], "directory");
+        assert_eq!(json["path"], "src");
+        let measurement = &json["measurements"][0];
+        assert_eq!(measurement["kind"], "production");
+        assert_eq!(measurement["group"], "source");
+        assert_eq!(
+            measurement["files"],
+            serde_json::json!(["src/a.rs", "src/b.rs"])
+        );
+        assert_eq!(measurement["limit"]["value"], 1);
+        assert_eq!(measurement["limit"]["matched_overrides"][0]["ordinal"], 1);
+        assert_eq!(measurement["ratchet"], 2);
+    }
+}

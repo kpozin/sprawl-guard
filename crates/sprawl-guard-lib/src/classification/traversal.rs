@@ -92,14 +92,61 @@ fn walk_builder(root: &Path, config: &Config) -> WalkBuilder {
 /// `explain` uses this to distinguish files ignored by traversal from files that
 /// are visible to the walk but later excluded by the configuration.
 pub(super) fn is_walked_file(root: &Path, path: &Path, config: &Config) -> Result<bool> {
-    let expected = normalize_under_root(root, path)?;
     let mut visited_entries = 0_u32;
+    is_walked(
+        root,
+        path,
+        config,
+        |result| checked_walk_entry(root, config, &mut visited_entries, result).map(Some),
+        |entry_path, file_type| is_source_file_candidate(entry_path, file_type, config),
+    )
+}
+
+/// Returns whether an existing directory appears in the configured ignore-aware walk, so its
+/// files can be counted at all.
+///
+/// Recoverable walk errors, such as a malformed ignore file, do not decide visibility. The
+/// discovery pass that measures the directory reports them as unreadable paths.
+pub(super) fn is_walked_directory(root: &Path, path: &Path, config: &Config) -> Result<bool> {
+    let mut visited_entries = 0_u32;
+    let mut reported_by_discovery = Vec::new();
+    is_walked(
+        root,
+        path,
+        config,
+        |result| {
+            collect_walk_entry(
+                root,
+                config,
+                UnreadablePathSeverity::Warning,
+                &mut visited_entries,
+                &mut reported_by_discovery,
+                result,
+            )
+        },
+        |_, file_type| Ok(file_type.is_dir()),
+    )
+}
+
+/// Returns whether the walk reaches `path` as an entry that `wanted` accepts.
+///
+/// `next_entry` converts each walker result, either failing or skipping it on a walk error.
+fn is_walked(
+    root: &Path,
+    path: &Path,
+    config: &Config,
+    mut next_entry: impl FnMut(std::result::Result<DirEntry, ignore::Error>) -> Result<Option<DirEntry>>,
+    wanted: impl Fn(&Path, fs::FileType) -> Result<bool>,
+) -> Result<bool> {
+    let expected = normalize_under_root(root, path)?;
     for result in walk_sources_scoped(root, config, std::slice::from_ref(&expected)) {
-        let entry = checked_walk_entry(root, config, &mut visited_entries, result)?;
+        let Some(entry) = next_entry(result)? else {
+            continue;
+        };
         let Some(file_type) = entry.file_type() else {
             continue;
         };
-        if !is_source_file_candidate(entry.path(), file_type, config)? {
+        if !wanted(entry.path(), file_type)? {
             continue;
         }
         if normalize_under_root(root, entry.path())? == expected {

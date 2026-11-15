@@ -2,6 +2,30 @@
 
 All notable changes to `sprawl-guard` will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `explain DIR` explains a directory. It lists each kind and language group of source files
+  directly inside it, with their count against the direct-file limit, any ratchet ceiling, and the
+  overrides that matched. JSON output reports `kind: "directory"`. Paths under the directory that
+  cannot be read appear as a warning that the counts may be incomplete. A hidden or ignored
+  directory is reported as ignored.
+
+### Changed
+
+- A configuration file with an older schema version now fails with a message that names
+  `sprawl-guard config upgrade --write`, adding `--config PATH` when the file is not
+  `sprawl-guard.toml` in the current directory.
+- `config resolved` prints effective values after a comment that says the output is for reading.
+  `count_lines` includes `code`, `[files].exclude` lists the built-in and added excludes together,
+  and a language with an explicit `include` lists its added globs there. `config export` still
+  prints loadable configuration.
+- `explain` describes a path that is not a regular file or directory as "not a file or directory
+  that checks read".
+- Human output for directory violations and ratchet previews labels the language group, as in
+  `(limit 10, group: source)`.
+
 ## [0.3.0] - 2026-11-14
 
 This release renames configuration keys, ratchet keys, and machine-readable output to match the

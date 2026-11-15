@@ -3,6 +3,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::explain_directory::DirectoryExplanation;
 use crate::code_line_counter::LineMeasurement;
 use crate::{
     DiagnosticDetail, LanguageGroupId, LanguageId, RelativePath, RustCfgTestInfo,
@@ -269,10 +270,15 @@ pub enum PathClassification<S = SourceExplanation> {
         /// Repository-relative path.
         path: RelativePath,
     },
-    /// The path exists but is not a regular file.
+    /// The path is an existing directory, measured by the source files directly inside it.
+    ///
+    /// Only `explain` reports this; source discovery classifies files alone.
+    Directory(DirectoryExplanation),
+    /// The path exists but is neither a regular file nor a directory, such as a symlink that
+    /// traversal does not follow.
     ///
     /// Source discovery checks only regular files. `explain` reports this
-    /// separately from `NotSource` so a directory or symlink with a source-like
+    /// separately from `NotSource` so a symlink with a source-like
     /// name is not misreported as a language-pattern miss.
     NonFile {
         /// Repository-relative path.
@@ -332,6 +338,7 @@ impl<S> PathClassification<S> {
             Self::GloballyExcluded { path } => PathClassification::GloballyExcluded { path },
             Self::RatchetExcluded { path } => PathClassification::RatchetExcluded { path },
             Self::ConfigExcluded { path } => PathClassification::ConfigExcluded { path },
+            Self::Directory(directory) => PathClassification::Directory(directory),
             Self::NonFile { path } => PathClassification::NonFile { path },
             Self::NotSource { path } => PathClassification::NotSource { path },
             Self::AmbiguousLanguage { path, languages } => {

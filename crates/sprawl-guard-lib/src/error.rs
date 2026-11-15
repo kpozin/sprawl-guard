@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use crate::classification::{SourceKind, UnreadablePath};
-use crate::config::LanguageGroupsError;
+use crate::config::{ConfigSchemaVersion, LanguageGroupsError};
 use crate::{LanguageGroupId, LanguageId, RelativePath};
 
 /// Error type for recoverable `sprawl-guard` library failures.
@@ -126,6 +126,20 @@ pub enum SprawlError {
     /// A root config file used a non-integer schema version.
     #[error("config schema_version must be an integer")]
     InvalidConfigSchemaVersionType,
+    /// A root config file uses an older schema version, which `config upgrade` can migrate.
+    #[error(
+        "{} uses schema version {version}; this version reads version {}.\nRun `{upgrade}` to upgrade it.",
+        path.display(),
+        ConfigSchemaVersion::CURRENT
+    )]
+    OutdatedConfigSchemaVersion {
+        /// Root config file path, relative to the current directory when it is under it.
+        path: PathBuf,
+        /// Command that upgrades this file when run from the current directory.
+        upgrade: ConfigUpgradeCommand,
+        /// Version read from the root config file.
+        version: ConfigSchemaVersion,
+    },
     /// A root config file used a schema version this operation cannot accept.
     #[error("unsupported config schema version {version}; expected current version 2")]
     UnsupportedConfigSchemaVersion {
@@ -253,6 +267,43 @@ pub enum SprawlError {
         /// Backend-reported count.
         count: u64,
     },
+}
+
+/// The `config upgrade` command line that finds a particular config file.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConfigUpgradeCommand {
+    /// The file is `sprawl-guard.toml` in the current directory, which the command finds itself.
+    InCurrentDirectory,
+    /// The file is elsewhere, so the command names it with `--config`.
+    WithConfig(PathBuf),
+}
+
+impl std::fmt::Display for ConfigUpgradeCommand {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("sprawl-guard config upgrade --write")?;
+        match self {
+            Self::InCurrentDirectory => Ok(()),
+            Self::WithConfig(path) => {
+                write!(
+                    formatter,
+                    " --config {}",
+                    shell_word(&path.to_string_lossy())
+                )
+            }
+        }
+    }
+}
+
+/// Quotes `word` for a POSIX shell when it contains anything other than characters that are
+/// always safe there, so the user can paste the command as is.
+fn shell_word(word: &str) -> std::borrow::Cow<'_, str> {
+    let safe =
+        |character: char| character.is_ascii_alphanumeric() || "-_./+:@%,".contains(character);
+    if !word.is_empty() && word.chars().all(safe) {
+        word.into()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''")).into()
+    }
 }
 
 /// Result alias used by `sprawl-guard` library code.

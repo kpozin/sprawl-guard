@@ -23,7 +23,13 @@ import {
   type NpmPackageIntegrity,
 } from "./values.ts";
 
-const REGISTRY_VISIBILITY_ATTEMPTS = 60;
+/** How many times a registry read that fails transiently is tried. */
+const TRANSIENT_READ_ATTEMPTS = 60;
+/**
+ * How many times the registry is polled for a version just published. npm can take a few
+ * minutes to serve one; at the publisher's two-second interval this allows about ten.
+ */
+const REGISTRY_VISIBILITY_POLLS = 300;
 
 /**
  * Publishes every absent package version directly on the selected channel, runtime carriers
@@ -259,6 +265,7 @@ async function waitForPublishedDistTag(args: {
         : null;
     },
     args.operations.sleepBeforeRetry,
+    REGISTRY_VISIBILITY_POLLS,
   );
   return visible ?? {
     kind: "failed",
@@ -288,6 +295,7 @@ async function waitForPublishedPackage(
           };
     },
     operations.sleepBeforeRetry,
+    REGISTRY_VISIBILITY_POLLS,
   );
   return visible ?? {
     kind: "failed",
@@ -298,13 +306,14 @@ async function waitForPublishedPackage(
 async function pollRegistry<TResult>(
   inspect: () => TResult | null,
   sleepBeforeRetry: () => Promise<void>,
+  attempts: number,
 ): Promise<TResult | null> {
-  for (let attempt = 0; attempt < REGISTRY_VISIBILITY_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     const result = inspect();
     if (result !== null) {
       return result;
     }
-    if (attempt + 1 < REGISTRY_VISIBILITY_ATTEMPTS) {
+    if (attempt + 1 < attempts) {
       await sleepBeforeRetry();
     }
   }
@@ -324,6 +333,7 @@ async function retryTransientRegistryRead<
       return inspected.kind === "transient_failure" ? null : inspected;
     },
     sleepBeforeRetry,
+    TRANSIENT_READ_ATTEMPTS,
   );
   return result ?? timeoutResult;
 }

@@ -613,7 +613,7 @@
         {
           "id": "path",
           "syntax": "<PATH>",
-          "help": "Path to explain. The path does not need to exist",
+          "help": "File or directory to explain. A file path does not need to exist",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []

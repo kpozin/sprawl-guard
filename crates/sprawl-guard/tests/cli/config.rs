@@ -16,20 +16,24 @@ fn write_sample_config(root: &TempDir) {
     );
 }
 
-fn full_config_output(root: &TempDir, command: &str) -> String {
+/// Runs one `config` subcommand on the sample config and checks its line-limit settings.
+///
+/// `count_lines` is the top-level line-type list the subcommand is expected to print.
+fn full_config_output(root: &TempDir, command: &str, count_lines: &[&str]) -> String {
     let output = sprawl_guard(root)
         .args(["config", command])
         .output()
         .unwrap();
     let stdout = stdout(&output);
     let config = parse_toml(&stdout);
+    let count_lines = toml::Value::from(count_lines.to_vec());
 
     assert_exit_code(&output, exit_codes::SUCCESS);
     assert_toml_contains(
         &config,
         toml::toml! {
             [limits.max_lines_per_file]
-            count_lines = []
+            count_lines = count_lines
             production = 123
             test = 800
 
@@ -49,27 +53,64 @@ mod resolved {
         let root = TempDir::new().unwrap();
         write_sample_config(&root);
 
-        let stdout = full_config_output(&root, "resolved");
+        let stdout = full_config_output(&root, "resolved", &["code"]);
 
-        assert!(stdout.starts_with("schema_version = 2\n"));
+        assert!(stdout.starts_with(
+            "# Effective settings, for reading only. \
+             Run `sprawl-guard config export` for a file you can load.\n\
+             schema_version = 2\n"
+        ));
     }
 
     #[test]
-    fn it_rejects_legacy_config_before_upgrade() {
+    fn it_rejects_legacy_config_and_names_the_upgrade_command() {
         let root = TempDir::new().unwrap();
         write_file(&root, "sprawl-guard.toml", "schema_version = 1\n");
 
+        for command in [
+            &["config", "resolved"][..],
+            &["check"],
+            &["update"],
+            &["tighten"],
+        ] {
+            let output = sprawl_guard(&root).args(command).output().unwrap();
+
+            assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+            assert!(
+                stderr(&output).contains(
+                    "uses schema version 1; this version reads version 2.\n\
+                     Run `sprawl-guard config upgrade --write` to upgrade it."
+                ),
+                "{command:?}: {}",
+                stderr(&output)
+            );
+        }
+    }
+
+    #[test]
+    fn it_names_the_config_path_when_the_root_is_another_directory() {
+        let root = TempDir::new().unwrap();
+        write_file(&root, "repo/sprawl-guard.toml", "schema_version = 1\n");
+
         let output = sprawl_guard(&root)
-            .args(["config", "resolved"])
+            .args(["check", "--root", "repo"])
             .output()
             .unwrap();
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
-        assert!(stderr(&output).contains("expected current version 2"));
+        assert!(
+            stderr(&output).contains(
+                "repo/sprawl-guard.toml uses schema version 1; this version reads version 2.\n\
+                 Run `sprawl-guard config upgrade --write --config repo/sprawl-guard.toml` to \
+                 upgrade it."
+            ),
+            "{}",
+            stderr(&output)
+        );
     }
 
     #[test]
-    fn it_materializes_inherited_and_automatic_language_line_limits() {
+    fn it_shows_inherited_and_automatic_language_line_limits_with_every_counted_type() {
         let root = TempDir::new().unwrap();
         write_sample_config(&root);
 
@@ -82,7 +123,7 @@ mod resolved {
         assert_eq!(
             config["languages"]["Rust"]["limits"]["max_lines_per_file"],
             toml::Value::Table(toml::toml! {
-                count_lines = []
+                count_lines = ["code"]
                 production = 123
                 test = 800
             })
@@ -90,7 +131,7 @@ mod resolved {
         assert_eq!(
             config["languages"]["Markdown"]["limits"]["max_lines_per_file"],
             toml::Value::Table(toml::toml! {
-                count_lines = ["comments"]
+                count_lines = ["code", "comments"]
                 production = 123
                 test = 800
             })
@@ -98,7 +139,7 @@ mod resolved {
     }
 
     #[test]
-    fn it_adds_caller_authored_file_excludes_to_the_built_ins() {
+    fn it_lists_the_built_in_and_authored_file_excludes_as_one_list() {
         let root = TempDir::new().unwrap();
         write_config(
             &root,
@@ -115,7 +156,7 @@ mod resolved {
         let config = parse_toml(&stdout(&output));
 
         assert_exit_code(&output, exit_codes::SUCCESS);
-        let excludes = config["files"]["extend_exclude"].as_array().unwrap();
+        let excludes = config["files"]["exclude"].as_array().unwrap();
         assert!(
             excludes
                 .iter()
@@ -156,7 +197,7 @@ mod export {
         let root = TempDir::new().unwrap();
         write_sample_config(&root);
 
-        let stdout = full_config_output(&root, "export");
+        let stdout = full_config_output(&root, "export", &[]);
 
         assert!(stdout.starts_with(concat!(
             "#:schema https://kpozin.github.io/sprawl-guard/schemas/v2/",

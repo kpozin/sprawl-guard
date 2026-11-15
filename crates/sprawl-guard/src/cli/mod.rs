@@ -47,7 +47,7 @@ enum Command {
     Config(ConfigCommand),
     /// Print a JSON Schema for a Sprawl Guard TOML document.
     Schema(SchemaArgs),
-    /// Show how one path is classified and which limits apply to it.
+    /// Show how one file or directory is classified and which limits apply to it.
     Explain(ExplainArgs),
     /// Hidden build-time generators.
     #[command(hide = true)]
@@ -298,7 +298,7 @@ struct ConfigCommand {
 /// Supported config subcommands.
 #[derive(Debug, Subcommand)]
 enum ConfigSubcommand {
-    /// Print the built-in defaults merged with the configuration file.
+    /// Print the effective settings: the built-in defaults merged with the configuration file.
     Resolved(ProjectArgs),
     /// Print a complete configuration suitable for committing.
     Export(ProjectArgs),
@@ -351,7 +351,7 @@ struct ExplainArgs {
     #[arg(long)]
     format: Option<HumanJsonFormat>,
 
-    /// Path to explain. The path does not need to exist.
+    /// File or directory to explain. A file path does not need to exist.
     path: PathBuf,
 }
 

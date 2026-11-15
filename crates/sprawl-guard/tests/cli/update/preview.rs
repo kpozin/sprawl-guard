@@ -133,9 +133,9 @@ mod when_tightening_mixed_entries {
         let summary = stdout(&output);
         for expected in [
             "- remove deleted.rs (test lines): 3 -> none",
-            "- lower src (production direct files, group source): 4 -> 2",
-            "- lower src (production direct files, group documentation): 5 -> 2",
-            "- remove src (test direct files, group source): 2 -> none",
+            "- lower src (production direct files, group: source): 4 -> 2",
+            "- lower src (production direct files, group: documentation): 5 -> 2",
+            "- remove src (test direct files, group: source): 2 -> none",
         ] {
             assert!(summary.contains(expected), "{summary}");
         }

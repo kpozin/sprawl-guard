@@ -51,6 +51,8 @@ jobs:
         working-directory: npm
         env:
           GITHUB_EVENT_COMMIT: ${{ github.sha }}
+          # Pages deploys only published stable releases, which npm publishes under `latest`.
+          NPM_DIST_TAG: latest
         run: pnpm run release:metadata
 
       - name: Verify manual deployment uses a published stable release

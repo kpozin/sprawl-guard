@@ -7,7 +7,7 @@ use serde::Deserialize;
 #[cfg(test)]
 use crate::LanguageId;
 use crate::value::schema::authored_toml_schema_generator;
-use crate::{RelativePath, Result, SprawlError};
+use crate::{ConfigUpgradeCommand, RelativePath, Result, SprawlError};
 
 use super::defaults::built_in_config;
 use super::files::{PartialFilesConfig, merge_global_file_excludes};
@@ -25,8 +25,10 @@ use super::{
 
 const PRIMARY_CONFIG_FILE: &str = "sprawl-guard.toml";
 
+mod effective_toml;
 mod migration;
 
+pub use effective_toml::render_effective_config_toml;
 pub use migration::{
     ConfigUpgrade, MigratedAuthoredConfigDocument, PreparedConfigUpgrade, prepare_config_upgrade,
 };
@@ -151,12 +153,39 @@ fn read_current_root_config(path: &Path) -> Result<PartialConfig> {
     let contents = read_config_text(path)?;
     let value = parse_config_value(path, &contents)?;
     let version = root_schema_version(&value)?;
+    // Every version this build recognizes, other than the current one, is older and upgradable.
     if version != ConfigSchemaVersion::CURRENT {
-        return Err(SprawlError::UnsupportedConfigSchemaVersion {
-            version: version.into(),
-        });
+        let current_dir = std::env::current_dir()
+            .and_then(|directory| directory.canonicalize())
+            .ok();
+        return Err(outdated_config_error(path, version, current_dir.as_deref()));
     }
     deserialize_config(path, value)
+}
+
+/// Describes an outdated config file the way the user would name it from `current_dir`.
+///
+/// The upgrade command finds `sprawl-guard.toml` in the current directory by itself, so it names
+/// the file with `--config` only when the file is anywhere else.
+fn outdated_config_error(
+    path: &Path,
+    version: ConfigSchemaVersion,
+    current_dir: Option<&Path>,
+) -> SprawlError {
+    let path = current_dir
+        .and_then(|directory| path.strip_prefix(directory).ok())
+        .unwrap_or(path)
+        .to_path_buf();
+    let upgrade = if path == Path::new(PRIMARY_CONFIG_FILE) {
+        ConfigUpgradeCommand::InCurrentDirectory
+    } else {
+        ConfigUpgradeCommand::WithConfig(path.clone())
+    };
+    SprawlError::OutdatedConfigSchemaVersion {
+        path,
+        upgrade,
+        version,
+    }
 }
 
 fn read_config_text(path: &Path) -> Result<String> {

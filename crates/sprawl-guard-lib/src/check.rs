@@ -5,6 +5,7 @@ mod ratchet;
 mod report;
 mod runner;
 
+pub(crate) use ratchet::RatchetState;
 pub use report::{
     AnalysisCoverage, CheckErrorKind, CheckReport, CheckStatus, CheckViolation, CheckWarning,
     CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, CounterInfo, DetectedLanguageCount,

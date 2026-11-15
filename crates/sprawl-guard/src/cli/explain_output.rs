@@ -1,7 +1,9 @@
-use sprawl_guard_lib::classification::{PathClassification, SourceExplanation, SourceKind};
+use sprawl_guard_lib::classification::{
+    DirectoryExplanation, PathClassification, SourceExplanation, SourceKind,
+};
 use sprawl_guard_lib::{MatchedOverride, RelativePath, RustCfgTestStatus};
 
-use super::check_output::plural;
+use super::check_output::{ceiling_message, plural, unreadable_path_message};
 use super::display_relative;
 
 /// Renders the human `explain` output for one classified path.
@@ -23,8 +25,9 @@ pub(super) fn explain_message(classification: &PathClassification) -> String {
                 shown(path)
             )
         }
+        PathClassification::Directory(directory) => directory_message(directory),
         PathClassification::NonFile { path } => {
-            format!("{}: not a regular file", shown(path))
+            format!("{}: not a file or directory that checks read", shown(path))
         }
         PathClassification::NotSource { path } => {
             format!(
@@ -128,6 +131,49 @@ fn source_message(explanation: &SourceExplanation) -> String {
     lines.join("\n")
 }
 
+/// Renders a directory as a heading followed by one indented block per measured kind and group.
+fn directory_message(directory: &DirectoryExplanation) -> String {
+    let path = display_relative(directory.path.as_str());
+    let mut lines = if directory.measurements.is_empty() {
+        vec![format!(
+            "{path}: directory with no source files directly inside it"
+        )]
+    } else {
+        vec![path]
+    };
+    for measurement in &directory.measurements {
+        lines.push(format!(
+            "  {}: {} direct files (limit {}{}, group: {})",
+            measurement.kind,
+            measurement.files.len(),
+            measurement.limit.value,
+            ceiling_message(measurement.ratchet.map(|ceiling| ceiling.get())),
+            measurement.group,
+        ));
+        push_overrides(
+            &mut lines,
+            "  overrides",
+            &measurement.limit.matched_overrides,
+        );
+        lines.extend(
+            measurement
+                .files
+                .iter()
+                .map(|file| format!("    {}", display_relative(file.as_str()))),
+        );
+    }
+    if !directory.unreadable_paths.is_empty() {
+        lines.push("  warning: skipped unreadable paths, so counts may be incomplete:".to_owned());
+        lines.extend(
+            directory
+                .unreadable_paths
+                .iter()
+                .map(|unreadable_path| format!("    {}", unreadable_path_message(unreadable_path))),
+        );
+    }
+    lines.join("\n")
+}
+
 /// Adds a labeled line listing matched overrides, when there are any.
 fn push_overrides(lines: &mut Vec<String>, label: &str, overrides: &[MatchedOverride]) {
     if !overrides.is_empty() {
@@ -202,7 +248,85 @@ mod tests {
                     path: path("src/lib.rs"),
                 });
 
-                assert_eq!(message, "src/lib.rs: not a regular file");
+                assert_eq!(
+                    message,
+                    "src/lib.rs: not a file or directory that checks read"
+                );
+            }
+        }
+
+        mod when_the_path_is_a_directory {
+            use super::*;
+            use sprawl_guard_lib::classification::DirectFilesExplanation;
+            use sprawl_guard_lib::{
+                DiagnosticDetail, DirectFiles, LanguageGroupId, UnreadablePath, UnreadablePathKind,
+                UnreadablePathSeverity,
+            };
+
+            #[test]
+            fn it_reports_each_measured_kind_and_group() {
+                let message =
+                    explain_message(&PathClassification::Directory(DirectoryExplanation {
+                        path: path("src"),
+                        measurements: vec![DirectFilesExplanation {
+                            kind: SourceKind::Production,
+                            group: LanguageGroupId::Source,
+                            files: vec![path("src/a.rs"), path("src/b.rs")],
+                            limit: ResolvedDirectFileLimit {
+                                value: DirectFileLimit::Finite(DirectFiles::new(1).unwrap()),
+                                matched_overrides: vec![],
+                            },
+                            ratchet: Some(DirectFiles::new(2).unwrap()),
+                        }],
+                        unreadable_paths: vec![],
+                    }));
+
+                assert_eq!(
+                    message,
+                    indoc! {"
+                        src
+                          production: 2 direct files (limit 1, ceiling 2, group: source)
+                            src/a.rs
+                            src/b.rs"}
+                );
+            }
+
+            #[test]
+            fn it_says_when_no_source_files_sit_directly_inside_it() {
+                let message =
+                    explain_message(&PathClassification::Directory(DirectoryExplanation {
+                        path: path(""),
+                        measurements: vec![],
+                        unreadable_paths: vec![],
+                    }));
+
+                assert_eq!(
+                    message,
+                    ".: directory with no source files directly inside it"
+                );
+            }
+
+            #[test]
+            fn it_warns_about_unreadable_paths() {
+                let message =
+                    explain_message(&PathClassification::Directory(DirectoryExplanation {
+                        path: path("src"),
+                        measurements: vec![],
+                        unreadable_paths: vec![UnreadablePath {
+                            kind: UnreadablePathKind::ReadDirFailed,
+                            severity: UnreadablePathSeverity::Warning,
+                            path: Some(path("src/private")),
+                            detail: DiagnosticDetail::new("permission denied"),
+                        }],
+                    }));
+
+                assert_eq!(
+                    message,
+                    indoc! {"
+                        src: directory with no source files directly inside it
+                          warning: skipped unreadable paths, so counts may be incomplete:
+                            failed to read directory at src/private: permission denied"}
+                );
             }
         }
 

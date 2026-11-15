@@ -357,6 +357,33 @@ describe("publishNpmPublicationRequests", () => {
     });
   });
 
+  describe("when npm takes several minutes to serve a new version", () => {
+    it("keeps waiting after the transient retry budget runs out", async () => {
+      const events: string[] = [];
+      const slowVisibilityPolls = 150;
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: publicationOperations({
+          events,
+          inspections: [
+            ...Array.from(
+              { length: slowVisibilityPolls + 2 },
+              (): RemotePackageIntegrityInspection => ({
+                kind: "ok",
+                integrity: { kind: "absent" },
+              }),
+            ),
+            { kind: "ok", integrity: { kind: "present", integrity: LOCAL_INTEGRITY } },
+          ],
+        }),
+        requests: [WRAPPER_REQUEST],
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.deepEqual(result, { kind: "ok" });
+    });
+  });
+
   describe("when an identical version does not own the selected channel", () => {
     it("stops with a repair command instead of changing the channel", async () => {
       const events: string[] = [];

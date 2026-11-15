@@ -209,7 +209,7 @@ fn migrate_v1_languages(root: &mut dyn toml_edit::TableLike) {
 }
 
 /// Returns the table-like item at `path`, whether written as a table, inline table, or dotted key.
-fn table_at<'a>(
+pub(super) fn table_at<'a>(
     table: &'a mut dyn toml_edit::TableLike,
     path: &[&str],
 ) -> Option<&'a mut dyn toml_edit::TableLike> {
@@ -224,7 +224,7 @@ fn table_at<'a>(
 ///
 /// When both names are present, the old key stays so that validation rejects it as unknown
 /// instead of silently dropping one of the two values.
-fn rename_key(table: &mut dyn toml_edit::TableLike, from: &str, to: &str) {
+pub(super) fn rename_key(table: &mut dyn toml_edit::TableLike, from: &str, to: &str) {
     if table.contains_key(to) {
         return;
     }

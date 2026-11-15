@@ -51,6 +51,7 @@ impl<'config> Classifier<'config> {
             | PathClassification::GloballyExcluded { .. }
             | PathClassification::RatchetExcluded { .. }
             | PathClassification::ConfigExcluded { .. }
+            | PathClassification::Directory(_)
             | PathClassification::NonFile { .. }
             | PathClassification::NotSource { .. }
             | PathClassification::LanguageExcluded { .. }

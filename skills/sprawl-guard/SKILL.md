@@ -47,7 +47,8 @@ previews the ratchet entry that recording it would add.
 
 ## Investigate
 
-- `sprawl-guard explain PATH` shows how Sprawl Guard classifies a path and which limits apply to it.
+- `sprawl-guard explain PATH` shows how Sprawl Guard classifies a file or directory and which limits
+  apply to it. For a directory, it shows the direct-file count against the limit.
 - `--format json` on `check` and `explain` prints machine-readable output. Check the exit code
   before parsing it.
 - The documentation is available as Markdown, starting at

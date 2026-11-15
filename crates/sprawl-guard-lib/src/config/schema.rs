@@ -50,6 +50,13 @@ impl ConfigSchemaVersion {
     }
 }
 
+/// Writes the version number as it appears in `schema_version`.
+impl std::fmt::Display for ConfigSchemaVersion {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        i64::from(*self).fmt(formatter)
+    }
+}
+
 impl From<ConfigSchemaVersion> for i64 {
     fn from(version: ConfigSchemaVersion) -> Self {
         match version {
