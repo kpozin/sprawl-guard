@@ -1,6 +1,6 @@
 ---
 title: Sprawl Guard
-description: Check that source files stay short and directories stay small.
+description: Keep source files and directories within explicit size limits, in any language that Tokei supports.
 template: splash
 hero:
   image:
@@ -17,20 +17,35 @@ hero:
       icon: right-arrow
 ---
 
-Keep coding agents from adding oversized files and crowded directories. Sprawl Guard counts the
-lines in each file (using [Tokei](https://github.com/XAMPPRocky/tokei)) and the source files
-directly inside each directory.
+import DirectoryTrees from "../../components/DirectoryTrees.astro";
 
-Sprawl Guard supports every language bundled with Tokei, including Rust, TypeScript, JavaScript,
+<DirectoryTrees>
+
+Coding agents (and some coding humans!) like to crowd code into giant, unnavigable files and messy
+flat directories with little organization. To help battle this entropy, Sprawl Guard counts the
+lines in each file (using [Tokei](https://github.com/XAMPPRocky/tokei)) and the source files
+directly inside each directory, and enforces limits that you set.
+
+(Sprawl Guard can only admonish your agent when it goes over the limits; proper reorganization
+requires reasoning.)
+
+\* Sprawl Guard supports every language bundled with Tokei, including Rust, TypeScript, JavaScript,
 Python, Go, Java, Kotlin, Swift, C, and C++. Run `sprawl-guard languages` for the complete list.
+
+</DirectoryTrees>
 
 ## Sprawl Guard or ESLint?
 
-If a JavaScript or TypeScript linter's file-length rule is enough, use the `max-lines` rule in
-[ESLint](https://eslint.org/docs/latest/rules/max-lines) or
-[Oxlint](https://oxc.rs/docs/guide/usage/linter/rules/eslint/max-lines). Choose Sprawl Guard when
-you also need limits on direct files per directory, separate limits for production and test code,
-existing violations that can shrink but not grow, or support for polyglot repositories.
+If all you're looking for is line-count limits for JavaScript or TypeScript, simply use the
+`max-lines` rule in [ESLint](https://eslint.org/docs/latest/rules/max-lines) or
+[Oxlint](https://oxc.rs/docs/guide/usage/linter/rules/eslint/max-lines).
+
+Choose Sprawl Guard when you also want:
+
+- support for polyglot repositories
+- a ratchet that allows existing oversized files and crowded directories to shrink but not grow
+- separate limits for production and test code
+- limits on the number of direct files per directory
 
 Browse the [source](https://github.com/kpozin/sprawl-guard) and
 [releases](https://github.com/kpozin/sprawl-guard/releases), or

@@ -3,7 +3,8 @@ import { describe, test } from "node:test";
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { toMarkdown } from "mdast-util-to-markdown";
 
-import { cliCommandReferenceNodes, renderDocumentationMarkdown } from "./render.ts";
+import { cliCommandReferenceNodes } from "./cli-reference-nodes.ts";
+import { renderDocumentationMarkdown } from "./render.ts";
 import { createDocumentationRoutes } from "./routes.ts";
 
 const routeResult = createDocumentationRoutes(["index", "quick-start", "run-in-ci"]);
@@ -144,6 +145,33 @@ pnpm exec sprawl-guard check
       assert.match(result.value, /Keep changes focused\./u);
       assert.match(result.value, /\[Get started\]\(\/sprawl-guard\/quick-start\.md\)/u);
       assert.doesNotMatch(result.value, /image/u);
+    });
+  });
+
+  describe("when the homepage shows the directory tree illustration", () => {
+    test("keeps the text beside the illustration and leaves the illustration out", () => {
+      const result = renderDocumentationMarkdown(
+        {
+          id: "index",
+          title: "Sprawl Guard",
+          description: "Keep source trees navigable.",
+          body: `import DirectoryTrees from "../../components/DirectoryTrees.astro";
+
+<DirectoryTrees>
+
+Beside.
+
+</DirectoryTrees>
+
+After.`,
+        },
+        routes,
+      );
+
+      assert.deepEqual(result, {
+        ok: true,
+        value: "# Sprawl Guard\n\nKeep source trees navigable.\n\nBeside.\n\nAfter.\n",
+      });
     });
   });
 

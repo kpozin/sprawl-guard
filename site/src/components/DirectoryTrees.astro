@@ -1,0 +1,102 @@
+---
+/**
+ * The homepage's two file explorers, beside the text passed as children: the same files crowded
+ * into one directory, then grouped by feature. The flat explorer is cropped and faded at the bottom
+ * to show that it keeps going.
+ */
+import flatTree from "../assets/directory-tree-flat.svg";
+import organizedTree from "../assets/directory-tree-organized.svg";
+---
+
+<div class="beside-directory-trees">
+  <div class="directory-trees">
+    <figure class="flat">
+      <div class="window">
+        <img
+          src={flatTree.src}
+          width={flatTree.width}
+          height={flatTree.height}
+          alt="An editor's file explorer with 40 files directly inside src, continuing past the bottom of the window."
+        />
+      </div>
+      <figcaption>One directory, 40 files</figcaption>
+    </figure>
+    <figure class="organized">
+      <div class="window">
+        <img
+          src={organizedTree.src}
+          width={organizedTree.width}
+          height={organizedTree.height}
+          alt="The same files grouped into api, auth, billing, customers, db, notifications, payments, and reports directories, with three files left directly inside src."
+        />
+      </div>
+      <figcaption>The same files, grouped by feature</figcaption>
+    </figure>
+  </div>
+  <slot />
+</div>
+
+<style define:vars={{ organizedAspectRatio: `${organizedTree.width} / ${organizedTree.height}` }}>
+  /* Narrow screens: the text, then the explorers stacked under it. */
+  .beside-directory-trees {
+    display: flex;
+    flex-direction: column;
+  }
+  .directory-trees {
+    order: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+    margin-top: 1.5rem;
+  }
+  figure {
+    width: min(100%, 340px);
+    margin: 0;
+  }
+  .window {
+    /* Both explorers are as tall as the organized one, which crops the longer flat one. */
+    aspect-ratio: var(--organizedAspectRatio);
+    overflow: hidden;
+  }
+  img {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .flat .window {
+    mask-image: linear-gradient(to bottom, black 60%, transparent);
+  }
+  figcaption {
+    margin-top: 0.5rem;
+    text-align: center;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+  @media (max-width: 50rem) {
+    /* Stacked, the flat explorer is cut shorter so the organized one stays close. */
+    .flat .window {
+      aspect-ratio: 340 / 440;
+    }
+  }
+  /* Medium screens: the explorers side by side under the text. */
+  @media (min-width: 50rem) {
+    .directory-trees {
+      flex-direction: row;
+      justify-content: center;
+      align-items: flex-start;
+      gap: 2rem;
+    }
+  }
+  /* Wide screens: the explorers to the left of the text. */
+  @media (min-width: 72rem) {
+    .beside-directory-trees {
+      display: flow-root;
+    }
+    .directory-trees {
+      float: left;
+      gap: 1rem;
+      margin: 0 2rem 1rem 0;
+    }
+  }
+</style>

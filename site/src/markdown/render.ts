@@ -1,26 +1,11 @@
 import { parse, type ImportDeclaration } from "acorn";
-import type {
-  List,
-  ListItem,
-  Paragraph,
-  PhrasingContent,
-  Root,
-  RootContent,
-  Strong,
-  Table,
-  TableCell,
-  TableRow,
-} from "mdast";
+import type { List, ListItem, Paragraph, PhrasingContent, Root, RootContent } from "mdast";
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { toMarkdown } from "mdast-util-to-markdown";
 import { mdxToMdast, type MdastNode, type MdxJsxFlowElement } from "satteri";
 
-import {
-  findCliReferenceCommand,
-  inlineCodeSegments,
-  type CliReferenceCommand,
-  type CliReferenceError,
-} from "./cli-reference.ts";
+import { cliCommandReferenceNodes } from "./cli-reference-nodes.ts";
+import { findCliReferenceCommand, type CliReferenceError } from "./cli-reference.ts";
 import {
   parseDocsEntryId,
   rewriteDocumentationLink,
@@ -80,10 +65,12 @@ interface TransformContext {
   readonly components: ReadonlyMap<string, ComponentKind>;
 }
 
-type ComponentKind = "steps" | "tabs" | "tab_item" | "cli_command_reference";
+type ComponentKind = "steps" | "tabs" | "tab_item" | "cli_command_reference" | "directory_trees";
 
 const STARLIGHT_COMPONENTS_MODULE = "@astrojs/starlight/components";
 const CLI_REFERENCE_COMPONENT_MODULE = "../../../components/CliCommandReference.astro";
+/** The homepage's illustration, imported from the homepage. */
+const DIRECTORY_TREES_COMPONENT_MODULE = "../../components/DirectoryTrees.astro";
 const starlightComponentKinds = new Map<string, ComponentKind>([
   ["Steps", "steps"],
   ["Tabs", "tabs"],
@@ -193,6 +180,11 @@ function collectImportBindings(
       specifier.type === "ImportDefaultSpecifier"
     ) {
       kind = "cli_command_reference";
+    } else if (
+      source === DIRECTORY_TREES_COMPONENT_MODULE &&
+      specifier.type === "ImportDefaultSpecifier"
+    ) {
+      kind = "directory_trees";
     }
 
     if (kind === undefined) {
@@ -293,6 +285,13 @@ function transformComponent(
       return malformed(context.entryId, "TabItem", "must be a direct child of Tabs");
     case "cli_command_reference":
       return transformCliCommandReference(node, context);
+    case "directory_trees":
+      // Like the hero image, the illustration repeats what the text says, so agents get only the
+      // text beside it.
+      if (node.attributes.length !== 0) {
+        return malformed(context.entryId, "DirectoryTrees", "attributes are not supported");
+      }
+      return transformChildren(node.children, context);
   }
 }
 
@@ -351,63 +350,6 @@ function transformCliCommandReference(
   return { ok: true, value: cliCommandReferenceNodes(command.value) };
 }
 
-/** Converts one parsed CLI command into the MDAST nodes used by Markdown pages. */
-export function cliCommandReferenceNodes(command: CliReferenceCommand): RootContent[] {
-  const rows: TableRow[] = [
-    tableRow([textCell("Argument or option"), textCell("Meaning")]),
-    ...command.arguments.map((argument) =>
-      tableRow([
-        { type: "tableCell", children: [{ type: "inlineCode", value: argument.syntax }] },
-        {
-          type: "tableCell",
-          children: argumentMeaning(argument),
-        },
-      ]),
-    ),
-  ];
-  const table: Table = { type: "table", align: [null, null], children: rows };
-  return [paragraphWithChildren([{ type: "inlineCode", value: command.usage }]), table];
-}
-
-function argumentMeaning(argument: CliReferenceCommand["arguments"][number]): PhrasingContent[] {
-  const children = argument.help === null ? [] : inlineNodes(argument.help);
-  if (argument.default_values.length > 0) {
-    appendLabeledInlineCode(children, "Default:", argument.default_values.join(" "));
-  }
-  if (argument.conflicts_with.length > 0) {
-    appendLabeledInlineCode(children, "Conflicts with:", argument.conflicts_with.join(", "));
-  }
-  if (argument.possible_values.length > 0) {
-    appendSeparator(children);
-    children.push(strong("Allowed values:"));
-    for (const [index, value] of argument.possible_values.entries()) {
-      children.push({ type: "text", value: index === 0 ? " " : "; " });
-      children.push({ type: "inlineCode", value: value.name });
-      if (value.help !== null) {
-        children.push({ type: "text", value: " — " }, ...inlineNodes(value.help));
-      }
-    }
-  }
-  return children;
-}
-
-function appendLabeledInlineCode(children: PhrasingContent[], label: string, value: string): void {
-  appendSeparator(children);
-  children.push(strong(label), { type: "text", value: " " }, { type: "inlineCode", value });
-}
-
-function appendSeparator(children: PhrasingContent[]): void {
-  if (children.length > 0) children.push({ type: "text", value: " " });
-}
-
-function inlineNodes(value: string): PhrasingContent[] {
-  return inlineCodeSegments(value).map((segment) =>
-    segment.kind === "code"
-      ? { type: "inlineCode", value: segment.value }
-      : { type: "text", value: segment.value },
-  );
-}
-
 function heroNodes(hero: MarkdownHero | undefined, context: TransformContext): RootContent[] {
   if (hero === undefined) return [];
   const items: ListItem[] = hero.actions.map((action) => ({
@@ -452,23 +394,11 @@ function paragraph(value: string): Paragraph {
 }
 
 function paragraphStrong(value: string): Paragraph {
-  return paragraphWithChildren([strong(value)]);
+  return paragraphWithChildren([{ type: "strong", children: [{ type: "text", value }] }]);
 }
 
 function paragraphWithChildren(children: PhrasingContent[]): Paragraph {
   return { type: "paragraph", children };
-}
-
-function strong(value: string): Strong {
-  return { type: "strong", children: [{ type: "text", value }] };
-}
-
-function textCell(value: string): TableCell {
-  return { type: "tableCell", children: [{ type: "text", value }] };
-}
-
-function tableRow(children: TableCell[]): TableRow {
-  return { type: "tableRow", children };
 }
 
 function invalidEntryId(error: DocumentationRouteError): Result<never, MarkdownRenderError> {
