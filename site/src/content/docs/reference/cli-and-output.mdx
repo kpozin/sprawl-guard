@@ -3,7 +3,9 @@ title: CLI and output reference
 description: Commands, options, formats, diagnostics, and exit codes.
 ---
 
+import { TabItem, Tabs } from "@astrojs/starlight/components";
 import CliCommandReference from "../../../components/CliCommandReference.astro";
+import CollapsibleSection from "../../../components/CollapsibleSection.astro";
 
 ## Command line
 
@@ -71,9 +73,9 @@ With no paths, `tighten` covers every ratchet entry. With paths, it covers only 
 them. The output lists lowered or removed ceilings, and `--format toml` prints the complete
 resulting ratchet file. When no ceiling changes, `--write` leaves the file untouched.
 
-### Inspect and upgrade the configuration
+### Inspect, upgrade, and import configuration
 
-The `config` command has three subcommands:
+The `config` command has four subcommands:
 
 - `config resolved` prints the effective settings: the built-in defaults merged with your
   configuration, including each language's inherited line limits. It spells values out as checks
@@ -85,6 +87,8 @@ The `config` command has three subcommands:
   values as a hand-written file, so `count_lines = []` means only code lines count.
 - `config upgrade` previews the configuration upgraded to the current schema. `--write` saves it,
   and `--check` saves nothing and exits `1` when an upgrade is pending.
+- `config import` prints a starter configuration based on a project's ESLint or Oxlint
+  `max-lines` rule. Pass `--write` to create a configuration file.
 
 To list only the languages found in the repository, use `languages --detected`.
 
@@ -102,6 +106,76 @@ sprawl-guard languages --detected
 <CliCommandReference path="sprawl-guard config export" />
 
 <CliCommandReference path="sprawl-guard config upgrade" />
+
+<CollapsibleSection>
+<Fragment slot="heading">
+
+### Import ESLint or Oxlint limits and suppressions
+
+</Fragment>
+
+Run the import from your linter's project root. Config import and ESLint suppression import
+require a native Sprawl Guard build, Node.js, and an installed linter in the project's
+`node_modules` or an ancestor's. Sprawl Guard invokes that installation to load the project
+config and plugins.
+
+Add `--write` before the linter name to create a Sprawl Guard config, or copy the printed language
+tables into an existing config. The same line limit and counting mode apply to production and
+test files in JavaScript, TypeScript, JSX, and TSX. Use Sprawl Guard path overrides to set
+different ceilings. Compare the results before removing the original rule, since the tools may
+count lines differently.
+
+Ratchet import adds entries for over-limit files with matching suppressions and reads the
+linter's default bulk suppression file when present. Add `--write` to the `update` command
+after reviewing the preview.
+
+<Tabs>
+  <TabItem label="ESLint">
+
+Pass a source file that uses the limit you want to import. ESLint 8.57 uses legacy config by default.
+
+```sh title="Preview the configuration"
+sprawl-guard config import eslint src/index.js
+```
+
+Once your Sprawl Guard config is in place, preview the ratchet. Sprawl Guard runs ESLint to
+find suppressed diagnostics for over-limit JavaScript and TypeScript files. ESLint must be
+configured to parse the files you include in the import.
+
+```sh title="Preview the ratchet"
+sprawl-guard update --import eslint
+```
+
+<CliCommandReference path="sprawl-guard config import eslint" />
+
+  </TabItem>
+  <TabItem label="Oxlint">
+
+Sprawl Guard reads one rule from the root Oxlint config. Review per-path limits separately.
+Verify inherited options because Oxlint's
+configuration printer [can omit them](https://github.com/oxc-project/oxc/issues/22230).
+
+```sh title="Preview the configuration"
+sprawl-guard config import oxlint
+```
+
+Once your Sprawl Guard config is in place, preview the ratchet. Sprawl Guard reads leading
+whole-file `oxlint-disable` and `eslint-disable` comments that disable `max-lines` or all rules.
+It skips files with a possible re-enable directive. ESLint-style comments also require a native
+Sprawl Guard build and an installed Oxlint whose resolved configuration honors them.
+
+```sh title="Preview the ratchet"
+sprawl-guard update --import oxlint
+```
+
+<CliCommandReference path="sprawl-guard config import oxlint" />
+
+  </TabItem>
+</Tabs>
+
+<CliCommandReference path="sprawl-guard config import" />
+
+</CollapsibleSection>
 
 ### `schema {config|ratchet}`
 
