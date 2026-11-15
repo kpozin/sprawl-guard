@@ -20,9 +20,11 @@ Use `sprawl-guard config resolved` to see the full resolved configuration. Use
 
 ## Editor support
 
-Sprawl Guard publishes separate JSON Schemas for root configuration and ratchet files. `init`,
-`config export`, `update --write`, and `tighten --write` include the Taplo directive that selects
-the appropriate schema in editors such as the Even Better TOML extension for VS Code.
+Sprawl Guard publishes JSON Schemas for the
+[configuration](https://kpozin.github.io/sprawl-guard/schemas/v2/sprawl-guard.schema.json) and the
+[ratchet file](https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.ratchet.schema.json).
+`init`, `config export`, `update --write`, and `tighten --write` include the Taplo directive that
+selects the appropriate schema in editors such as the Even Better TOML extension for VS Code.
 
 Run `sprawl-guard schema config` or `sprawl-guard schema ratchet` to print either schema for local
 or offline use.
