@@ -24,7 +24,8 @@ import { PUBLIC_PACKAGE_VERSION_SCHEMA } from "./package-version.ts";
 
 const BETA_DIST_TAG = NPM_DIST_TAG_SCHEMA.parse("beta");
 const VERSION_0_0_9 = PUBLIC_PACKAGE_VERSION_SCHEMA.parse("0.0.9");
-const VERSION_0_3_0 = PUBLIC_PACKAGE_VERSION_SCHEMA.parse("0.3.0");
+/** A version newer than any release, so the tests hold whatever the package version is. */
+const NEWER_VERSION = PUBLIC_PACKAGE_VERSION_SCHEMA.parse("999.0.0");
 const FIRST_RUNTIME_PACKAGE = RUNTIME_PACKAGE_DEFINITIONS[0];
 assert.ok(FIRST_RUNTIME_PACKAGE !== undefined);
 const RELEASE_DIRECTORY = ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse("/release");
@@ -269,7 +270,7 @@ describe("publishNpmPublicationRequests", () => {
         npmDistTag: BETA_DIST_TAG,
         operations: publicationOperations({
           distTagInspections: [
-            { kind: "ok", remote: { kind: "present", version: VERSION_0_3_0 } },
+            { kind: "ok", remote: { kind: "present", version: NEWER_VERSION } },
           ],
           events,
           inspections: [{ kind: "ok", integrity: { kind: "absent" } }],
@@ -281,7 +282,7 @@ describe("publishNpmPublicationRequests", () => {
       assert.deepEqual(result, {
         kind: "failed",
         packageName: WRAPPER_PACKAGE_NAME,
-        detail: `npm dist-tag beta already targets newer version ${VERSION_0_3_0}`,
+        detail: `npm dist-tag beta already targets newer version ${NEWER_VERSION}`,
       });
       assert.deepEqual(events, ["pack", "inspect"]);
     });
@@ -423,7 +424,7 @@ describe("publishNpmPublicationRequests", () => {
         operations: publicationOperations({
           distTagInspections: [
             { kind: "ok", remote: { kind: "present", version: PACKAGE_VERSION } },
-            { kind: "ok", remote: { kind: "present", version: VERSION_0_3_0 } },
+            { kind: "ok", remote: { kind: "present", version: NEWER_VERSION } },
           ],
           events: [],
           inspections: [
@@ -440,7 +441,7 @@ describe("publishNpmPublicationRequests", () => {
       assert.deepEqual(result, {
         kind: "failed",
         packageName: WRAPPER_PACKAGE_NAME,
-        detail: `npm dist-tag beta already targets newer version ${VERSION_0_3_0}`,
+        detail: `npm dist-tag beta already targets newer version ${NEWER_VERSION}`,
       });
     });
   });
@@ -453,7 +454,7 @@ describe("publishNpmPublicationRequests", () => {
         operations: publicationOperations({
           distTagInspections: [
             { kind: "ok", remote: { kind: "present", version: VERSION_0_0_9 } },
-            { kind: "ok", remote: { kind: "present", version: VERSION_0_3_0 } },
+            { kind: "ok", remote: { kind: "present", version: NEWER_VERSION } },
           ],
           events,
           inspections: [

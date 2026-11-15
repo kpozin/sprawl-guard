@@ -2,12 +2,13 @@
 
 All notable changes to `sprawl-guard` will be documented in this file.
 
-## Unreleased
+## [0.3.0] - 2026-11-14
 
 This release renames configuration keys, ratchet keys, and machine-readable output to match the
 documentation's vocabulary. Configurations written for 0.2.0 (schema version 1) still upgrade with
-`sprawl-guard config upgrade --write`. Configuration and ratchet files written for 0.3.0-dev.0 keep
-their schema versions and need the renames below applied by hand.
+`sprawl-guard config upgrade --write`, and upgrading from 0.2.0 also brings the changes listed under
+0.3.0-dev.0. Configuration and ratchet files written for 0.3.0-dev.0 keep their schema versions and
+need the renames below applied by hand.
 
 ### Changed
 
@@ -60,7 +61,10 @@ their schema versions and need the renames below applied by hand.
 - SARIF rule descriptions and messages use the same vocabulary.
 - Each command's help lists only its own `--format` values and states every default.
 - The documentation uses one vocabulary, defined on the "How checks work" page. The guide is now
-  four pages: "Get started", "Run in CI", "Work with the ratchet", and "Configure checks".
+  five pages: "Get started", "Run in CI", "Use with Bazel", "Work with the ratchet", and
+  "Configure checks".
+- Language detection uses Tokei 15. It recognizes Blade, C3, Djot, and Godot text scene files, so
+  `check` now includes them.
 
 ### Added
 
@@ -70,11 +74,14 @@ their schema versions and need the renames below applied by hand.
   failures. The npm package includes it.
 - Release archives, crates, and npm packages come with signed provenance attestations.
   `SECURITY.md` explains how to verify them.
+- The repository is a Bazel module, so a Bazel workspace can build the CLI and library from
+  source. "Use with Bazel" explains how to add it.
 
 ### Fixed
 
 - The npm package's `schema/sprawl-guard.schema.json` is the current (v2) configuration schema.
   It was the v1 schema.
+- The WASI fallback writes its complete output when stdout is a pipe that fills up.
 
 ### Removed
 
