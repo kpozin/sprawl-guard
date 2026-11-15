@@ -286,7 +286,7 @@ function printFailure(
       return;
     case "release_ref_not_tag":
       console.error(
-        `release workflow must be dispatched from a tag, not ${failure.actualRefType}:${failure.actualRefName}`,
+        `workflow must run from a release tag, not ${failure.actualRefType}:${failure.actualRefName}`,
       );
       return;
     case "release_commit_mismatch":

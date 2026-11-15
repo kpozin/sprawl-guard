@@ -5,15 +5,6 @@ on:
     types:
       - released
   workflow_dispatch:
-    inputs:
-      release_commit:
-        description: Full commit SHA of the published release
-        required: true
-        type: string
-      release_tag:
-        description: Published v-prefixed release tag to deploy
-        required: true
-        type: string
 
 permissions:
   contents: read
@@ -28,8 +19,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          ref: ${{ github.event.release.tag_name || inputs.release_tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
@@ -62,9 +51,6 @@ jobs:
         working-directory: npm
         env:
           GITHUB_EVENT_COMMIT: ${{ github.sha }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          INPUT_RELEASE_COMMIT: ${{ inputs.release_commit }}
-          INPUT_RELEASE_TAG: ${{ github.event.release.tag_name || inputs.release_tag }}
         run: pnpm run release:metadata
 
       - name: Verify manual deployment uses a published stable release
