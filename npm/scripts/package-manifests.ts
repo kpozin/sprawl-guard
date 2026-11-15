@@ -66,7 +66,6 @@ interface SharedWrapperPackageManifestFields
   };
   readonly dependencies: {
     readonly "better-result": "3.0.1";
-    readonly zod: "4.6.7";
   };
 }
 
@@ -148,7 +147,6 @@ export const PACKAGE_VERSION = loadPublicPackageVersion(
   fileURLToPath(new URL("../package-version.json", import.meta.url)),
 );
 const BETTER_RESULT_VERSION = trustedPublicPackageVersion("3.0.1");
-const ZOD_VERSION = trustedPublicPackageVersion("4.6.7");
 /** License files copied into each publishable npm package. */
 export const PUBLISH_LICENSE_FILE_NAMES = ["LICENSE-MIT", "LICENSE-APACHE"] as const;
 const LICENSE_EXPRESSION = "(MIT OR Apache-2.0)" as const satisfies LicenseExpression;
@@ -188,7 +186,6 @@ const SHARED_WRAPPER_PACKAGE_MANIFEST_FIELDS: SharedWrapperPackageManifestFields
   },
   dependencies: {
     "better-result": BETTER_RESULT_VERSION,
-    zod: ZOD_VERSION,
   },
 };
 

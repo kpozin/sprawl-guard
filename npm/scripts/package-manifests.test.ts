@@ -44,6 +44,7 @@ describe("renderPublishWrapperPackageManifest", () => {
     it("lists every runtime package and stays script-free", () => {
       const manifest = renderPublishWrapperPackageManifest();
 
+      assert.deepEqual(manifest.dependencies, { "better-result": "3.0.1" });
       assert.deepEqual(
         manifest.optionalDependencies,
         Object.fromEntries(
