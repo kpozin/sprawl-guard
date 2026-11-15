@@ -5,53 +5,49 @@ description: Keep source files and directories within the size limits that Spraw
 
 # Sprawl Guard
 
-Sprawl Guard checks that source files stay under a line limit and that directories hold no more
-than a set number of source files. A ratchet file, `sprawl-guard.ratchet.toml`, records the
-violations that a repository already had, and the check fails if any of them grows.
+Sprawl Guard limits the lines in each source file and the source files directly inside each
+directory. `sprawl-guard.ratchet.toml` records accepted violations, and the check fails if one
+grows.
 
-## Run Sprawl Guard
-
-Run commands from the repository root. If `sprawl-guard` is not on `PATH`, run it through the
-project's package manager, such as `npm exec -- sprawl-guard` or `pnpm exec sprawl-guard`. If the
-repository defines its own task for the check, such as a `just` or `make` recipe, use that instead.
+Run commands from the repository root, through the repository's own task for the check if it has
+one. If `sprawl-guard` is not on `PATH`, run it through the package manager, as in
+`npm exec -- sprawl-guard`.
 
 ## Before declaring work complete
 
-1. If the repository has a ratchet file, run `sprawl-guard tighten --write`. It lowers or removes
-   ratchet entries for violations that shrank, and never raises one, so it needs no review.
-2. Run `sprawl-guard check`. It exits with status 0 when the check passes, 1 when it finds
-   violations, and 2 when it cannot run, for example because of a configuration error.
-3. Keep ratchet file changes with the code changes that caused them.
+1. If the repository has a ratchet file, run `sprawl-guard tighten --write`. It only lowers or
+   removes entries.
+2. Run `sprawl-guard check`. Fix the violations your changes caused, run it again, and tell the user
+   about any others.
+3. Commit ratchet changes with the code changes that caused them.
 
-## Fix a failing check
+## Fix a violation by reorganizing
 
-The check groups failures under these headings:
+Give each file and directory one clear purpose. Read the code first, and decide what its parts are
+for.
 
-- **Files over the line limit** or **Test files over the line limit**: split the file into
-  cohesive, clearly named modules with distinct responsibilities.
-- **Directories with too many direct files** or **Test directories with too many direct files**:
-  group related files into clearly named subdirectories.
-- **Stale ratchet entries**: the violation shrank, so run `sprawl-guard tighten --write`.
+- **File over its limit:** list its responsibilities, such as a data type with its parsing, one
+  subcommand, or the tests for one behavior. Move each into its own module named for it, keep public
+  interfaces stable, and update imports.
+- **Directory with too many files:** group the files by the feature or concept they serve, and move
+  each group into a subdirectory named for it. Follow the repository's existing layout.
+- **Violation with a ceiling,** such as `450 lines (limit 400, ceiling 430)`: it grew since it was
+  recorded. Reorganize it within the limit if you can, or at least to the ceiling, then run
+  `sprawl-guard tighten --write`.
 
-A failure that names a ceiling, such as `450 lines (limit 400, ceiling 430)`, is a recorded
-violation that grew. Shrink it to the ceiling or below, then run `sprawl-guard tighten --write`.
-Bringing it within the limit is better.
+These don't count as reorganizing:
 
-Do not satisfy a limit by moving code into miscellaneous "helpers", "utils" or "common" files.
+- Moving code into catch-alls such as `utils`, `helpers`, `common`, or `misc`.
+- Cutting a file at an arbitrary line, or grouping files that share nothing.
+- Joining lines, shortening names, or deleting needed code.
+- Raising limits, adding overrides or exclusions, passing `--no-require-ratchet-current`, or running
+  `sprawl-guard update --write`.
 
-Do not change what the check counts or allows to make it pass. That includes raising limits, adding
-overrides or exclusions to `sprawl-guard.toml`, passing `--no-require-ratchet-current`, and running
-`sprawl-guard update --write` or `--allow-increases`. If a violation cannot reasonably be fixed,
-stop and ask the user. Show them the output of `sprawl-guard update PATH` without `--write`, which
-previews the ratchet entry that recording it would add.
+If no reorganization makes sense, stop and ask the user. Explain why, and show the output of
+`sprawl-guard update PATH --allow-increases`, which previews the new or raised ceiling without
+writing it.
 
 ## Investigate
 
-- `sprawl-guard explain PATH` shows how Sprawl Guard classifies a file or directory and which limits
-  apply to it. For a directory, it shows the direct-file count against the limit.
-- `--format json` on `check` and `explain` prints machine-readable output. Check the exit code
-  before parsing it.
-- The documentation is available as Markdown, starting at
-  <https://kpozin.github.io/sprawl-guard/index.md>. The most useful pages are
-  [Work with the ratchet](https://kpozin.github.io/sprawl-guard/ratchet.md) and
-  [CLI and output](https://kpozin.github.io/sprawl-guard/reference/cli-and-output.md).
+`sprawl-guard explain PATH` shows how a file or directory is classified and which limits apply. The
+documentation is at <https://kpozin.github.io/sprawl-guard/index.md>.

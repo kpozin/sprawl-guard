@@ -4,6 +4,11 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- The agent skill is shorter and explains how to fix a violation by reorganizing: split a file
+  along its responsibilities, and group a directory's files by the feature they serve.
+
 ## [0.3.2] - 2026-11-15
 
 Version 0.3.1 was tagged but never published. This release contains the changes planned for it.
