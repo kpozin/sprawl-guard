@@ -253,6 +253,22 @@ mod tests {
             );
             assert_eq!(measurement.actual().get(), 4);
         }
+
+        #[test]
+        fn it_recognizes_a_fence_terminated_by_unicode_whitespace() {
+            let source = include_str!("../testdata/line_counts/markdown.md")
+                .replace("```rust\n", "```rust,ignore\u{a0}\n");
+
+            let measurement = TokeiCodeLineCounter
+                .count_source(
+                    &source,
+                    LanguageId::new("Markdown").unwrap(),
+                    CountLines::CodeAndComments,
+                )
+                .unwrap();
+
+            assert_eq!(measurement.line_counts().code, LineCount::new(1));
+        }
     }
 
     mod when_counting_the_rust_doc_comment_golden_fixture {

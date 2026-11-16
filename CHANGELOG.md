@@ -9,6 +9,19 @@ All notable changes to `sprawl-guard` will be documented in this file.
 - The agent skill is shorter and explains how to fix a violation by reorganizing: split a file
   along its responsibilities, and group a directory's files by the feature they serve.
 
+### Fixed
+
+- The WebAssembly build that the npm package runs on platforms without a native build now behaves
+  like a native build:
+  - `config import` and `update --import` run ESLint and Oxlint.
+  - Paths may be absolute or relative to the working directory, as in `--root ..`. On Windows they
+    may name any drive or network share.
+  - `traversal.same_file_system` keeps the walk on the root's filesystem.
+  - `traversal.follow_symlinks = "directories"` follows directory links and reports link loops.
+    It previously failed with "same-file is not supported on this platform".
+- `update --import eslint` imports suppressions for files reached through a followed symbolic link
+  that points outside the project. It failed with "is not under root".
+
 ### Removed
 
 - The documentation site no longer publishes the v1 configuration schema. Run

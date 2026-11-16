@@ -7,20 +7,33 @@ import { cliCommandReferenceNodes } from "./cli-reference-nodes.ts";
 import { renderDocumentationMarkdown } from "./render.ts";
 import { createDocumentationRoutes } from "./routes.ts";
 
-const routeResult = createDocumentationRoutes(["index", "quick-start", "run-in-ci"]);
+const routeResult = createDocumentationRoutes([
+  "index",
+  "quick-start",
+  "reference/cli-and-output",
+  "run-in-ci",
+]);
 assert.equal(routeResult.ok, true);
 if (!routeResult.ok) throw new Error("test route setup failed");
 const routes = routeResult.value;
 
 describe("documentation Markdown rendering", () => {
   describe("when an entry uses the supported Starlight components", () => {
-    test("preserves every tab and the ordered steps", () => {
+    test("preserves every tab inside a disclosure and the ordered steps", () => {
       const result = renderDocumentationMarkdown(
         {
-          id: "quick-start",
+          id: "reference/cli-and-output",
           title: "Quick start",
           description: "Install and run the first check.",
           body: `import { Steps, TabItem, Tabs } from "@astrojs/starlight/components";
+import CollapsibleSection from "../../../components/CollapsibleSection.astro";
+
+<CollapsibleSection>
+<Fragment slot="heading">
+
+### Installation commands
+
+</Fragment>
 
 <Tabs syncKey="package-manager">
   <TabItem label="npm">
@@ -39,6 +52,8 @@ pnpm exec sprawl-guard check
   </TabItem>
 </Tabs>
 
+</CollapsibleSection>
+
 <Steps>
 
 1. Inspect the repository.
@@ -52,6 +67,7 @@ pnpm exec sprawl-guard check
       assert.equal(result.ok, true);
       if (!result.ok) return;
       assert.match(result.value, /^# Quick start\n\nInstall and run the first check\./u);
+      assert.match(result.value, /^### Installation commands$/mu);
       assert.match(result.value, /\*\*npm\*\*[\s\S]*npm exec -- sprawl-guard check/u);
       assert.match(result.value, /\*\*pnpm\*\*[\s\S]*pnpm exec sprawl-guard check/u);
       assert.match(result.value, /1\. Inspect the repository\./u);
@@ -79,7 +95,7 @@ pnpm exec sprawl-guard check
     test("includes usage, arguments, conflicts, and allowed values", () => {
       const result = renderDocumentationMarkdown(
         {
-          id: "quick-start",
+          id: "reference/cli-and-output",
           title: "CLI",
           description: "Command reference.",
           body: `import CliCommandReference from "../../../components/CliCommandReference.astro";
