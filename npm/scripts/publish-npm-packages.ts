@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   PACKAGE_VERSION,
   PUBLISH_LICENSE_FILE_NAMES,
+  PUBLISH_WRAPPER_BUILD_FILES,
   PUBLISH_WRAPPER_DOCUMENTS,
   PUBLISH_WORKSPACE_DIRECTORY,
   RUNTIME_PACKAGE_DEFINITIONS,
@@ -153,7 +154,7 @@ export function npmPublicationRequests(args: {
       },
       expectedManifestText: wrapperManifestText,
       expectedPackedManifestText: pnpmPackedWrapperManifest(wrapperManifestText),
-      expectedPackedPaths: wrapperPackedPaths(),
+      expectedPackedPaths: WRAPPER_REQUIRED_PATHS,
       packageDirectory: ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(
         path.join(publishWorkspace, "sprawl-guard"),
       ),
@@ -182,33 +183,11 @@ function generatedTextFile(
   return file.text;
 }
 
-function wrapperPackedPaths(): readonly PackageRelativePath[] {
-  const librarySourceDirectory = path.join(
-    WORKSPACE_ROOT_DIRECTORY,
-    "sprawl-guard",
-    "src",
-    "lib",
-  );
-  const compiledLibraryPaths = fs
-    .readdirSync(librarySourceDirectory, { withFileTypes: true })
-    .filter(
-      (entry) =>
-        entry.isFile()
-        && entry.name.endsWith(".ts")
-        && !entry.name.endsWith(".test.ts"),
-    )
-    .map((entry) => `dist/lib/${entry.name.slice(0, -3)}.js`);
-  return parsePackageRelativePaths([
-    ...WRAPPER_REQUIRED_PATHS,
-    ...compiledLibraryPaths,
-  ]);
-}
-
 const WRAPPER_REQUIRED_PATHS = parsePackageRelativePaths([
   "package.json",
   "README.md",
   ...PUBLISH_LICENSE_FILE_NAMES,
-  "dist/bin/sprawl-guard.js",
+  ...PUBLISH_WRAPPER_BUILD_FILES,
   ...PUBLISH_WRAPPER_DOCUMENTS.map((document) => document.packagePath),
 ]);
 

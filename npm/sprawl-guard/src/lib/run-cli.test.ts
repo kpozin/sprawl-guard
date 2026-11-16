@@ -9,20 +9,18 @@ import { RuntimeFailureError } from "./errors.js";
 import { runCli } from "./run-cli.js";
 import { resolveNativePackageName, WASM_PACKAGE_NAME } from "./resolve-package.js";
 
-const COMPILED_WRAPPER_ENTRYPOINT = fileURLToPath(
-  new URL("../bin/sprawl-guard.js", import.meta.url),
-);
 const WRAPPER_PACKAGE_DIRECTORY = path.resolve(
   fileURLToPath(new URL(".", import.meta.url)),
   "..",
   "..",
 );
-const WASI_RUNNER_MODULE_PATH = path.join(
+const COMPILED_WRAPPER_ENTRYPOINT = path.join(
   WRAPPER_PACKAGE_DIRECTORY,
   "dist",
-  "lib",
-  "run-wasi.js",
+  "bin",
+  "sprawl-guard.js",
 );
+const WASI_RUNNER_MODULE_PATH = fileURLToPath(new URL("./run-wasi.js", import.meta.url));
 const UNAVAILABLE_WASI_RUNNER_MODULE_PATH = `${WASI_RUNNER_MODULE_PATH}.unavailable`;
 /** Minimal WASI module whose `_start` function calls `proc_exit(0)`. */
 const WASI_EXIT_SUCCESS_MODULE = Buffer.from([

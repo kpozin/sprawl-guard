@@ -3,6 +3,30 @@ use super::common::*;
 mod when_a_schema_is_requested {
     use super::*;
 
+    mod when_compared_with_the_generator {
+        use super::*;
+        use sprawl_guard_lib::config::authored_config_json_schema;
+        use sprawl_guard_lib::{authored_ratchet_json_schema, render_authored_schema};
+
+        #[test]
+        fn both_documents_match_the_generated_json_byte_for_byte() {
+            for (name, schema) in [
+                ("config", authored_config_json_schema()),
+                ("ratchet", authored_ratchet_json_schema()),
+            ] {
+                let expected = render_authored_schema(schema);
+                let output = sprawl_guard_no_root()
+                    .args(["schema", name])
+                    .output()
+                    .unwrap();
+
+                assert_exit_code(&output, exit_codes::SUCCESS);
+                assert_eq!(output.stdout, expected.as_bytes(), "{name} schema");
+                assert_eq!(stderr(&output), "");
+            }
+        }
+    }
+
     #[test]
     fn config_prints_the_authored_configuration_contract() {
         let output = sprawl_guard_no_root()

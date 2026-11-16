@@ -51,5 +51,5 @@ pub use value::line_types::{
     LineCounts,
 };
 pub use value::path::{RatchetFilePath, RatchetFilePathError, RelativePath};
-pub use value::schema::{TomlSchemaDirective, TomlSchemaUrl};
+pub use value::schema::{TomlSchemaDirective, TomlSchemaUrl, render_authored_schema};
 pub use value::text::DiagnosticDetail;

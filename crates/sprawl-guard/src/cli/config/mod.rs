@@ -1,3 +1,4 @@
+mod import;
 mod migrate;
 
 use serde::Serialize;
@@ -8,6 +9,7 @@ use sprawl_guard_lib::config::{
 use super::ConfigUpgradeArgs;
 use crate::error::{CliError, Result};
 
+pub(super) use import::execute_config_import;
 pub(super) use migrate::{execute_config_migrate, render_config_migration_stdout};
 
 /// Loaded config for a config-inspection command.

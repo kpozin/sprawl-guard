@@ -4,6 +4,7 @@ mod execution;
 mod explain_output;
 mod init;
 mod languages;
+pub(crate) mod linter;
 mod machine;
 mod ratchet;
 mod reference;
@@ -43,7 +44,7 @@ enum Command {
     Update(UpdateArgs),
     /// Lower or remove ratchet entries after violations shrink.
     Tighten(TightenArgs),
-    /// Show or upgrade the configuration.
+    /// Show, upgrade, or import configuration.
     Config(ConfigCommand),
     /// Print a JSON Schema for a Sprawl Guard TOML document.
     Schema(SchemaArgs),
@@ -167,6 +168,10 @@ struct UpdateArgs {
     /// raises them.
     #[arg(long)]
     allow_increases: bool,
+
+    /// Add only file violations covered by this project's linter suppressions.
+    #[arg(long, value_enum)]
+    import: Option<linter::Linter>,
 
     /// Output format.
     #[arg(long, default_value = "human")]
@@ -304,6 +309,34 @@ enum ConfigSubcommand {
     Export(ProjectArgs),
     /// Preview or save the configuration file upgraded to the current schema.
     Upgrade(ConfigUpgradeArgs),
+    /// Import a JavaScript and TypeScript line limit from an installed linter.
+    Import(ConfigImportArgs),
+}
+
+/// Arguments for `config import`.
+#[derive(Debug, Args)]
+struct ConfigImportArgs {
+    #[command(flatten)]
+    project: ProjectArgs,
+
+    /// Create the config file. Fails if the target already exists.
+    #[arg(long)]
+    write: bool,
+
+    #[command(subcommand)]
+    source: ConfigImportSource,
+}
+
+/// The configuration lookup each linter supports.
+#[derive(Debug, Subcommand)]
+enum ConfigImportSource {
+    /// Use the ESLint configuration that applies to one representative source file.
+    Eslint {
+        /// Source path relative to the root.
+        sample: PathBuf,
+    },
+    /// Use the root Oxlint configuration.
+    Oxlint,
 }
 
 /// Arguments for `config upgrade`.
