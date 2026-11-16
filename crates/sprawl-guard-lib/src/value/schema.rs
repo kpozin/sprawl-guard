@@ -1,5 +1,5 @@
 use nutype::nutype;
-use schemars::SchemaGenerator;
+use schemars::{Schema, SchemaGenerator};
 use schemars::generate::SchemaSettings;
 use schemars::transform::ReplaceConstValue;
 
@@ -56,4 +56,14 @@ pub(crate) fn authored_toml_schema_generator() -> SchemaGenerator {
         })
         .for_deserialize()
         .into_generator()
+}
+
+/// Renders an authored schema as compact JSON with sorted keys and a trailing newline.
+///
+/// Sorting keeps the bytes stable across builds that enable different `serde_json` features.
+#[must_use]
+pub fn render_authored_schema(schema: Schema) -> String {
+    let mut document = schema.to_value();
+    document.sort_all_objects();
+    format!("{document}\n")
 }

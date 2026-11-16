@@ -19,6 +19,7 @@ const RELEASE_VERSION = "1.2.3";
 const OLDER_VERSION = "1.2.2";
 const WRAPPER_PACKAGE_NAME = "@kpozin/sprawl-guard";
 const RUNTIME_PACKAGE_NAME = "@kpozin/sprawl-guard-linux-x64-musl";
+const LARGE_FILE_BYTES = 600 * 1024;
 const TEMPORARY_ROOT = mkdtempSync(path.join(tmpdir(), "check-npm-install-"));
 
 after(() => {
@@ -143,7 +144,7 @@ describe("checkNpmInstall", () => {
 
         const result = await checkNpmInstall(candidateCheck(projectDirectory), npm);
 
-        assert.deepEqual(result, { kind: "ok" });
+        assert.equal(result.kind, "ok");
         assert.deepEqual(npm.calls, [
           [
             "--prefix",
@@ -192,7 +193,7 @@ describe("checkNpmInstall", () => {
 
         const result = await checkNpmInstall(registryCheck(projectDirectory, "automatic"), npm);
 
-        assert.deepEqual(result, { kind: "ok" });
+        assert.equal(result.kind, "ok");
         assert.deepEqual(npm.calls[0], [
           "--prefix",
           projectDirectory,
@@ -213,7 +214,7 @@ describe("checkNpmInstall", () => {
 
         const result = await checkNpmInstall(registryCheck(projectDirectory, "explicit"), npm);
 
-        assert.deepEqual(result, { kind: "ok" });
+        assert.equal(result.kind, "ok");
         assert.deepEqual(npm.calls[0], [
           "--prefix",
           projectDirectory,
@@ -242,7 +243,7 @@ describe("checkNpmInstall", () => {
           npm,
         );
 
-        assert.deepEqual(result, { kind: "ok" });
+        assert.equal(result.kind, "ok");
         assert.equal(npm.sleeps.count, 2);
       });
     });
@@ -258,7 +259,7 @@ describe("checkNpmInstall", () => {
           npm,
         );
 
-        assert.deepEqual(result, { kind: "ok" });
+        assert.equal(result.kind, "ok");
         assert.equal(npm.sleeps.count, 1);
       });
     });
@@ -427,8 +428,11 @@ function packFixture(
   assert.equal(packed.status, 0, packed.stderr);
 }
 
-/** Builds candidate archives for a fake wrapper that reports `reportedVersion`. */
-function fixtureCandidate(reportedVersion: string): string {
+/** Builds candidate archives for an install with a payload larger than the overhead budget. */
+function fixtureCandidate(
+  reportedVersion: string,
+  extraWrapperFiles: Readonly<Record<string, string>> = {},
+): string {
   const candidateDirectory = mkdtempSync(path.join(TEMPORARY_ROOT, "candidate-"));
   packFixture(
     candidateDirectory,
@@ -438,13 +442,14 @@ function fixtureCandidate(reportedVersion: string): string {
       version: RELEASE_VERSION,
     },
     {
+      ...extraWrapperFiles,
       "bin/sprawl-guard.js": `#!/usr/bin/env node\nconsole.log(process.argv[2] === "--version" ? "sprawl-guard ${reportedVersion}" : "Usage: sprawl-guard <COMMAND>");\n`,
     },
   );
   packFixture(
     candidateDirectory,
     { name: RUNTIME_PACKAGE_NAME, version: RELEASE_VERSION },
-    { "README.md": "runtime fixture\n" },
+    { "bin/sprawl-guard": "x".repeat(LARGE_FILE_BYTES) },
   );
   assert.equal(readdirSync(candidateDirectory).length, 2);
   return candidateDirectory;
@@ -491,10 +496,26 @@ describe("npmSpawn", () => {
 
 describe("check-npm-install command", () => {
   describe("when the candidate wrapper reports the release version", () => {
-    it("exits successfully", () => {
+    it("reports the installed footprint with the CLI payload outside the overhead budget", () => {
       const result = runScript(fixtureCandidate(RELEASE_VERSION));
 
       assert.equal(result.status, 0, String(result.stderr));
+      const report = /node_modules: (\d+) bytes total, (\d+) bytes outside CLI payloads/u.exec(
+        String(result.stdout),
+      );
+      assert.ok(report);
+      assert.equal(Number(report[1]) - Number(report[2]), LARGE_FILE_BYTES);
+    });
+  });
+
+  describe("when unpacked wrapper files exceed the footprint budget", () => {
+    it("fails and reports the size outside CLI payloads", () => {
+      const result = runScript(
+        fixtureCandidate(RELEASE_VERSION, { "dist/large.js": "x".repeat(LARGE_FILE_BYTES) }),
+      );
+
+      assert.equal(result.status, 1);
+      assert.match(String(result.stderr), /npm install exceeds the footprint budget/u);
     });
   });
 

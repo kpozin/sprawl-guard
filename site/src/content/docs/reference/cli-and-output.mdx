@@ -3,7 +3,9 @@ title: CLI and output reference
 description: Commands, options, formats, diagnostics, and exit codes.
 ---
 
+import { TabItem, Tabs } from "@astrojs/starlight/components";
 import CliCommandReference from "../../../components/CliCommandReference.astro";
+import CollapsibleSection from "../../../components/CollapsibleSection.astro";
 
 ## Command line
 
@@ -13,12 +15,7 @@ commands from the repository root, or pass its path with `--root`.
 <CliCommandReference path="sprawl-guard" />
 
 The npm package includes native builds for macOS (x64 and Arm), Linux (x64 and Arm with glibc, x64
-with musl), and Windows (x64). On other platforms it runs a slower WebAssembly build, which accepts
-an absolute path only for `--root`. Write other paths relative to the repository root:
-
-```sh
-sprawl-guard check --root /repo src/file.rs
-```
+with musl), and Windows (x64). On other platforms it runs a slower WebAssembly build.
 
 ## Commands
 
@@ -71,20 +68,22 @@ With no paths, `tighten` covers every ratchet entry. With paths, it covers only 
 them. The output lists lowered or removed ceilings, and `--format toml` prints the complete
 resulting ratchet file. When no ceiling changes, `--write` leaves the file untouched.
 
-### Inspect and upgrade the configuration
+### Inspect, upgrade, and import configuration
 
-The `config` command has three subcommands:
+The `config` command has four subcommands:
 
 - `config resolved` prints the effective settings: the built-in defaults merged with your
-  configuration, including each language's inherited line limits. It spells values out as checks
-  use them. `count_lines` lists every counted line type, including `code`, and `[files].exclude`
-  lists the built-in and added excludes together, and a language with an explicit `include` lists
-  its added globs there. This output is for reading, not for loading, and starts with a comment
-  that says so.
+  configuration, including each language's inherited line limits. It's for reading, not loading,
+  and spells values out as checks use them:
+  - `count_lines` lists every counted line type, including `code`.
+  - `[files].exclude` lists the built-in and added excludes together.
+  - A language with an explicit `include` lists its added globs there.
 - `config export` prints the complete configuration, ready to commit. It uses the same keys and
   values as a hand-written file, so `count_lines = []` means only code lines count.
 - `config upgrade` previews the configuration upgraded to the current schema. `--write` saves it,
   and `--check` saves nothing and exits `1` when an upgrade is pending.
+- `config import` prints a starter configuration based on a project's ESLint or Oxlint
+  `max-lines` rule. Pass `--write` to create a configuration file.
 
 To list only the languages found in the repository, use `languages --detected`.
 
@@ -103,6 +102,112 @@ sprawl-guard languages --detected
 
 <CliCommandReference path="sprawl-guard config upgrade" />
 
+<CollapsibleSection>
+<Fragment slot="heading">
+
+### Import ESLint or Oxlint limits and suppressions
+
+</Fragment>
+
+To move an existing `max-lines` rule to Sprawl Guard:
+
+1. Run `config import` to preview a Sprawl Guard configuration based on the rule. Save it with
+   `--write`, or copy its `[languages]` tables into your existing configuration.
+2. Run `update --import` to add ratchet entries for oversized files that the linter exempts. It
+   measures files against the saved configuration.
+3. Compare `sprawl-guard check` with the linter's results, since the two count lines slightly
+   differently. Then remove the `max-lines` rule.
+
+Imports run the linter with Node.js, so the linter loads your configuration and plugins itself.
+Install the linter in `node_modules` under the root or one of its parents. `update --import` runs it
+only for oversized JavaScript-family files that no bulk suppression covers. If Oxlint is missing,
+`update --import oxlint` still imports `oxlint-disable` comments and skips `eslint-disable`
+comments.
+
+Sprawl Guard is tested with ESLint 8.57 and 10 and with Oxlint 1.93.
+
+#### Import the line limit
+
+`config import` applies the rule's `max` to production and test files in JavaScript, JSX,
+TypeScript, and TSX. Other languages keep their defaults. Without `max`, the limit is the linter's
+default of 300 lines. The rule's other options set `count_lines`:
+
+| `skipComments` | `skipBlankLines` | `count_lines`                 |
+| -------------- | ---------------- | ----------------------------- |
+| `false`        | `false`          | `["comments", "blank_lines"]` |
+| `true`         | `false`          | `["blank_lines"]`             |
+| `false`        | `true`           | `["comments"]`                |
+| `true`         | `true`           | `[]`                          |
+
+- The import fails if the rule is off or missing.
+- `--write`, placed before the linter name, saves to `sprawl-guard.toml` or the `--config` file. It
+  fails if the file exists. To update an existing configuration, copy the printed `[languages]`
+  tables into it.
+
+#### Import existing exemptions
+
+`update --import` works like `update`, but adds only entries for oversized files that the linter
+exempts from `max-lines`:
+
+- A file of any language is exempt if the bulk suppressions file at the root
+  (`eslint-suppressions.json` or `oxlint-suppressions.json`) lists it for `max-lines` with a count
+  above zero.
+- A JavaScript, JSX, TypeScript, or TSX file is also exempt if it disables the rule itself.
+- No directory entries are added. `check` still reports what was skipped.
+- Existing ceilings stay unchanged unless you pass `--allow-increases`.
+
+Review the preview, then rerun with `--write`.
+
+<Tabs>
+  <TabItem label="ESLint">
+
+ESLint resolves its configuration per file, so pass a source file, relative to the root, whose
+limit you want:
+
+```sh
+sprawl-guard config import eslint src/index.js
+sprawl-guard update --import eslint
+```
+
+To find inline exemptions, Sprawl Guard runs ESLint on the remaining oversized files and keeps
+those with a suppressed `max-lines` problem, so any directive that ESLint honors counts. A parse
+error in one of these files stops the import.
+
+<CliCommandReference path="sprawl-guard config import eslint" />
+
+  </TabItem>
+  <TabItem label="Oxlint">
+
+```sh
+sprawl-guard config import oxlint
+sprawl-guard update --import oxlint
+```
+
+Sprawl Guard reads the rule from `oxlint --print-config` at the root. It ignores `overrides`, so
+use Sprawl Guard [path overrides](/sprawl-guard/reference/configuration/#overrides) for per-path
+limits. The printed configuration
+[can omit inherited options](https://github.com/oxc-project/oxc/issues/22230), so check the
+imported limit against the configurations it extends.
+
+For inline exemptions, Sprawl Guard reads the comments before the first line of code in each
+oversized file. A file is exempt if one of them is:
+
+- `/* oxlint-disable max-lines */`, or `/* oxlint-disable */` for every rule.
+- `/* eslint-disable max-lines */` or `/* eslint-disable */`, unless the Oxlint configuration sets
+  `options.respectEslintDisableDirectives` to `false`.
+
+These comments don't exempt a file that contains `oxlint-enable` or `eslint-enable` anywhere,
+because the rule might be turned back on. A bulk suppression still does.
+
+<CliCommandReference path="sprawl-guard config import oxlint" />
+
+  </TabItem>
+</Tabs>
+
+<CliCommandReference path="sprawl-guard config import" />
+
+</CollapsibleSection>
+
 ### `schema {config|ratchet}`
 
 Prints the selected JSON Schema for local or offline editor integration.
@@ -114,21 +219,19 @@ Prints the selected JSON Schema for local or offline editor integration.
 Shows, for one path, whether it is ignored or excluded, which language claims it, whether it is a
 test file, its limits, matching overrides, its current lines, and Rust `cfg(test)` handling.
 
-A path that does not exist is still classified by its name, so you can see how Sprawl Guard would
-classify a planned file. Human output says the path was not found, and JSON reports
-`state: "not_found"` instead of `state: "measured"`.
-
-For a directory, `explain` lists each kind and language group of source files directly inside it.
-Each entry shows the files, their count against the direct-file limit, any ratchet ceiling, and the
-overrides that matched. JSON reports `kind: "directory"` with one entry per kind and group in
-`measurements`. When paths under the directory cannot be read, `explain` still reports the
-counts, warns that they may be incomplete, and lists the paths in `unreadable_paths`. It does this
-even when `[traversal].unreadable_paths = "fail"`. A directory that `check` skips, such as a hidden
-or gitignored one, is reported as ignored. A symlink to a directory is explained as a directory
-when `[traversal].follow_symlinks` follows directories.
-
-The active config file and the ratchet file are never checked as source files. `explain` reports
-them as `config_excluded` and `ratchet_excluded`.
+- **A path that doesn't exist** is classified by its name, so you can see where a planned file
+  would land. JSON reports `state: "not_found"` instead of `state: "measured"`.
+- **A directory** gets one entry per kind and language group of source files directly inside it,
+  with the files, their count against the limit, any ratchet ceiling, and matching overrides. JSON
+  reports `kind: "directory"`, with the entries in `measurements`.
+- **Unreadable paths under a directory** don't stop `explain`, even with
+  `[traversal].unreadable_paths = "fail"`. It warns that the counts may be incomplete and lists the
+  paths in `unreadable_paths`.
+- **A directory that `check` skips**, such as a hidden or gitignored one, is reported as ignored.
+  A symlink to a directory counts as a directory when `[traversal].follow_symlinks` follows
+  directories.
+- **The config file and the ratchet file** are never source files. `explain` reports them as
+  `config_excluded` and `ratchet_excluded`.
 
 <CliCommandReference path="sprawl-guard explain" />
 

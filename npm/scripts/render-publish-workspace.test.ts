@@ -81,7 +81,6 @@ describe("renderPublishWorkspace", () => {
         "schema/",
         "skills/",
         "dist/",
-        "!dist/lib/*.test.js",
       ]);
       for (const document of PUBLISH_WRAPPER_DOCUMENTS) {
         assert.equal(
