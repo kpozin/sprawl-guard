@@ -15,12 +15,7 @@ commands from the repository root, or pass its path with `--root`.
 <CliCommandReference path="sprawl-guard" />
 
 The npm package includes native builds for macOS (x64 and Arm), Linux (x64 and Arm with glibc, x64
-with musl), and Windows (x64). On other platforms it runs a slower WebAssembly build, which accepts
-an absolute path only for `--root`. Write other paths relative to the repository root:
-
-```sh
-sprawl-guard check --root /repo src/file.rs
-```
+with musl), and Windows (x64). On other platforms it runs a slower WebAssembly build.
 
 ## Commands
 
@@ -123,16 +118,11 @@ To move an existing `max-lines` rule to Sprawl Guard:
 3. Compare `sprawl-guard check` with the linter's results, since the two count lines slightly
    differently. Then remove the `max-lines` rule.
 
-Some imports run the linter from `node_modules` under the root or one of its parents with Node.js,
-so the linter loads your configuration and plugins itself. Running the linter needs a native
-Sprawl Guard build, not the WebAssembly fallback.
-
-| Import                                                  | Runs the linter                                                |
-| ------------------------------------------------------- | -------------------------------------------------------------- |
-| `config import eslint` or `config import oxlint`        | Yes                                                            |
-| `update --import eslint`                                | For oversized JavaScript-family files with no bulk suppression |
-| `update --import oxlint` with `oxlint-disable` comments | No                                                             |
-| `update --import oxlint` with `eslint-disable` comments | For oversized JavaScript-family files with no bulk suppression |
+Imports run the linter with Node.js, so the linter loads your configuration and plugins itself.
+Install the linter in `node_modules` under the root or one of its parents. `update --import` runs it
+only for oversized JavaScript-family files that no bulk suppression covers. If Oxlint is missing,
+`update --import oxlint` still imports `oxlint-disable` comments and skips `eslint-disable`
+comments.
 
 Sprawl Guard is tested with ESLint 8.57 and 10 and with Oxlint 1.93.
 

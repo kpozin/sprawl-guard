@@ -6,12 +6,15 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
-assert(process.argv[2], "Pass the path to a native Sprawl Guard executable");
-const binary = resolve(process.argv[2]);
+assert(process.argv[2], "Pass the path to a Sprawl Guard executable or npm wrapper");
+const target = resolve(process.argv[2]);
+// Windows cannot start a JavaScript file directly, so the npm wrapper runs through Node.js.
+const sprawlGuard = target.endsWith(".js") ? [process.execPath, target] : [target];
 const dependencies = fileURLToPath(new URL("./node_modules/", import.meta.url));
 const source = "var a = 1;\n\nvar b = 2;\nvar c = 3;\n";
 const env = { ...process.env };
 delete env.ESLINT_USE_FLAT_CONFIG;
+delete env.SPRAWL_GUARD_BINARY;
 
 const cases = [
   {
@@ -78,13 +81,13 @@ for (const fixture of cases) {
 
     const sample = fixture.linter === "eslint" ? ["inline.js"] : [];
     const configArgs = ["config", "import", fixture.linter, ...sample];
-    const config = run(root, binary, configArgs);
+    const config = runSprawlGuard(root, configArgs);
     await assert.rejects(readFile(join(root, "sprawl-guard.toml")), { code: "ENOENT" });
-    run(root, binary, ["config", "import", "--write", fixture.linter, ...sample]);
+    runSprawlGuard(root, ["config", "import", "--write", fixture.linter, ...sample]);
     assert.equal(await readFile(join(root, "sprawl-guard.toml"), "utf8"), config);
 
     const update = ["update", "--import", fixture.linter, "--format", "toml"];
-    const preview = run(root, binary, update);
+    const preview = runSprawlGuard(root, update);
     const expectedPaths = fixture.bulkArgs ? ["bulk.js", "inline.js"] : ["inline.js"];
     if (fixture.importsEslintAlias) expectedPaths.push("legacy.js");
     assert.deepEqual(
@@ -92,12 +95,17 @@ for (const fixture of cases) {
       expectedPaths,
     );
     await assert.rejects(readFile(join(root, "sprawl-guard.ratchet.toml")), { code: "ENOENT" });
-    run(root, binary, [...update, "--write"]);
-    const check = run(root, binary, ["check"], 1);
+    runSprawlGuard(root, [...update, "--write"]);
+    const check = runSprawlGuard(root, ["check"], 1);
     assert.match(check, /unsuppressed\.js: 3 lines \(limit 2\)/);
     assert.doesNotMatch(check, /(?:bulk|inline)\.js/);
     if (fixture.importsEslintAlias === false) assert.match(check, /legacy\.js: 4 lines \(limit 2\)/);
   });
+}
+
+function runSprawlGuard(cwd, args, expectedStatus = 0) {
+  const [command, ...prefix] = sprawlGuard;
+  return run(cwd, command, [...prefix, ...args], expectedStatus);
 }
 
 function run(cwd, command, args, expectedStatus = 0) {

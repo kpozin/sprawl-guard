@@ -54,11 +54,10 @@ fn import_eslint(
 ) -> Result<()> {
     let paths = candidates
         .iter()
-        .map(|path| {
-            let relative = path.to_path_buf();
+        .map(|&path| {
             // Discovery can follow symlinks when the project enables that option.
-            under_root(root, &canonicalize(&root.join(&relative))?)?;
-            Ok(relative)
+            under_root(root, &canonicalize(&root.join(path.to_path_buf()))?)?;
+            Ok(path.clone())
         })
         .collect::<Result<Vec<_>>>()?;
     for batch in paths.chunks(ESLINT_FILES_PER_BATCH) {
@@ -79,10 +78,7 @@ fn import_eslint(
                 .iter()
                 .any(|message| message.rule_id.as_deref() == Some(MAX_LINES))
             {
-                let path = result.file_path;
-                // Match the canonical project root's Windows verbatim prefix.
-                #[cfg(windows)]
-                let path = canonicalize(&path)?;
+                let path = linter::reported_path(result.file_path)?;
                 suppressed.insert(under_root(root, &path)?);
             }
         }
@@ -126,11 +122,11 @@ struct OxlintOptions {
     respect_eslint_disable_directives: Option<bool>,
 }
 
-/// ESLint aliases need a resolved policy, while native directives work without Oxlint.
+/// ESLint aliases need Oxlint's resolved configuration, while native directives work without Oxlint.
 fn respects_eslint_directives(root: &Path) -> Result<bool> {
     let options = match linter::run::<OxlintConfig>(root, Invocation::OxlintConfig) {
         Ok(config) => config.options,
-        Err(ImportError::MissingPackage { .. } | ImportError::NeedsNative { .. }) => {
+        Err(ImportError::MissingPackage { .. }) => {
             return Ok(false);
         }
         Err(ImportError::Launch { source, .. }) if source.kind() == ErrorKind::NotFound => {
@@ -216,7 +212,7 @@ enum OxlintDisable {
     EslintAlias,
 }
 
-/// Distinguishes native disables from aliases that depend on Oxlint's resolved policy.
+/// Distinguishes native disables from aliases that depend on Oxlint's resolved configuration.
 fn oxlint_file_disable(source: &str) -> Option<OxlintDisable> {
     // Treat enable markers as ambiguous without parsing the whole file.
     if source.contains("oxlint-enable") || source.contains("eslint-enable") {

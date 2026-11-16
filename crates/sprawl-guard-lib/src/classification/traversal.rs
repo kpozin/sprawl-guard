@@ -24,7 +24,17 @@ pub(super) fn walk_sources_scoped(
     let mut builder = walk_builder(root, config);
     let filter_root = root.to_path_buf();
     let skip_hidden = config.ignore.skip_hidden;
+    #[cfg(all(target_os = "wasi", target_env = "p1"))]
+    let root_device = config
+        .traversal
+        .same_file_system
+        .then(|| device::of(root))
+        .flatten();
     builder.filter_entry(move |entry| {
+        #[cfg(all(target_os = "wasi", target_env = "p1"))]
+        if root_device.is_some_and(|root_device| device::leaves(entry, root_device)) {
+            return false;
+        }
         let hidden = entry.path() != filter_root
             && entry
                 .file_name()
@@ -73,10 +83,10 @@ fn walk_builder(root: &Path, config: &Config) -> WalkBuilder {
         .git_global(false)
         .git_exclude(false)
         .follow_links(config.traversal.follow_symlinks.follows_directories());
+    // `walkdir` cannot read device numbers on WASI. `walk_sources_scoped` checks them on WASI
+    // Preview 1; WASI Preview 2 file status has no device number.
     #[cfg(not(target_os = "wasi"))]
     builder.same_file_system(config.traversal.same_file_system);
-    // `walkdir` rejects filesystem-boundary checks on WASI. Preopens limit the
-    // exposed host paths, but not mount traversal within a preopened tree.
     builder.require_git(false);
     if config.ignore.respect_rgignore {
         builder.add_custom_ignore_filename(".rgignore");
@@ -85,6 +95,51 @@ fn walk_builder(root: &Path, config: &Config) -> WalkBuilder {
         builder.add_custom_ignore_filename(".fdignore");
     }
     builder
+}
+
+/// Device numbers through the WASI Preview 1 file-status call, which reports the host's device for
+/// each file.
+#[cfg(all(target_os = "wasi", target_env = "p1"))]
+mod device {
+    use std::fs::File;
+    use std::os::fd::AsRawFd as _;
+    use std::path::Path;
+
+    use ignore::DirEntry;
+
+    /// WASI Preview 1's `filestat`: eight 64-bit fields, the first of which is the device number.
+    type FileStatus = [u64; 8];
+
+    /// WASI's success error number.
+    const SUCCESS: u16 = 0;
+
+    // The Rust standard library links this same function on WASI Preview 1, so `as_raw_fd`
+    // returns descriptors that it accepts.
+    #[link(wasm_import_module = "wasi_snapshot_preview1")]
+    unsafe extern "C" {
+        /// Writes the status of an open file and returns a WASI error number.
+        fn fd_filestat_get(descriptor: u32, status: *mut FileStatus) -> u16;
+    }
+
+    /// Returns the device that holds `path`, or `None` when the path cannot be opened.
+    ///
+    /// A directory whose device is unknown stays in the walk, which then reports it if unreadable.
+    pub(super) fn of(path: &Path) -> Option<u64> {
+        let file = File::open(path).ok()?;
+        let descriptor = u32::try_from(file.as_raw_fd()).ok()?;
+        // Zeroed, because the call leaves the padding after the file type unwritten.
+        let mut status: FileStatus = [0; 8];
+        // SAFETY: `file` keeps `descriptor` open during the call, and `status` has the size and
+        // alignment of the `filestat` that the call writes.
+        let error = unsafe { fd_filestat_get(descriptor, &raw mut status) };
+        (error == SUCCESS).then_some(status[0])
+    }
+
+    /// Returns whether `entry` is a directory on a device other than `root_device`.
+    pub(super) fn leaves(entry: &DirEntry, root_device: u64) -> bool {
+        entry.file_type().is_some_and(|kind| kind.is_dir())
+            && of(entry.path()).is_some_and(|device| device != root_device)
+    }
 }
 
 /// Returns whether an existing file appears in the configured ignore-aware walk.

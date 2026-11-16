@@ -23,8 +23,8 @@ pub(in crate::cli) fn execute_config_import(
     let root = resolve_cli_root(options.root)?;
     let report: PrintedConfig = match &args.source {
         ConfigImportSource::Eslint { sample } => {
-            let sample = RelativePath::new(sample)?.to_path_buf();
-            linter::run(&root, Invocation::EslintConfig(&root.join(sample)))?
+            let sample = RelativePath::new(sample)?;
+            linter::run(&root, Invocation::EslintConfig(&sample))?
         }
         ConfigImportSource::Oxlint => linter::run(&root, Invocation::OxlintConfig)?,
     };
