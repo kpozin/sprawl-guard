@@ -20,3 +20,11 @@ release includes the `etcetera` upgrade or otherwise supports the WASI build.
 
 The crate's own `Cargo.lock` is retained as upstream provenance. The active workspace resolver
 state is recorded in the repository lockfiles that consume this path patch.
+
+## Regex feature selection
+
+Tokei's fixed patterns use Perl-style Unicode classes for Markdown fences and Lingua Franca
+targets. Enable Unicode Perl matching, Unicode case folding, and the default regex performance
+engines. This omits unused tables for Unicode age, general categories, scripts, segmentation, and
+other binary properties from the CLI. Drop this patch when the published Tokei dependency selects
+the matching features its patterns use.

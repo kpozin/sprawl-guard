@@ -6,6 +6,9 @@ pub enum CliError {
     /// A reusable library operation failed.
     #[error(transparent)]
     Library(#[from] sprawl_guard_lib::SprawlError),
+    /// An external linter could not be used to import settings.
+    #[error(transparent)]
+    LinterImport(#[from] crate::cli::linter::ImportError),
     /// Standard output could not accept the command result.
     #[error("failed to write stdout: {0}")]
     WriteStdout(#[source] std::io::Error),

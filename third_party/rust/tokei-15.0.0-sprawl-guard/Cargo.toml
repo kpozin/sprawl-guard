@@ -144,6 +144,8 @@ version = "1.10.0"
 
 [dependencies.regex]
 version = "1.10.6"
+default-features = false
+features = ["perf", "std", "unicode-case", "unicode-perl"]
 
 [dependencies.serde]
 version = "1.0.208"
