@@ -6,8 +6,11 @@ import {
   RuntimeFailureError,
   type WrapperError,
 } from "./errors.js";
+import { linterHostImports, LINTER_HOST_MODULE } from "./linter-host.js";
 import type { ProcessExit } from "./run-cli.js";
-import { buildWasiInvocation, GUEST_ROOT } from "./wasi-invocation.js";
+import { withDirectoryListing } from "./wasi-directory-listing.js";
+import { withNativeLinkFollowing } from "./wasi-link-following.js";
+import { buildWasiInvocation, type WasiFileSystem } from "./wasi-invocation.js";
 
 const FORWARDED_ENV_NAMES = [
   "CI",
@@ -38,25 +41,33 @@ export async function runWasiModule(
   userArgv: string[],
 ): Promise<Result<ProcessExit, WrapperError>> {
   const invocation = buildWasiInvocation(userArgv);
-  if (Result.isError(invocation)) {
-    return invocation;
-  }
-
-  const wasi = new WASI({
-    version: "preview1",
-    args: invocation.value.args,
-    env: filterEnvironment(),
-    preopens: {
-      [GUEST_ROOT]: invocation.value.hostRoot,
-    },
-    returnOnExit: true,
+  // Node opens every preopen here, so a volume that does not exist fails before the module runs.
+  const wasi = Result.try({
+    try: () =>
+      new WASI({
+        version: "preview1",
+        args: invocation.args,
+        env: { ...filterEnvironment(), ...invocation.env },
+        preopens: Object.fromEntries(invocation.fileSystem.preopens),
+        returnOnExit: true,
+      }),
+    catch: (cause) =>
+      new RuntimeFailureError(
+        "open WASI directories",
+        `failed to open ${[...invocation.fileSystem.preopens.values()].join(", ")} for the WASM module`,
+        cause,
+      ),
   });
-  return startWasiModule(wasmPath, wasi);
+  if (Result.isError(wasi)) {
+    return wasi;
+  }
+  return startWasiModule(wasmPath, wasi.value, invocation.fileSystem);
 }
 
 async function startWasiModule(
   wasmPath: WasmModulePath,
   wasi: WASI,
+  fileSystem: WasiFileSystem,
 ): Promise<Result<WasiProcessExit, WrapperError>> {
   const wasmBytes = Result.try({
     try: () => fs.readFileSync(wasmPath),
@@ -71,10 +82,20 @@ async function startWasiModule(
     return wasmBytes;
   }
 
+  // Host functions run only after instantiation, once the module's memory exists.
+  let exports: WebAssembly.Exports = {};
+  const memory = () => exports.memory as WebAssembly.Memory;
   const instantiatedModule = await Result.tryPromise({
     try: () =>
       WebAssembly.instantiate(wasmBytes.value, {
-        wasi_snapshot_preview1: wasi.wasiImport,
+        // On Windows, Node's WASI cannot list directories (see `UVWASI_FD_READDIR_SUPPORTED` in
+        // uvwasi) or follow links whose targets start with a drive letter. Once it can, the module
+        // can use `wasi.wasiImport` directly.
+        wasi_snapshot_preview1:
+          process.platform === "win32"
+            ? withNativeLinkFollowing(withDirectoryListing(wasi.wasiImport, fileSystem, memory), memory)
+            : wasi.wasiImport,
+        [LINTER_HOST_MODULE]: linterHostImports(fileSystem, memory),
       }),
     catch: (cause) =>
       new RuntimeFailureError(
@@ -86,6 +107,7 @@ async function startWasiModule(
   if (Result.isError(instantiatedModule)) {
     return instantiatedModule;
   }
+  exports = instantiatedModule.value.instance.exports;
 
   return Result.try({
     try: () => wasi.start(instantiatedModule.value.instance),

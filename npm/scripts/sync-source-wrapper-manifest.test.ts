@@ -36,10 +36,7 @@ describe("syncSourceWrapperManifest", () => {
 
       assert.equal(wrapperManifest.name, "@kpozin/sprawl-guard");
       assert.equal(wrapperManifest.private, true);
-      assert.equal(
-        wrapperManifest.scripts.build,
-        "pnpm run clean && pnpm --dir .. exec tsc -p sprawl-guard/tsconfig.json",
-      );
+      assert.equal(wrapperManifest.scripts.prepack, "pnpm build");
       assert.ok(!("optionalDependencies" in wrapperManifest));
       assert.ok(!("publishConfig" in wrapperManifest));
     });

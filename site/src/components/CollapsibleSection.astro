@@ -1,0 +1,98 @@
+<docs-disclosure>
+  <slot name="heading" />
+  <div data-disclosure-panel><slot /></div>
+</docs-disclosure>
+
+<script>
+  class DocsDisclosure extends HTMLElement {
+    connectedCallback() {
+      const selector = ":is(h1, h2, h3, h4, h5, h6)[id]";
+      const header = this.firstElementChild;
+      const heading = header?.matches(selector) ? header : header?.querySelector(selector);
+      const panel = this.querySelector<HTMLElement>(":scope > [data-disclosure-panel]");
+      if (!heading?.id || !panel || panel.id) return;
+
+      panel.id = `${heading.id}-panel`;
+      const button = this.ownerDocument.createElement("button");
+      button.type = "button";
+      button.className = "docs-disclosure-toggle";
+      button.setAttribute("aria-controls", panel.id);
+      button.append(...heading.childNodes);
+      heading.append(button);
+      const setExpanded = (expanded: boolean) => {
+        if (expanded) panel.removeAttribute("hidden");
+        else panel.setAttribute("hidden", "until-found");
+        button.setAttribute("aria-expanded", String(expanded));
+      };
+      setExpanded(false);
+      panel.addEventListener("beforematch", (event) => {
+        // The browser removes the attribute after the event, including on nested panels.
+        if (event.target === panel) button.setAttribute("aria-expanded", "true");
+      });
+      button.addEventListener("click", () => setExpanded(panel.hasAttribute("hidden")));
+    }
+  }
+
+  customElements.define("docs-disclosure", DocsDisclosure);
+
+  function revealFragment() {
+    let id: string;
+    try {
+      id = decodeURIComponent(location.hash.slice(1));
+    } catch {
+      return;
+    }
+    const target = document.getElementById(id);
+    if (!target) return;
+
+    let revealed = false;
+    for (const panel of document.querySelectorAll("[data-disclosure-panel][hidden]")) {
+      if (!panel.contains(target)) continue;
+      const button = panel.previousElementSibling?.querySelector<HTMLButtonElement>(
+        ".docs-disclosure-toggle",
+      );
+      if (!button) continue;
+      button.click();
+      revealed = true;
+    }
+    if (revealed) target.scrollIntoView();
+  }
+
+  // Reveal links into a panel while keeping links to the visible heading neutral.
+  window.addEventListener("hashchange", revealFragment);
+  revealFragment();
+</script>
+
+<style>
+  docs-disclosure {
+    display: block;
+    margin-block-start: 1.5rem;
+  }
+
+  docs-disclosure :global(.docs-disclosure-toggle) {
+    display: inline;
+    padding: 0;
+    border: 0;
+    text-align: start;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  docs-disclosure :global(.docs-disclosure-toggle)::after {
+    content: "";
+    display: inline-block;
+    margin-inline-start: 0.375rem;
+    vertical-align: 0.1em;
+    width: 0.45em;
+    height: 0.45em;
+    border-inline-end: 0.075em solid;
+    border-block-end: 0.075em solid;
+    transform: rotate(-45deg);
+  }
+
+  docs-disclosure :global(.docs-disclosure-toggle[aria-expanded="true"])::after {
+    transform: rotate(45deg);
+  }
+</style>

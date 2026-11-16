@@ -103,9 +103,6 @@ instead of reading rules from the link's target.
 A source file larger than `max_file_bytes` stops the command with exit code `2`. Exclude large
 generated files instead of raising the limit.
 
-The WebAssembly build that the npm package runs on platforms without a native build ignores
-`same_file_system`, so it also reads filesystems mounted below the root.
-
 ### `[files]`
 
 `extend_exclude` is an array of repository-relative globs. Matching paths are removed before any
