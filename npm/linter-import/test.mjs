@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
@@ -23,7 +23,7 @@ const cases = [
     dependency: "eslint-legacy",
     config: ".eslintrc.cjs",
     configText:
-      'module.exports = { root: true, rules: { "max-lines": ["error", { max: 2, skipBlankLines: true }] } };',
+      'module.exports = { root: true, rules: { "max-lines": ["error", { max: 2, skipBlankLines: true }] }, overrides: [{ files: ["alias.js"], rules: { "max-lines": "off" } }] };',
   },
   {
     name: "ESLint 10",
@@ -31,7 +31,7 @@ const cases = [
     dependency: "eslint",
     config: "eslint.config.mjs",
     configText:
-      'export default [{ rules: { "max-lines": ["error", { max: 2, skipBlankLines: true }] } }];',
+      'export default [{ rules: { "max-lines": ["error", { max: 2, skipBlankLines: true }] } }, { files: ["alias.js"], rules: { "max-lines": "off" } }];',
     bulkArgs: ["--suppress-rule", "max-lines"],
   },
   {
@@ -86,21 +86,44 @@ for (const fixture of cases) {
     runSprawlGuard(root, ["config", "import", "--write", fixture.linter, ...sample]);
     assert.equal(await readFile(join(root, "sprawl-guard.toml"), "utf8"), config);
 
+    // A followed link may resolve outside the project; the file keeps its in-project path.
+    const outside = await mkdtemp(join(tmpdir(), "sprawl guard linked "));
+    t.after(() => rm(outside, { recursive: true, force: true }));
+    await writeFile(join(outside, "linked.js"), `/* ${fixture.linter}-disable max-lines */\n${source}`);
+    const linked = await fileLink(join(outside, "linked.js"), join(root, "linked.js"));
+    // Each path to one file keeps its own result; ESLint turns the rule off for this one.
+    await fileLink(join(root, "inline.js"), join(root, "alias.js"));
+    await appendFile(join(root, "sprawl-guard.toml"), '\n[traversal]\nfollow_symlinks = "files"\n');
+
     const update = ["update", "--import", fixture.linter, "--format", "toml"];
     const preview = runSprawlGuard(root, update);
     const expectedPaths = fixture.bulkArgs ? ["bulk.js", "inline.js"] : ["inline.js"];
     if (fixture.importsEslintAlias) expectedPaths.push("legacy.js");
+    if (linked) expectedPaths.push("linked.js");
+    if (linked && fixture.linter === "oxlint") expectedPaths.push("alias.js");
     assert.deepEqual(
       [...preview.matchAll(/^path = "(.*)"\r?$/gm)].map((match) => match[1]),
-      expectedPaths,
+      expectedPaths.sort(),
     );
     await assert.rejects(readFile(join(root, "sprawl-guard.ratchet.toml")), { code: "ENOENT" });
     runSprawlGuard(root, [...update, "--write"]);
     const check = runSprawlGuard(root, ["check"], 1);
     assert.match(check, /unsuppressed\.js: 3 lines \(limit 2\)/);
-    assert.doesNotMatch(check, /(?:bulk|inline)\.js/);
+    assert.doesNotMatch(check, /(?:bulk|inline|linked)\.js/);
     if (fixture.importsEslintAlias === false) assert.match(check, /legacy\.js: 4 lines \(limit 2\)/);
+    if (linked && fixture.linter === "eslint") assert.match(check, /alias\.js: 4 lines \(limit 2\)/);
   });
+}
+
+/** Links a file, and reports whether it could; Windows refuses without Developer Mode or administrator rights. */
+function fileLink(target, path) {
+  return symlink(target, path, "file").then(
+    () => true,
+    (error) => {
+      if (process.platform === "win32" && error.code === "EPERM") return false;
+      throw error;
+    },
+  );
 }
 
 function runSprawlGuard(cwd, args, expectedStatus = 0) {

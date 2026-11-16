@@ -19,6 +19,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
   - `traversal.same_file_system` keeps the walk on the root's filesystem.
   - `traversal.follow_symlinks = "directories"` follows directory links and reports link loops.
     It previously failed with "same-file is not supported on this platform".
+- `update --import eslint` imports suppressions for files reached through a followed symbolic link
+  that points outside the project. It failed with "is not under root".
 
 ### Removed
 

@@ -4,7 +4,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use sprawl_guard_lib::{CheckViolation, RelativePath, SprawlError};
+use sprawl_guard_lib::{CheckViolation, RelativePath};
 
 use crate::cli::linter::{self, ImportError, Invocation, Linter, MAX_LINES, OXLINT_MAX_LINES};
 use crate::error::Result;
@@ -54,16 +54,18 @@ fn import_eslint(
 ) -> Result<()> {
     let paths = candidates
         .iter()
-        .map(|&path| {
-            // Discovery can follow symlinks when the project enables that option.
-            under_root(root, &canonicalize(&root.join(path.to_path_buf()))?)?;
-            Ok(path.clone())
-        })
-        .collect::<Result<Vec<_>>>()?;
+        .map(|&path| path.clone())
+        .collect::<Vec<_>>();
     for batch in paths.chunks(ESLINT_FILES_PER_BATCH) {
         let [first, remaining @ ..] = batch else {
             continue;
         };
+        // ESLint reports each path as it was requested, without resolving links, so a link that
+        // leads outside the root still matches, and each path to one file keeps its own result.
+        let candidates_by_path = batch
+            .iter()
+            .map(|candidate| (root.join(candidate.to_path_buf()), candidate))
+            .collect::<BTreeMap<_, _>>();
         let results: Vec<EslintResult> =
             linter::run(root, Invocation::EslintReport { first, remaining })?;
         for result in results {
@@ -79,7 +81,10 @@ fn import_eslint(
                 .any(|message| message.rule_id.as_deref() == Some(MAX_LINES))
             {
                 let path = linter::reported_path(result.file_path)?;
-                suppressed.insert(under_root(root, &path)?);
+                let &candidate = candidates_by_path
+                    .get(&path)
+                    .ok_or(ImportError::EslintUnrequested { path })?;
+                suppressed.insert(candidate.clone());
             }
         }
     }
@@ -135,26 +140,6 @@ fn respects_eslint_directives(root: &Path) -> Result<bool> {
         Err(error) => return Err(error.into()),
     };
     Ok(options.respect_eslint_disable_directives.unwrap_or(true))
-}
-
-fn canonicalize(path: &Path) -> Result<PathBuf> {
-    path.canonicalize().map_err(|source| {
-        ImportError::Read {
-            path: path.to_path_buf(),
-            source,
-        }
-        .into()
-    })
-}
-
-fn under_root(root: &Path, path: &Path) -> Result<RelativePath> {
-    let relative = path
-        .strip_prefix(root)
-        .map_err(|_| SprawlError::PathOutsideRoot {
-            path: path.to_path_buf(),
-            root: root.to_path_buf(),
-        })?;
-    Ok(RelativePath::new(relative)?)
 }
 
 #[derive(Deserialize)]

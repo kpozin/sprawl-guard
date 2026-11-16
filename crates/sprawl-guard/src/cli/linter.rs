@@ -204,22 +204,48 @@ fn execute(root: &Path, linter: Linter, args: &[Arg<'_>]) -> Result<Output, Impo
     }
 }
 
-/// Converts a file path from linter output into one comparable with the project root.
+/// Converts a file path from linter output into the spelling of the canonical project root.
 pub(super) fn reported_path(path: PathBuf) -> Result<PathBuf, ImportError> {
     #[cfg(target_os = "wasi")]
     {
         host::call(&host::Request::GuestPath { path: &path })
     }
-    // Match the canonical project root's Windows verbatim prefix.
     #[cfg(windows)]
     {
-        path.canonicalize()
-            .map_err(|source| ImportError::Read { path, source })
+        Ok(verbatim(path))
     }
     #[cfg(not(any(windows, target_os = "wasi")))]
     {
         Ok(path)
     }
+}
+
+/// Adds the `\\?\` prefix that canonical Windows paths carry and linters leave out.
+///
+/// Unlike canonicalizing, this keeps the links in the path, so each path to a file stays distinct.
+#[cfg(windows)]
+fn verbatim(path: PathBuf) -> PathBuf {
+    use std::ffi::OsString;
+    use std::path::{Component, Prefix};
+
+    let mut components = path.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return path;
+    };
+    let mut spelled = OsString::from(r"\\?\");
+    match prefix.kind() {
+        Prefix::Disk(drive) => spelled.push(format!("{}:", char::from(drive))),
+        Prefix::UNC(server, share) => {
+            spelled.push(r"UNC\");
+            spelled.push(server);
+            spelled.push(r"\");
+            spelled.push(share);
+        }
+        _ => return path,
+    }
+    let mut verbatim = PathBuf::from(spelled);
+    verbatim.push(components.as_path());
+    verbatim
 }
 
 /// The `sprawl_guard_host` functions that the npm wrapper provides to the WASI build.
@@ -340,6 +366,9 @@ pub(crate) enum ImportError {
         "ESLint could not parse {path}; fix its fatal diagnostics before importing suppressions"
     )]
     EslintFatal { path: PathBuf },
+    /// ESLint reported a suppression in a file that Sprawl Guard did not ask it to lint.
+    #[error("ESLint reported {path}, which is not one of the files it was asked to lint")]
+    EslintUnrequested { path: PathBuf },
     /// A candidate source or suppression file could not be read.
     #[error("could not read {path}: {source}")]
     Read { path: PathBuf, source: io::Error },
