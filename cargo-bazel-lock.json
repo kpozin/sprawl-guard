@@ -1,5 +1,5 @@
 {
-  "checksum": "c2ed32d6e6d1045d524a3c478a15d29db224156395c2e8644cd8564eec03a640",
+  "checksum": "2ac16f4eb73237305c9dc059f2b3e01a309ca87d753589b264a05b1627b269f7",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -5546,6 +5546,12 @@
         "deps": {
           "common": [],
           "selects": {
+            "cfg(target_os = \"wasi\")": [
+              {
+                "id": "libc 0.2.191",
+                "target": "libc"
+              }
+            ],
             "cfg(windows)": [
               {
                 "id": "winapi-util 0.1.11",
@@ -5558,7 +5564,6 @@
       },
       "library_target_name": "same_file",
       "license": "Unlicense/MIT",
-      "license_file": "LICENSE-MIT",
       "license_ids": [
         "MIT",
         "Unlicense"

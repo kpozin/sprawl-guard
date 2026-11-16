@@ -8,7 +8,7 @@ import {
 } from "./errors.js";
 import { linterHostImports, LINTER_HOST_MODULE } from "./linter-host.js";
 import type { ProcessExit } from "./run-cli.js";
-import { withDirectoryListing } from "./wasi-directory-listing.js";
+import { withDirectoryListing, withNativeLinkFollowing } from "./windows-wasi.js";
 import { buildWasiInvocation, type WasiFileSystem } from "./wasi-invocation.js";
 
 const FORWARDED_ENV_NAMES = [
@@ -87,11 +87,12 @@ async function startWasiModule(
   const instantiatedModule = await Result.tryPromise({
     try: () =>
       WebAssembly.instantiate(wasmBytes.value, {
-        // Node's WASI lists directories everywhere except Windows; see `UVWASI_FD_READDIR_SUPPORTED`
-        // in uvwasi. Once it lists them there too, the module can use `wasi.wasiImport` directly.
+        // On Windows, Node's WASI cannot list directories (see `UVWASI_FD_READDIR_SUPPORTED` in
+        // uvwasi) or follow links whose targets start with a drive letter. Once it can, the module
+        // can use `wasi.wasiImport` directly.
         wasi_snapshot_preview1:
           process.platform === "win32"
-            ? withDirectoryListing(wasi.wasiImport, fileSystem, memory)
+            ? withNativeLinkFollowing(withDirectoryListing(wasi.wasiImport, fileSystem, memory), fileSystem, memory)
             : wasi.wasiImport,
         [LINTER_HOST_MODULE]: linterHostImports(fileSystem, memory),
       }),

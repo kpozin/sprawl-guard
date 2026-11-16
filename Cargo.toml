@@ -27,4 +27,5 @@ toml = "=1.1.8"
 toml_edit = "=0.25.17"
 
 [patch.crates-io]
+same-file = { path = "third_party/rust/same-file-1.0.6-sprawl-guard" }
 tokei = { path = "third_party/rust/tokei-15.0.0-sprawl-guard" }

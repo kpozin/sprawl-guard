@@ -145,6 +145,13 @@ jobs:
         env:
           SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
 
+      - name: Check native CLI follows directory links
+        working-directory: npm
+        shell: bash
+        run: node scripts/workflow-checks/check-directory-links.ts -- "${SPRAWL_GUARD_BINARY}"
+        env:
+          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
       - name: Test ESLint and Oxlint import
         working-directory: npm/linter-import
         shell: bash
@@ -185,6 +192,14 @@ jobs:
         working-directory: npm
         shell: bash
         run: node scripts/workflow-checks/check-cli.ts -- node ./sprawl-guard/dist/bin/sprawl-guard.js
+        env:
+          SPRAWL_GUARD_BINARY: ""
+
+      # The check runs the wrapper from a temporary repository, so it needs an absolute path.
+      - name: Check WASI CLI follows directory links
+        working-directory: npm
+        shell: bash
+        run: node scripts/workflow-checks/check-directory-links.ts -- node "${GITHUB_WORKSPACE}/npm/sprawl-guard/dist/bin/sprawl-guard.js"
         env:
           SPRAWL_GUARD_BINARY: ""
 

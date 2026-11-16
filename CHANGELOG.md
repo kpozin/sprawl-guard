@@ -17,6 +17,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
   - Paths may be absolute or relative to the working directory, as in `--root ..`. On Windows they
     may name any drive or network share.
   - `traversal.same_file_system` keeps the walk on the root's filesystem.
+  - `traversal.follow_symlinks = "directories"` follows directory links and reports link loops.
+    It previously failed with "same-file is not supported on this platform".
 
 ### Removed
 

@@ -40,7 +40,7 @@ const DRIVE_PREFIX = /^[A-Za-z]:/u;
 const EXTENDED_PREFIX = /^\\\\\?\\(?:(UNC)\\)?/iu;
 
 /** Spells an extended-length path in its usual form, which names the same file. */
-function withoutExtendedPrefix(value: string): string {
+export function withoutExtendedPrefix(value: string): string {
   return value.replace(EXTENDED_PREFIX, (_prefix, unc: string | undefined) => (unc === undefined ? "" : "\\\\"));
 }
 

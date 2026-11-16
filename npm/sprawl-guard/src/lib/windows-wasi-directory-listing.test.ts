@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { unsafeAbsolutePathFromKnownAbsolute as absolute } from "./paths.js";
-import { withDirectoryListing } from "./wasi-directory-listing.js";
+import { withDirectoryListing } from "./windows-wasi.js";
 import { wasiFileSystem } from "./wasi-invocation.js";
 
 /** Descriptor that the fake `path_open` hands out. */

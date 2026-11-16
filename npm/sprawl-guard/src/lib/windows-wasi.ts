@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { type GuestPath, unsafeGuestPath } from "./paths.js";
-import type { WasiFileSystem } from "./wasi-invocation.js";
+import { type GuestPath, unsafeAbsolutePathFromKnownAbsolute, unsafeGuestPath } from "./paths.js";
+import { type WasiFileSystem, withoutExtendedPrefix } from "./wasi-invocation.js";
 
 /** Descriptor that Node's WASI gives the first preopened directory; the rest follow in order. */
 const FIRST_PREOPEN_DESCRIPTOR = 3;
@@ -9,12 +9,13 @@ const FIRST_PREOPEN_DESCRIPTOR = 3;
 /** Bytes in a WASI `dirent` header: next cookie, inode, name length, file type, padding. */
 const DIRENT_HEADER_BYTES = 24;
 
-/** WASI error numbers that a directory listing can report. */
+/** WASI error numbers that these imports report. */
 enum Errno {
   Success = 0,
   Access = 2,
   BadDescriptor = 8,
   Io = 29,
+  NoBufferSpace = 42,
   NotFound = 44,
   NotDirectory = 54,
 }
@@ -30,10 +31,34 @@ enum FileType {
   SymbolicLink = 7,
 }
 
+/** WASI lookup flag that asks a call to follow a final symbolic link. */
+const LOOKUP_SYMLINK_FOLLOW = 1;
+
+/** Byte offset of the file type in a WASI `filestat`, after the device and inode. */
+const FILESTAT_FILETYPE_OFFSET = 16;
+
+/** WASI right to read a descriptor's file status, the only right a followed stat needs. */
+const RIGHT_FD_FILESTAT_GET = 1n << 21n;
+
 /** One open descriptor's module path, and its listing while the module reads it. */
 type OpenDescriptor = { readonly guestPath: GuestPath; entries?: readonly fs.Dirent[] };
 
 type PathOpen = (dirFd: number, dirFlags: number, pathPointer: number, pathLength: number, ...rest: unknown[]) => number;
+type PathFilestatGet = (
+  dirFd: number,
+  flags: number,
+  pathPointer: number,
+  pathLength: number,
+  statPointer: number,
+) => number;
+type PathReadlink = (
+  dirFd: number,
+  pathPointer: number,
+  pathLength: number,
+  bufferPointer: number,
+  bufferLength: number,
+  usedPointer: number,
+) => number;
 
 /**
  * Adds directory listing to Node's WASI imports on Windows.
@@ -107,6 +132,96 @@ export function withDirectoryListing(
       }
       new DataView(memory().buffer).setUint32(usedPointer >>> 0, used, true);
       return Errno.Success;
+    },
+  };
+}
+
+/**
+ * Lets the module follow symbolic links and junctions on Windows.
+ *
+ * Node's WASI reports link targets as Windows spells them, and when it follows a link itself, it
+ * treats the target as a module path only if it starts with `/`. Targets that start with a drive
+ * letter therefore looked broken. These imports let Windows follow the final link instead, as it
+ * already does for every link earlier in a path, and respell the targets the module reads:
+ *
+ * - `path_open` opens the path without asking Node's WASI to follow it; Windows opens the target.
+ * - `path_filestat_get`, when Node's WASI cannot follow a link, stats it by opening its target and
+ *   reading that descriptor's status.
+ * - `path_readlink` reports a target on a mounted volume, or a relative target, as the module
+ *   spells it, so resolving a path through a link, as `std::fs::canonicalize` does, reaches the
+ *   target.
+ *
+ * Node's WASI resolves each path as the module spells it; Windows then follows the links in it, as
+ * a native build does.
+ */
+export function withNativeLinkFollowing(
+  wasiImport: WebAssembly.ModuleImports,
+  fileSystem: WasiFileSystem,
+  memory: () => WebAssembly.Memory,
+): WebAssembly.ModuleImports {
+  const pathOpen = wasiImport.path_open as PathOpen;
+  const pathFilestatGet = wasiImport.path_filestat_get as PathFilestatGet;
+  const pathReadlink = wasiImport.path_readlink as PathReadlink;
+  const fdFilestatGet = wasiImport.fd_filestat_get as (fd: number, statPointer: number) => number;
+  const fdClose = wasiImport.fd_close as (fd: number) => number;
+  return {
+    ...wasiImport,
+    path_readlink: (
+      dirFd: number,
+      pathPointer: number,
+      pathLength: number,
+      bufferPointer: number,
+      bufferLength: number,
+      usedPointer: number,
+    ) => {
+      const errno = pathReadlink(dirFd, pathPointer, pathLength, bufferPointer, bufferLength, usedPointer);
+      if (errno !== Errno.Success) {
+        return errno;
+      }
+      const view = new DataView(memory().buffer);
+      const used = view.getUint32(usedPointer >>> 0, true);
+      const target = withoutExtendedPrefix(
+        Buffer.from(memory().buffer, bufferPointer >>> 0, used).toString("utf8"),
+      );
+      const guestTarget = path.win32.isAbsolute(target)
+        ? fileSystem.toGuest(unsafeAbsolutePathFromKnownAbsolute(target))
+        : target.replaceAll("\\", "/");
+      if (guestTarget === undefined) {
+        return errno;
+      }
+      // Like Node's WASI, refuse a target that leaves no room for a terminating NUL.
+      const encoded = Buffer.from(guestTarget, "utf8");
+      if (encoded.length >= bufferLength >>> 0) {
+        return Errno.NoBufferSpace;
+      }
+      encoded.copy(Buffer.from(memory().buffer, bufferPointer >>> 0));
+      view.setUint32(usedPointer >>> 0, encoded.length, true);
+      return errno;
+    },
+    path_open: (dirFd: number, dirFlags: number, pathPointer: number, pathLength: number, ...rest: unknown[]) =>
+      pathOpen(dirFd, dirFlags & ~LOOKUP_SYMLINK_FOLLOW, pathPointer, pathLength, ...rest),
+    path_filestat_get: (dirFd: number, flags: number, pathPointer: number, pathLength: number, statPointer: number) => {
+      const followed = pathFilestatGet(dirFd, flags, pathPointer, pathLength, statPointer);
+      if (followed === Errno.Success || (flags & LOOKUP_SYMLINK_FOLLOW) === 0) {
+        return followed;
+      }
+      const view = () => new DataView(memory().buffer);
+      const linked = pathFilestatGet(dirFd, flags & ~LOOKUP_SYMLINK_FOLLOW, pathPointer, pathLength, statPointer);
+      if (
+        linked !== Errno.Success ||
+        view().getUint8((statPointer >>> 0) + FILESTAT_FILETYPE_OFFSET) !== FileType.SymbolicLink
+      ) {
+        return followed;
+      }
+      // The status buffer holds the new descriptor until the descriptor's status overwrites it.
+      const opened = pathOpen(dirFd, 0, pathPointer, pathLength, 0, RIGHT_FD_FILESTAT_GET, 0n, 0, statPointer);
+      if (opened !== Errno.Success) {
+        return opened;
+      }
+      const fd = view().getUint32(statPointer >>> 0, true);
+      const status = fdFilestatGet(fd, statPointer);
+      fdClose(fd);
+      return status;
     },
   };
 }
