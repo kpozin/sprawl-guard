@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-16
+
 ### Changed
 
 - The agent skill is shorter and explains how to fix a violation by reorganizing: split a file
