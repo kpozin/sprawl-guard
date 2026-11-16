@@ -36,14 +36,11 @@ pub(in crate::cli) fn execute_cli_command(
 ) -> Result<CommandOutcome> {
     match command {
         Command::Config(config_command) => execute_config(default_root, config_command),
-        Command::Schema(args) => {
-            let document = schema::schema_payload(args.format)?;
-            Ok(CommandOutcome::new(
-                0,
-                schema::render_schema_stdout(&document)?,
-                String::new(),
-            ))
-        }
+        Command::Schema(args) => Ok(CommandOutcome::new(
+            0,
+            schema::schema_stdout(args.format).to_owned(),
+            String::new(),
+        )),
         Command::Languages(args) => {
             let root = args.root.clone().unwrap_or(default_root);
             execute_languages(root, args)
@@ -197,6 +194,10 @@ fn execute_config(default_root: PathBuf, command: ConfigCommand) -> Result<Comma
         }
         ConfigSubcommand::Export(project) => {
             config_cli::execute_config_export(&project.load_options(default_root))?
+        }
+        ConfigSubcommand::Import(args) => {
+            let stdout = config_cli::execute_config_import(default_root, args)?;
+            return Ok(CommandOutcome::new(0, stdout, String::new()));
         }
         ConfigSubcommand::Upgrade(args) => {
             let quiet = args.quiet.quiet;

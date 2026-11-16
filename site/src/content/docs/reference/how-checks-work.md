@@ -32,11 +32,15 @@ Sprawl Guard uses the language table bundled with Tokei. Run `sprawl-guard langu
 supported language, its key, and its extensions and filenames. Run `sprawl-guard languages
 --detected` to see which languages claim files in the repository.
 
-The scan starts at the repository root, or at the selected paths. Sprawl Guard skips ignored files,
-hidden paths unless configured otherwise, the active config file, and the ratchet file. It then
-applies the global file excludes and each language's paths and excludes. Globs match paths relative
-to the repository root. Every bundled language is enabled by default, and a source file must belong
-to exactly one enabled language.
+The scan starts at the repository root, or at the selected paths. For each file, Sprawl Guard:
+
+1. Skips ignored files, hidden paths unless configured otherwise, the active config file, and the
+   ratchet file.
+2. Applies the global file excludes.
+3. Applies each language's paths and excludes. The file must belong to exactly one enabled
+   language.
+
+Globs match paths relative to the repository root. Every bundled language is enabled by default.
 
 ## Test files
 

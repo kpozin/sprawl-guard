@@ -3,6 +3,7 @@ import path from "node:path";
 declare const pathBrand: unique symbol;
 declare const pathKindBrand: unique symbol;
 declare const pathRoleBrand: unique symbol;
+declare const guestPathBrand: unique symbol;
 
 type PathKind<TKind extends string> = {
   readonly [pathKindBrand]: TKind;
@@ -22,12 +23,28 @@ export type AbsolutePath = Path & PathKind<"AbsolutePath">;
 
 /** Absolute path to an executable file. */
 export type ExecutablePath = AbsolutePath & PathRole<"ExecutablePath">;
-/** Absolute repository root path exposed to the WASI module. */
-export type HostRootPath = AbsolutePath & PathRole<"HostRootPath">;
 /** Absolute package root directory path. */
 export type PackageRootPath = AbsolutePath & PathRole<"PackageRootPath">;
 /** Absolute path to the fallback WASM module file. */
 export type WasmModulePath = AbsolutePath & PathRole<"WasmModulePath">;
+
+/**
+ * Absolute path as the WebAssembly module spells it.
+ *
+ * On Windows this differs from the host spelling of the same file, so the two are distinct types.
+ */
+export type GuestPath = string & {
+  readonly [guestPathBrand]: "GuestPath";
+};
+
+/**
+ * Adds the guest-path brand to a string that is already trusted to be a module path.
+ *
+ * This helper does not validate its input.
+ */
+export function unsafeGuestPath(value: string): GuestPath {
+  return value as GuestPath;
+}
 
 function brandNormalizedPath<TPath extends Path>(value: string): TPath {
   return value as unknown as TPath;
@@ -64,17 +81,6 @@ export function unsafeExecutablePathFromAbsolutePath<TValue extends AbsolutePath
   value: TValue,
 ): TValue & ExecutablePath {
   return brandExistingPath<ExecutablePath, TValue>(value);
-}
-
-/**
- * Adds the WASI host-root role to an already trusted absolute path.
- *
- * This helper does not validate repository semantics beyond the existing absolute-path brand.
- */
-export function unsafeHostRootPathFromAbsolutePath<TValue extends AbsolutePath>(
-  value: TValue,
-): TValue & HostRootPath {
-  return brandExistingPath<HostRootPath, TValue>(value);
 }
 
 /** Resolves a package root from the absolute path to its `package.json` file. */

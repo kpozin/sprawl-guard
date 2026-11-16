@@ -279,6 +279,23 @@
           "possible_values": []
         },
         {
+          "id": "import",
+          "syntax": "--import <IMPORT>",
+          "help": "Add only file violations covered by this project's linter suppressions",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": [
+            {
+              "name": "eslint",
+              "help": "ESLint"
+            },
+            {
+              "name": "oxlint",
+              "help": "Oxlint"
+            }
+          ]
+        },
+        {
           "id": "format",
           "syntax": "--format <FORMAT>",
           "help": "Output format",
@@ -526,6 +543,94 @@
           "default_values": [],
           "possible_values": []
         },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "config",
+        "import"
+      ],
+      "usage": "Usage: sprawl-guard config import [OPTIONS] <COMMAND>",
+      "arguments": [
+        {
+          "id": "root",
+          "syntax": "--root <ROOT>",
+          "help": "Repository root. Defaults to the current directory",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "config",
+          "syntax": "--config <CONFIG>",
+          "help": "Configuration file. Relative paths are resolved under `--root`. Defaults to `sprawl-guard.toml` under the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "write",
+          "syntax": "--write",
+          "help": "Create the config file. Fails if the target already exists",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "config",
+        "import",
+        "eslint"
+      ],
+      "usage": "Usage: sprawl-guard config import eslint <SAMPLE>",
+      "arguments": [
+        {
+          "id": "sample",
+          "syntax": "<SAMPLE>",
+          "help": "Source path relative to the root",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
+          "id": "help",
+          "syntax": "-h, --help",
+          "help": "Print help",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        }
+      ]
+    },
+    {
+      "path": [
+        "sprawl-guard",
+        "config",
+        "import",
+        "oxlint"
+      ],
+      "usage": "Usage: sprawl-guard config import oxlint",
+      "arguments": [
         {
           "id": "help",
           "syntax": "-h, --help",

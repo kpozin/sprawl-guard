@@ -1,2 +1,8 @@
 packages:
   - "sprawl-guard"
+
+peerDependencyRules:
+  allowedVersions:
+    # Vite+ supplies the Vite API under its toolchain version.
+    "vitest@5.1.0>vite": "1.5.1"
+    "@vitest/mocker@5.1.0>vite": "1.5.1"
