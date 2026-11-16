@@ -92,7 +92,7 @@ for (const fixture of cases) {
     await writeFile(join(outside, "linked.js"), `/* ${fixture.linter}-disable max-lines */\n${source}`);
     const linked = await fileLink(join(outside, "linked.js"), join(root, "linked.js"));
     // Each path to one file keeps its own result; ESLint turns the rule off for this one.
-    await fileLink(join(root, "inline.js"), join(root, "alias.js"));
+    const aliased = await fileLink(join(root, "inline.js"), join(root, "alias.js"));
     await appendFile(join(root, "sprawl-guard.toml"), '\n[traversal]\nfollow_symlinks = "files"\n');
 
     const update = ["update", "--import", fixture.linter, "--format", "toml"];
@@ -100,7 +100,7 @@ for (const fixture of cases) {
     const expectedPaths = fixture.bulkArgs ? ["bulk.js", "inline.js"] : ["inline.js"];
     if (fixture.importsEslintAlias) expectedPaths.push("legacy.js");
     if (linked) expectedPaths.push("linked.js");
-    if (linked && fixture.linter === "oxlint") expectedPaths.push("alias.js");
+    if (aliased && fixture.linter === "oxlint") expectedPaths.push("alias.js");
     assert.deepEqual(
       [...preview.matchAll(/^path = "(.*)"\r?$/gm)].map((match) => match[1]),
       expectedPaths.sort(),
@@ -111,7 +111,7 @@ for (const fixture of cases) {
     assert.match(check, /unsuppressed\.js: 3 lines \(limit 2\)/);
     assert.doesNotMatch(check, /(?:bulk|inline|linked)\.js/);
     if (fixture.importsEslintAlias === false) assert.match(check, /legacy\.js: 4 lines \(limit 2\)/);
-    if (linked && fixture.linter === "eslint") assert.match(check, /alias\.js: 4 lines \(limit 2\)/);
+    if (aliased && fixture.linter === "eslint") assert.match(check, /alias\.js: 4 lines \(limit 2\)/);
   });
 }
 

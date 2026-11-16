@@ -6,8 +6,18 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [0.4.0] - 2026-11-16
 
+### Added
+
+- `config import eslint` and `config import oxlint` read a project's existing `max-lines` rule
+  into the Sprawl Guard configuration. `update --import eslint` and `update --import oxlint` add
+  ratchet entries for over-limit files whose `max-lines` violations the linter suppresses. Both
+  commands preview their changes until you pass `--write`, and they use the linter that the
+  project already has installed.
+
 ### Changed
 
+- The npm install is smaller: on Apple Silicon, with the native executable and the WebAssembly
+  fallback, it went from 20.3 MiB to under 7.5 MiB. Release executables are smaller too.
 - The agent skill is shorter and explains how to fix a violation by reorganizing: split a file
   along its responsibilities, and group a directory's files by the feature they serve.
 
