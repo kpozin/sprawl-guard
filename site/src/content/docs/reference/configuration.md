@@ -33,9 +33,9 @@ or offline use.
 
 After upgrading Sprawl Guard, run `sprawl-guard config upgrade` to preview the upgraded root
 configuration, and `sprawl-guard config upgrade --write` to save it. `--write` keeps your formatting
-and comments, and replaces the file atomically only after the upgraded configuration passes
-validation. `sprawl-guard config upgrade --check` saves nothing and exits with code `1` when an
-upgrade is needed, so CI can require the committed configuration to stay current.
+and comments, and leaves the file unchanged if the upgraded configuration is invalid.
+`sprawl-guard config upgrade --check` saves nothing and exits with code `1` when an upgrade is
+needed, so CI can require the committed configuration to stay current.
 
 The schema v1 to v2 upgrade renames these keys and keeps all other settings:
 

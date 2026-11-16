@@ -19,21 +19,15 @@ const routes = routeResult.value;
 
 describe("documentation Markdown rendering", () => {
   describe("when an entry uses the supported Starlight components", () => {
-    test("preserves every tab inside a disclosure and the ordered steps", () => {
+    test("preserves every tab and the ordered steps", () => {
       const result = renderDocumentationMarkdown(
         {
           id: "reference/cli-and-output",
           title: "Quick start",
           description: "Install and run the first check.",
           body: `import { Steps, TabItem, Tabs } from "@astrojs/starlight/components";
-import CollapsibleSection from "../../../components/CollapsibleSection.astro";
-
-<CollapsibleSection>
-<Fragment slot="heading">
 
 ### Installation commands
-
-</Fragment>
 
 <Tabs syncKey="package-manager">
   <TabItem label="npm">
@@ -51,8 +45,6 @@ pnpm exec sprawl-guard check
 
   </TabItem>
 </Tabs>
-
-</CollapsibleSection>
 
 <Steps>
 

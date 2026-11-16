@@ -169,8 +169,8 @@ struct UpdateArgs {
     #[arg(long)]
     allow_increases: bool,
 
-    /// Add only file violations covered by this project's linter suppressions.
-    #[arg(long, value_enum)]
+    /// Add entries only for oversized files that LINTER exempts from `max-lines`.
+    #[arg(long, value_enum, value_name = "LINTER")]
     import: Option<linter::Linter>,
 
     /// Output format.
@@ -277,9 +277,9 @@ enum CheckFormat {
 /// CLI override for how unreadable paths are handled.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum UnreadablePathsArg {
-    /// Collect recoverable unreadable paths, then fail the run.
+    /// List the unreadable paths found while scanning, then fail.
     Fail,
-    /// Report recoverable unreadable paths as warnings and continue.
+    /// Report the unreadable paths found while scanning as warnings, and continue.
     Warn,
 }
 
@@ -319,7 +319,8 @@ struct ConfigImportArgs {
     #[command(flatten)]
     project: ProjectArgs,
 
-    /// Create the config file. Fails if the target already exists.
+    /// Save the configuration instead of only previewing it. Fails if the configuration file
+    /// already exists.
     #[arg(long)]
     write: bool,
 
@@ -332,7 +333,8 @@ struct ConfigImportArgs {
 enum ConfigImportSource {
     /// Use the ESLint configuration that applies to one representative source file.
     Eslint {
-        /// Source path relative to the root.
+        /// Source file, relative to the root, whose ESLint configuration to read.
+        #[arg(value_name = "FILE")]
         sample: PathBuf,
     },
     /// Use the root Oxlint configuration.

@@ -43,8 +43,7 @@ Run these commands from the repository root.
    files directly inside each directory. To change them, see
    [Configure checks](/sprawl-guard/configure-checks/). If the project already uses an ESLint or
    Oxlint `max-lines` rule, you can
-   [import its limit and exemptions](/sprawl-guard/reference/cli-and-output/#import-eslint-or-oxlint-limits-and-suppressions)
-   instead.
+   [start from that rule](#start-from-a-max-lines-rule) instead.
 
 2. Run the check.
 
@@ -127,3 +126,52 @@ and also if it shrinks, until you record the smaller size.
 
 Next, [add the check to CI](/sprawl-guard/run-in-ci/), then read
 [Work with the ratchet](/sprawl-guard/ratchet/) to see how to record improvements.
+
+## Start from a `max-lines` rule
+
+If the project already limits file length with the ESLint or Oxlint `max-lines` rule, you can import
+the rule's limit and the files it exempts. Sprawl Guard runs the project's own linter with Node.js,
+so install the linter in `node_modules` first. Sprawl Guard is tested with ESLint 8.57 and 10, and
+with Oxlint 1.93.
+
+<Steps>
+
+1. Preview a configuration based on the rule, then save it. ESLint can configure each file
+   differently, so name a source file whose limit you want:
+
+   ```sh
+   sprawl-guard config import eslint src/index.js
+   sprawl-guard config import --write eslint src/index.js
+   ```
+
+   For Oxlint, run `sprawl-guard config import oxlint`, then
+   `sprawl-guard config import --write oxlint`.
+
+   If `sprawl-guard.toml` already exists, `--write` fails. Copy the printed `[languages]` tables
+   into the file instead.
+
+2. Preview [ratchet entries](#record-existing-violations) for the oversized files that the linter
+   exempts, then save them:
+
+   ```sh
+   sprawl-guard update --import eslint
+   sprawl-guard update --import eslint --write
+   ```
+
+   For Oxlint, pass `--import oxlint`.
+
+3. Run `sprawl-guard check`, and compare its results with the linter's. The two tools count lines
+   slightly differently. The check also applies limits that the linter doesn't: the number of files
+   directly inside each directory, and the length of files in other languages.
+
+4. Preview the remaining violations with `sprawl-guard update`, and fix any that you don't want to
+   accept. Then [record the rest](#record-existing-violations) with `sprawl-guard update --write`.
+
+5. Remove the `max-lines` rule from the linter's configuration, then commit that change together
+   with `sprawl-guard.toml` and `sprawl-guard.ratchet.toml`.
+
+</Steps>
+
+The CLI reference explains how Sprawl Guard
+[reads the rule](/sprawl-guard/reference/cli-and-output/#config-import-eslintoxlint) and
+[which exemptions it imports](/sprawl-guard/reference/cli-and-output/#update-paths).

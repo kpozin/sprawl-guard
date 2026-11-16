@@ -9,7 +9,6 @@ import { findCliReferenceCommand, type CliReferenceError } from "./cli-reference
 import {
   componentImportKind,
   hasOnlyStringAttributes,
-  collapsibleContents,
   requiredStringAttribute,
   type ComponentKind,
 } from "./mdx-elements.ts";
@@ -269,24 +268,7 @@ function transformComponent(
         return malformed(context.entryId, "DirectoryTrees", "attributes are not supported");
       }
       return transformChildren(node.children, context);
-    case "collapsible_section":
-      return transformCollapsibleSection(node, context);
   }
-}
-
-function transformCollapsibleSection(
-  node: MdxJsxFlowElement,
-  context: TransformContext,
-): Result<RootContent[], MarkdownRenderError> {
-  const children = collapsibleContents(node);
-  if (children === undefined) {
-    return malformed(
-      context.entryId,
-      "CollapsibleSection",
-      "expected a heading slot without links",
-    );
-  }
-  return transformChildren(children, context);
 }
 
 function transformTabs(

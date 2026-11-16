@@ -56,9 +56,9 @@ impl SymlinkTraversal {
 #[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UnreadablePathPolicy {
-    /// Collect recoverable unreadable paths, then fail the run.
+    /// List the unreadable paths found while scanning, then fail.
     Fail,
-    /// Report recoverable unreadable paths as warnings and continue.
+    /// Report the unreadable paths found while scanning as warnings, and continue.
     Warn,
 }
 

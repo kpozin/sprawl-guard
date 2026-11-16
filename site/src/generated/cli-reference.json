@@ -205,11 +205,11 @@
           "possible_values": [
             {
               "name": "fail",
-              "help": "Collect recoverable unreadable paths, then fail the run"
+              "help": "List the unreadable paths found while scanning, then fail"
             },
             {
               "name": "warn",
-              "help": "Report recoverable unreadable paths as warnings and continue"
+              "help": "Report the unreadable paths found while scanning as warnings, and continue"
             }
           ]
         },
@@ -280,8 +280,8 @@
         },
         {
           "id": "import",
-          "syntax": "--import <IMPORT>",
-          "help": "Add only file violations covered by this project's linter suppressions",
+          "syntax": "--import <LINTER>",
+          "help": "Add entries only for oversized files that LINTER exempts from `max-lines`",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": [
@@ -580,7 +580,7 @@
         {
           "id": "write",
           "syntax": "--write",
-          "help": "Create the config file. Fails if the target already exists",
+          "help": "Save the configuration instead of only previewing it. Fails if the configuration file already exists",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
@@ -602,12 +602,12 @@
         "import",
         "eslint"
       ],
-      "usage": "Usage: sprawl-guard config import eslint <SAMPLE>",
+      "usage": "Usage: sprawl-guard config import eslint <FILE>",
       "arguments": [
         {
           "id": "sample",
-          "syntax": "<SAMPLE>",
-          "help": "Source path relative to the root",
+          "syntax": "<FILE>",
+          "help": "Source file, relative to the root, whose ESLint configuration to read",
           "conflicts_with": [],
           "default_values": [],
           "possible_values": []
