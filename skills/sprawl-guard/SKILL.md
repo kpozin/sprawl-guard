@@ -50,4 +50,5 @@ writing it.
 ## Investigate
 
 `sprawl-guard explain PATH` shows how a file or directory is classified and which limits apply. The
-documentation is at <https://kpozin.github.io/sprawl-guard/index.md>.
+documentation is at <https://kpozin.github.io/sprawl-guard/index.md>. It also covers setup tasks
+outside this skill, such as importing an ESLint or Oxlint `max-lines` rule.
