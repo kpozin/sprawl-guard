@@ -41,7 +41,10 @@ Run these commands from the repository root.
    The first command shows the file, and the second writes it. Until you add settings to it,
    Sprawl Guard uses its built-in limits: 400 lines per file (800 for test files) and 10 source
    files directly inside each directory. To change them, see
-   [Configure checks](/sprawl-guard/configure-checks/).
+   [Configure checks](/sprawl-guard/configure-checks/). If the project already uses an ESLint or
+   Oxlint `max-lines` rule, you can
+   [import its limit and exemptions](/sprawl-guard/reference/cli-and-output/#import-eslint-or-oxlint-limits-and-suppressions)
+   instead.
 
 2. Run the check.
 

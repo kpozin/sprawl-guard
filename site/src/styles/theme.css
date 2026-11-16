@@ -9,3 +9,11 @@
   --sl-color-accent: #356f52;
   --sl-color-accent-low: #e3efe8;
 }
+
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6):not(:where(.not-content *)) {
+  text-wrap: balance;
+}
+
+.sl-markdown-content :is(p, li):not(:where(.not-content *)) {
+  text-wrap: pretty;
+}

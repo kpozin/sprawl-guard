@@ -1,4 +1,5 @@
 mod edit;
+mod import;
 mod preview;
 mod scope;
 
@@ -19,14 +20,21 @@ use scope::tighten_scope;
 pub(super) fn execute_update(default_root: PathBuf, args: UpdateArgs) -> Result<String> {
     let ceiling_update_policy = args.ceiling_update_policy();
     let context = RatchetCommandContext::load(args.project, default_root)?;
+    let report = current_violation_report(&context, args.paths)?;
+    let import = args
+        .import
+        .map(|linter| {
+            let root = super::init::resolve_cli_root(context.root.clone())?;
+            import::Suppressions::load(&root, report.violations(), linter)
+        })
+        .transpose()?;
     let ratchet_exists = context.ratchet_path.try_exists().map_err(|source| {
         sprawl_guard_lib::SprawlError::ReadFileType {
             path: context.ratchet_path.clone(),
             source,
         }
     })?;
-    let report = current_violation_report(&context, args.paths)?;
-    let new_entries = ratchet_from_report(&report)?;
+    let new_entries = ratchet_from_report(&report, import.as_ref());
     let previous = if ratchet_exists {
         let mut previous = RatchetFile::read(&context.ratchet_path)?;
         previous.sort();
@@ -79,7 +87,7 @@ pub(super) fn execute_tighten(default_root: PathBuf, args: TightenArgs) -> Resul
     let (scope, measured_paths) = tighten_scope(&context.root, &args.paths, &previous)?;
     let current = if args.paths.is_empty() || !measured_paths.is_empty() {
         let report = current_violation_report(&context, measured_paths)?;
-        ratchet_from_report(&report)?
+        ratchet_from_report(&report, None)
     } else {
         RatchetFile::default()
     };
@@ -126,7 +134,7 @@ fn current_violation_report(
     })?)
 }
 
-fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
+fn ratchet_from_report(report: &CheckReport, import: Option<&import::Suppressions>) -> RatchetFile {
     let mut ratchet = RatchetFile {
         schema_version: RatchetSchemaVersion::CURRENT,
         files: Vec::new(),
@@ -135,6 +143,9 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
     for violation in report.violations() {
         match violation {
             CheckViolation::FileLines(violation) => {
+                if import.is_some_and(|import| !import.covers(&violation.path)) {
+                    continue;
+                }
                 ratchet.files.push(FileRatchet {
                     path: violation.path.clone(),
                     role: violation.kind.role(),
@@ -142,7 +153,7 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
                         .expect("a violating file has at least one line"),
                 });
             }
-            CheckViolation::DirectoryDirectFiles(violation) => {
+            CheckViolation::DirectoryDirectFiles(violation) if import.is_none() => {
                 ratchet.directories.push(DirectoryRatchet {
                     path: violation.path.clone(),
                     role: violation.kind.role(),
@@ -150,11 +161,11 @@ fn ratchet_from_report(report: &CheckReport) -> Result<RatchetFile> {
                     max_direct_files: violation.actual,
                 });
             }
-            CheckViolation::Ratchet(_) => {}
+            CheckViolation::Ratchet(_) | CheckViolation::DirectoryDirectFiles(_) => {}
         }
     }
     ratchet.sort();
-    Ok(ratchet)
+    ratchet
 }
 
 fn finish_ratchet_command(

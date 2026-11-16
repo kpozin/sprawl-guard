@@ -2,6 +2,11 @@
 members = ["crates/sprawl-guard", "crates/sprawl-guard-lib"]
 resolver = "3"
 
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+
 [workspace.dependencies]
 assert_fs = "=1.1.4"
 clap = { version = "=4.6.7" }
@@ -22,4 +27,5 @@ toml = "=1.1.8"
 toml_edit = "=0.25.17"
 
 [patch.crates-io]
+same-file = { path = "third_party/rust/same-file-1.0.6-sprawl-guard" }
 tokei = { path = "third_party/rust/tokei-15.0.0-sprawl-guard" }

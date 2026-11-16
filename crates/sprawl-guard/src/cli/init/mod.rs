@@ -40,18 +40,7 @@ pub(super) fn execute_init(default_root: PathBuf, args: InitArgs) -> Result<Init
     } else if let Some(path) = existing {
         return Err(CliError::ExistingConfig { path });
     } else {
-        create_text_new(&target, &config_text).map_err(|source| {
-            if source.kind() == ErrorKind::AlreadyExists {
-                CliError::ExistingConfig {
-                    path: target.clone(),
-                }
-            } else {
-                CliError::WriteConfig {
-                    path: target.clone(),
-                    source,
-                }
-            }
-        })?;
+        create_config(&target, &config_text)?;
         InitExecutionMode::Written
     };
 
@@ -90,17 +79,33 @@ pub(super) fn render_init_stdout(execution: &InitExecution, quiet: bool) -> Stri
     output
 }
 
-fn resolve_cli_root(root: PathBuf) -> Result<PathBuf> {
+pub(super) fn resolve_cli_root(root: PathBuf) -> Result<PathBuf> {
     root.canonicalize()
         .map_err(|source| SprawlError::ResolveRoot { path: root, source }.into())
 }
 
-fn resolve_target_config_path(root: &Path, config_path: Option<&Path>) -> PathBuf {
+pub(super) fn resolve_target_config_path(root: &Path, config_path: Option<&Path>) -> PathBuf {
     match config_path {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         Some(path) => root.join(path),
         None => root.join(PRIMARY_CONFIG_FILE),
     }
+}
+
+/// Creates an authored config without replacing an existing file.
+pub(super) fn create_config(path: &Path, text: &str) -> Result<()> {
+    create_text_new(path, text).map_err(|source| {
+        if source.kind() == ErrorKind::AlreadyExists {
+            CliError::ExistingConfig {
+                path: path.to_path_buf(),
+            }
+        } else {
+            CliError::WriteConfig {
+                path: path.to_path_buf(),
+                source,
+            }
+        }
+    })
 }
 
 fn existing_config(target: &Path) -> Option<PathBuf> {

@@ -14,6 +14,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo fmt --all --check
 ```
 
+Run `just test-linter-import` to exercise config and ratchet import with the locked ESLint and
+Oxlint versions used in CI. On Windows, pass `target/debug/sprawl-guard.exe` to the recipe.
+
 Run the development binary directly through Cargo:
 
 ```sh

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import {
+  PUBLISH_WRAPPER_BUILD_FILES,
   PUBLISH_WRAPPER_DOCUMENTS,
   RUNTIME_PACKAGE_DEFINITIONS,
 } from "./package-manifests.ts";
@@ -45,16 +46,14 @@ describe("stagePublishPayloads", () => {
       ),
     );
 
-    fs.mkdirSync(path.join(tempWorkspaceRoot, "sprawl-guard", "dist", "bin"), {
-      recursive: true,
-    });
+    for (const relativePath of PUBLISH_WRAPPER_BUILD_FILES) {
+      const file = path.join(tempWorkspaceRoot, "sprawl-guard", relativePath);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, `wrapper build output ${relativePath}\n`);
+    }
     fs.writeFileSync(
       path.join(tempWorkspaceRoot, "sprawl-guard", "README.md"),
       "# wrapper\n",
-    );
-    fs.writeFileSync(
-      path.join(tempWorkspaceRoot, "sprawl-guard", "dist", "bin", "sprawl-guard.js"),
-      "console.log('wrapper');\n",
     );
 
     const renderResult = renderPublishWorkspace({
