@@ -97,7 +97,7 @@ jobs:
         uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537
         with:
           toolchain: stable
-          targets: ${{ matrix.rust_target }}
+          targets: ${{ matrix.rust_target }},wasm32-wasip1
 
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
@@ -112,7 +112,9 @@ jobs:
         with:
           node-version: "24"
           cache: "pnpm"
-          cache-dependency-path: npm/pnpm-lock.yaml
+          cache-dependency-path: |
+            npm/pnpm-lock.yaml
+            npm/linter-import/pnpm-lock.yaml
 
       - name: Install musl linker
         if: ${{ matrix.rust_target == 'x86_64-unknown-linux-musl' }}
@@ -143,6 +145,15 @@ jobs:
         env:
           SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
 
+      - name: Test ESLint and Oxlint import
+        working-directory: npm/linter-import
+        shell: bash
+        run: |
+          pnpm install --frozen-lockfile
+          node test.mjs "${SPRAWL_GUARD_BINARY}"
+        env:
+          SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
       - name: Build npm wrapper
         working-directory: npm
         run: pnpm run build
@@ -153,6 +164,36 @@ jobs:
         run: node scripts/workflow-checks/check-cli.ts -- node ./sprawl-guard/dist/bin/sprawl-guard.js
         env:
           SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
+
+      - name: Build WASI CLI
+        run: cargo build --locked --package sprawl-guard --target wasm32-wasip1
+
+      # The workspace has no native runtime package, so without SPRAWL_GUARD_BINARY the wrapper
+      # falls back to this module, as it does on platforms without a native build.
+      - name: Install WASI CLI for the npm wrapper
+        working-directory: npm
+        shell: bash
+        run: |
+          package=node_modules/@kpozin/sprawl-guard-wasm32-wasip1
+          mkdir -p "${package}"
+          echo '{"name":"@kpozin/sprawl-guard-wasm32-wasip1","version":"0.0.0"}' > "${package}/package.json"
+          cp ../target/wasm32-wasip1/debug/sprawl-guard.wasm "${package}/"
+          # Any other runtime package here would take precedence over the module.
+          test "$(ls node_modules/@kpozin)" = sprawl-guard-wasm32-wasip1
+
+      - name: Check npm wrapper with the WASI CLI
+        working-directory: npm
+        shell: bash
+        run: node scripts/workflow-checks/check-cli.ts -- node ./sprawl-guard/dist/bin/sprawl-guard.js
+        env:
+          SPRAWL_GUARD_BINARY: ""
+
+      - name: Test ESLint and Oxlint import with the WASI CLI
+        working-directory: npm/linter-import
+        shell: bash
+        run: node test.mjs ../sprawl-guard/dist/bin/sprawl-guard.js
+        env:
+          SPRAWL_GUARD_BINARY: ""
 
   npm:
     runs-on: ubuntu-24.04

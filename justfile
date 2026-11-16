@@ -12,5 +12,10 @@ cargo-release-publish release_commit release_tag:
         {{quote(release_commit)}} \
         {{quote(release_tag)}}
 
+test-linter-import binary="target/debug/sprawl-guard":
+    cargo build --locked --package sprawl-guard
+    pnpm --dir npm/linter-import install --frozen-lockfile
+    node npm/linter-import/test.mjs {{quote(binary)}}
+
 _release-tools-install:
     pnpm --dir npm install --frozen-lockfile --config.confirmModulesPurge=false

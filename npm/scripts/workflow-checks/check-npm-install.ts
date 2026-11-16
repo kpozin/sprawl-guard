@@ -9,17 +9,28 @@
  */
 
 import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { RUNTIME_PACKAGE_DEFINITIONS } from "../../sprawl-guard/src/lib/runtime-packages.ts";
 
 const WRAPPER_PACKAGE_NAME = "@kpozin/sprawl-guard";
 const RUNTIME_PACKAGE_PREFIX = `${WRAPPER_PACKAGE_NAME}-`;
 const RUNTIME_PACKAGE_PATTERN = /^@kpozin\/sprawl-guard-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const DIST_TAG_PATTERN = /^[a-z][a-z0-9._-]*$/u;
+/** Maximum clean-install size of the wrapper, dependencies, and metadata beyond CLI payloads. */
+const MAX_INSTALL_OVERHEAD_BYTES = 512 * 1024;
 
 /**
  * How many times a registry install is tried. npm's CDN can serve an older dist-tag or miss a
@@ -95,11 +106,18 @@ type InstallFailure =
       readonly packageName: CheckedPackageName;
     };
 
+/** Logical sizes of installed regular files and of the files other than expected CLI payloads. */
+interface InstallFootprint {
+  readonly totalBytes: number;
+  readonly overheadBytes: number;
+}
+
 /** The result of an install check. */
 export type NpmInstallCheckResult =
-  | { readonly kind: "ok" }
+  | { readonly kind: "ok"; readonly footprint: InstallFootprint }
   | { readonly kind: "project_exists"; readonly projectDirectory: AbsolutePath }
   | InstallFailure
+  | { readonly kind: "footprint_budget_exceeded"; readonly footprint: InstallFootprint }
   | { readonly kind: "command_failed"; readonly command: string; readonly detail: string }
   | { readonly kind: "unexpected_version_output"; readonly output: string };
 
@@ -127,7 +145,43 @@ export async function checkNpmInstall(
       await operations.sleepBeforeRetry();
     }
   }
-  return installed.kind === "ok" ? runInstalledWrapper(check, operations) : installed;
+  if (installed.kind !== "ok") {
+    return installed;
+  }
+  const footprint = measureInstallFootprint(check);
+  if (footprint.overheadBytes > MAX_INSTALL_OVERHEAD_BYTES) {
+    return { kind: "footprint_budget_exceeded", footprint };
+  }
+  const wrapper = runInstalledWrapper(check, operations);
+  return wrapper.kind === "passed" ? { kind: "ok", footprint } : wrapper;
+}
+
+/** Counts installed files once and budgets separately for everything beyond the CLI payloads. */
+function measureInstallFootprint(check: NpmInstallCheck): InstallFootprint {
+  const modules = path.join(check.projectDirectory, "node_modules");
+  const automatic =
+    check.source.kind === "registry" && check.source.runtimeInstallation === "automatic";
+  const payloadPaths = new Set(
+    RUNTIME_PACKAGE_DEFINITIONS.filter(
+      (definition) =>
+        definition.packageName === check.runtimePackageName ||
+        (automatic && definition.kind === "wasi"),
+    ).map((definition) => path.join(modules, definition.packageName, definition.payloadPath)),
+  );
+  let totalBytes = 0;
+  let payloadBytes = 0;
+  for (const entry of readdirSync(modules, { recursive: true, withFileTypes: true })) {
+    if (!entry.isFile()) {
+      continue;
+    }
+    const file = path.join(entry.parentPath, entry.name);
+    const { size } = statSync(file);
+    totalBytes += size;
+    if (payloadPaths.has(file)) {
+      payloadBytes += size;
+    }
+  }
+  return { totalBytes, overheadBytes: totalBytes - payloadBytes };
 }
 
 /** Installs into a new project and confirms that both packages have the release version. */
@@ -219,7 +273,9 @@ function readInstalledVersion(
 function runInstalledWrapper(
   check: NpmInstallCheck,
   operations: NpmInstallCheckOperations,
-): NpmInstallCheckResult {
+):
+  | Extract<NpmInstallCheckResult, { kind: "command_failed" | "unexpected_version_output" }>
+  | { readonly kind: "passed" } {
   const execPrefix = ["--prefix", check.projectDirectory, "exec", "--", "sprawl-guard"];
   const versionOutput = operations.runNpm([...execPrefix, "--version"]);
   if (versionOutput.kind === "failed") {
@@ -236,7 +292,12 @@ function runInstalledWrapper(
   const help = operations.runNpm([...execPrefix, "--help"]);
   return help.kind === "failed"
     ? { kind: "command_failed", command: "sprawl-guard --help", detail: help.detail }
-    : { kind: "ok" };
+    : { kind: "passed" };
+}
+
+/** Formats the measured size and budget for release logs. */
+function describeFootprint({ totalBytes, overheadBytes }: InstallFootprint): string {
+  return `node_modules: ${totalBytes} bytes total, ${overheadBytes} bytes outside CLI payloads (budget ${MAX_INSTALL_OVERHEAD_BYTES} bytes)`;
 }
 
 /** Explains a failed check in one line. */
@@ -250,6 +311,8 @@ function describeFailure(failure: Exclude<NpmInstallCheckResult, { readonly kind
       return `npm did not install ${failure.packageName}`;
     case "version_mismatch":
       return `npm installed ${failure.packageName}@${failure.installedVersion}`;
+    case "footprint_budget_exceeded":
+      return `npm install exceeds the footprint budget: ${describeFootprint(failure.footprint)}`;
     case "command_failed":
       return `${failure.command} failed: ${failure.detail}`;
     case "unexpected_version_output":
@@ -396,6 +459,7 @@ async function main(): Promise<number> {
     console.error(describeFailure(result));
     return 1;
   }
+  console.log(describeFootprint(result.footprint));
   return 0;
 }
 

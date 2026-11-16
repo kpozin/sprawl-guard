@@ -169,7 +169,26 @@ jobs:
           sudo apt-get install --yes musl-tools
       - name: Build release artifact
         shell: bash
-        run: cargo build --locked --release --package sprawl-guard --target "${RUST_TARGET}"
+        run: |
+          profile_overrides=()
+          case "${RUST_TARGET}" in
+            aarch64-apple-darwin)
+              profile_overrides+=(
+                --config 'profile.release.package.clap_builder.opt-level="s"'
+                --config 'profile.release.package.toml_edit.opt-level="s"'
+              )
+              ;;
+            wasm32-wasip1)
+              export CARGO_PROFILE_RELEASE_OPT_LEVEL=s
+              ;;
+            *-pc-windows-msvc)
+              # Keep Cargo's defaults until the size settings have been validated on Windows.
+              export CARGO_PROFILE_RELEASE_LTO=false
+              export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+              export CARGO_PROFILE_RELEASE_STRIP=none
+              ;;
+          esac
+          cargo build --locked --release --package sprawl-guard --target "${RUST_TARGET}" "${profile_overrides[@]}"
         env:
           RUST_TARGET: ${{ matrix.rust_target }}
 
@@ -190,7 +209,29 @@ jobs:
           BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
 
-      - name: Verify WASM module exists
+      - name: Optimize WASI module
+        if: ${{ matrix.package_target == 'wasm32-wasip1' }}
+        shell: bash
+        run: |
+          binaryen_dir="$(mktemp -d "${RUNNER_TEMP}/binaryen.XXXXXXXX")"
+          trap 'rm -rf "${binaryen_dir}"' EXIT
+          binaryen_release="version_133"
+          archive="binaryen-${binaryen_release}-x86_64-linux.tar.gz"
+          wasm_opt="binaryen-${binaryen_release}/bin/wasm-opt"
+          curl --fail --silent --show-error --location \
+            --output "${binaryen_dir}/${archive}" \
+            "https://github.com/WebAssembly/binaryen/releases/download/${binaryen_release}/${archive}"
+          printf '%s  %s\n' '2dc9c7813f5375db93d96ead4b78222fcc3e2677bbb832297af4797782a37489' \
+            "${binaryen_dir}/${archive}" | sha256sum --check
+          tar -xzf "${binaryen_dir}/${archive}" -C "${binaryen_dir}" "${wasm_opt}"
+          # Rust strips the feature metadata, but the module still uses memory.copy and memory.fill.
+          "${binaryen_dir}/${wasm_opt}" "${BUILT_ARTIFACT_PATH}" \
+            -Oz --strip-debug --enable-bulk-memory-opt -o "${binaryen_dir}/sprawl-guard.wasm"
+          mv "${binaryen_dir}/sprawl-guard.wasm" "${BUILT_ARTIFACT_PATH}"
+        env:
+          BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
+
+      - name: Verify optimized WASI module exists
         if: ${{ matrix.package_target == 'wasm32-wasip1' }}
         shell: bash
         run: test -s "${BUILT_ARTIFACT_PATH}"

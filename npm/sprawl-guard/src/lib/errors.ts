@@ -8,32 +8,17 @@ import type {
   WasmPackageName,
 } from "./resolve-package.js";
 
-/** CLI flags whose values are parsed by the Node wrapper before execution. */
-export type CliFlag = "--root";
-
 /** Structured operation labels used in wrapper runtime failures. */
 export type RuntimeOperation =
   | "execute native binary"
   | "forward child signal"
   | "instantiate WASM module"
   | "load WASI fallback runner"
-  | "prepare WASI invocation"
+  | "open WASI directories"
   | "read WASM module"
   | "resolve package root"
   | "spawn native binary"
   | "start WASI module";
-
-export class MissingFlagValueError extends TaggedError("MissingFlagValueError")<{
-  flag: CliFlag;
-  message: string;
-}> {
-  constructor(flag: CliFlag) {
-    super({
-      flag,
-      message: `missing value for ${flag}`,
-    });
-  }
-}
 
 export class OverrideBinaryNotUsableError extends TaggedError(
   "OverrideBinaryNotUsableError",
@@ -105,7 +90,6 @@ export class RuntimeFailureError extends TaggedError("RuntimeFailureError")<{
 
 /** Structured error union returned by wrapper setup and execution helpers. */
 export type WrapperError =
-  | MissingFlagValueError
   | MissingFallbackPackageError
   | NativeBinaryMissingError
   | OverrideBinaryNotUsableError

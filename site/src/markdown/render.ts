@@ -7,6 +7,13 @@ import { mdxToMdast, type MdastNode, type MdxJsxFlowElement } from "satteri";
 import { cliCommandReferenceNodes } from "./cli-reference-nodes.ts";
 import { findCliReferenceCommand, type CliReferenceError } from "./cli-reference.ts";
 import {
+  componentImportKind,
+  hasOnlyStringAttributes,
+  collapsibleContents,
+  requiredStringAttribute,
+  type ComponentKind,
+} from "./mdx-elements.ts";
+import {
   parseDocsEntryId,
   rewriteDocumentationLink,
   type DocsEntryId,
@@ -64,18 +71,6 @@ interface TransformContext {
   readonly routes: DocumentationRoutes;
   readonly components: ReadonlyMap<string, ComponentKind>;
 }
-
-type ComponentKind = "steps" | "tabs" | "tab_item" | "cli_command_reference" | "directory_trees";
-
-const STARLIGHT_COMPONENTS_MODULE = "@astrojs/starlight/components";
-const CLI_REFERENCE_COMPONENT_MODULE = "../../../components/CliCommandReference.astro";
-/** The homepage's illustration, imported from the homepage. */
-const DIRECTORY_TREES_COMPONENT_MODULE = "../../components/DirectoryTrees.astro";
-const starlightComponentKinds = new Map<string, ComponentKind>([
-  ["Steps", "steps"],
-  ["Tabs", "tabs"],
-  ["TabItem", "tab_item"],
-]);
 
 /** Converts one Starlight content entry into its agent-readable Markdown form. */
 export function renderDocumentationMarkdown(
@@ -168,25 +163,7 @@ function collectImportBindings(
 ): Result<void, MarkdownRenderError> {
   const source = String(declaration.source.value);
   for (const specifier of declaration.specifiers) {
-    let kind: ComponentKind | undefined;
-    if (
-      source === STARLIGHT_COMPONENTS_MODULE &&
-      specifier.type === "ImportSpecifier" &&
-      specifier.imported.type === "Identifier"
-    ) {
-      kind = starlightComponentKinds.get(specifier.imported.name);
-    } else if (
-      source === CLI_REFERENCE_COMPONENT_MODULE &&
-      specifier.type === "ImportDefaultSpecifier"
-    ) {
-      kind = "cli_command_reference";
-    } else if (
-      source === DIRECTORY_TREES_COMPONENT_MODULE &&
-      specifier.type === "ImportDefaultSpecifier"
-    ) {
-      kind = "directory_trees";
-    }
-
+    const kind = componentImportKind(source, specifier, entryId);
     if (kind === undefined) {
       return unsupported(entryId, `${specifier.local.name} imported from ${source}`);
     }
@@ -292,7 +269,24 @@ function transformComponent(
         return malformed(context.entryId, "DirectoryTrees", "attributes are not supported");
       }
       return transformChildren(node.children, context);
+    case "collapsible_section":
+      return transformCollapsibleSection(node, context);
   }
+}
+
+function transformCollapsibleSection(
+  node: MdxJsxFlowElement,
+  context: TransformContext,
+): Result<RootContent[], MarkdownRenderError> {
+  const children = collapsibleContents(node);
+  if (children === undefined) {
+    return malformed(
+      context.entryId,
+      "CollapsibleSection",
+      "expected a heading slot without links",
+    );
+  }
+  return transformChildren(children, context);
 }
 
 function transformTabs(
@@ -366,27 +360,6 @@ function heroNodes(hero: MarkdownHero | undefined, context: TransformContext): R
   }));
   const actions: List = { type: "list", ordered: false, spread: false, children: items };
   return [paragraph(hero.tagline), actions];
-}
-
-function requiredStringAttribute(node: MdxJsxFlowElement, name: string): string | undefined {
-  const matches = node.attributes.filter(
-    (attribute) => attribute.type === "mdxJsxAttribute" && attribute.name === name,
-  );
-  if (matches.length !== 1) return undefined;
-  const [match] = matches;
-  return typeof match.value === "string" ? match.value : undefined;
-}
-
-function hasOnlyStringAttributes(
-  node: MdxJsxFlowElement,
-  allowedNames: readonly string[],
-): boolean {
-  return node.attributes.every(
-    (attribute) =>
-      attribute.type === "mdxJsxAttribute" &&
-      allowedNames.includes(attribute.name) &&
-      typeof attribute.value === "string",
-  );
 }
 
 function paragraph(value: string): Paragraph {
