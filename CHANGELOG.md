@@ -4,6 +4,17 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-16
+
+### Changed
+
+- Get started explains how to start from an ESLint or Oxlint `max-lines` rule. The CLI reference
+  documents `config import` and `update --import` with each command, and says which imports need
+  the linter installed.
+- CLI help: `config import eslint` names its argument `FILE`, and `update --import` names its value
+  `LINTER`. The `--unreadable-paths` help and the `[traversal].unreadable_paths` schema
+  description refer to the unreadable paths found while scanning.
+
 ## [0.4.0] - 2026-11-16
 
 ### Added
