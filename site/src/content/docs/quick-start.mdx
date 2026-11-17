@@ -3,24 +3,38 @@ title: Get started
 description: Install Sprawl Guard, check a repository, and record the violations it already has.
 ---
 
-import { Steps } from "@astrojs/starlight/components";
+import { Steps, TabItem, Tabs } from "@astrojs/starlight/components";
 
 ## Install
 
-Install the command-line tool with Cargo:
+Install the command-line tool with Cargo, or add it to a Node.js project (Node.js 22 or newer):
+
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
 
 ```sh
 cargo install sprawl-guard
 ```
 
-Or add it to a Node.js project (Node.js 22 or newer):
+  </TabItem>
+  <TabItem label="pnpm">
+
+```sh
+pnpm add --save-dev @kpozin/sprawl-guard
+```
+
+  </TabItem>
+  <TabItem label="npm">
 
 ```sh
 npm install --save-dev @kpozin/sprawl-guard
 ```
 
+  </TabItem>
+</Tabs>
+
 The examples on this site run `sprawl-guard` directly. In a Node.js project, run it as
-`npm exec -- sprawl-guard` or `pnpm exec sprawl-guard` instead.
+`pnpm exec sprawl-guard` or `npm exec -- @kpozin/sprawl-guard` instead.
 
 To confirm that what you installed was built by the Sprawl Guard release workflow, follow
 [Verify a release](https://github.com/kpozin/sprawl-guard/blob/main/SECURITY.md#verify-a-release).
@@ -134,6 +148,12 @@ the rule's limit and the files it exempts. Sprawl Guard runs the project's own l
 so install the linter in `node_modules` first. Sprawl Guard is tested with ESLint 8.57 and 10, and
 with Oxlint 1.93.
 
+If `sprawl-guard.toml` already exists, `config import --write` fails in step 1. Copy the printed
+`[languages]` tables into the file instead.
+
+<Tabs syncKey="linter">
+  <TabItem label="ESLint">
+
 <Steps>
 
 1. Preview a configuration based on the rule, then save it. ESLint can configure each file
@@ -144,13 +164,7 @@ with Oxlint 1.93.
    sprawl-guard config import --write eslint src/index.js
    ```
 
-   For Oxlint, run `sprawl-guard config import oxlint`, then
-   `sprawl-guard config import --write oxlint`.
-
-   If `sprawl-guard.toml` already exists, `--write` fails. Copy the printed `[languages]` tables
-   into the file instead.
-
-2. Preview [ratchet entries](#record-existing-violations) for the oversized files that the linter
+2. Preview [ratchet entries](#record-existing-violations) for the oversized files that ESLint
    exempts, then save them:
 
    ```sh
@@ -158,7 +172,34 @@ with Oxlint 1.93.
    sprawl-guard update --import eslint --write
    ```
 
-   For Oxlint, pass `--import oxlint`.
+</Steps>
+
+  </TabItem>
+  <TabItem label="Oxlint">
+
+<Steps>
+
+1. Preview a configuration based on the rule, then save it:
+
+   ```sh
+   sprawl-guard config import oxlint
+   sprawl-guard config import --write oxlint
+   ```
+
+2. Preview [ratchet entries](#record-existing-violations) for the oversized files that Oxlint
+   exempts, then save them:
+
+   ```sh
+   sprawl-guard update --import oxlint
+   sprawl-guard update --import oxlint --write
+   ```
+
+</Steps>
+
+  </TabItem>
+</Tabs>
+
+<Steps>
 
 3. Run `sprawl-guard check`, and compare its results with the linter's. The two tools count lines
    slightly differently. The check also applies limits that the linter doesn't: the number of files

@@ -3,6 +3,8 @@ title: CLI and output reference
 description: Commands, options, formats, diagnostics, and exit codes.
 ---
 
+import { TabItem, Tabs } from "@astrojs/starlight/components";
+
 import CliCommandReference from "../../../components/CliCommandReference.astro";
 
 ## Command line
@@ -57,20 +59,31 @@ entries, use `--format toml`.
 With no paths, `update` covers the whole repository. With paths, it covers only those paths.
 
 With `--import eslint` or `--import oxlint`, `update` adds entries only for oversized files that the
-linter exempts from `max-lines`, and none for directories. A file is exempt when:
+linter exempts from `max-lines`, and none for directories.
 
-- The linter's bulk suppressions file at the root, `eslint-suppressions.json` or
-  `oxlint-suppressions.json`, lists it for `max-lines` with a count above zero. Files in any
-  language can be exempt this way.
-- A JavaScript, JSX, TypeScript, or TSX file disables the rule itself:
-  - For ESLint, any directive that ESLint honors counts, because Sprawl Guard runs ESLint on the
-    file. ESLint must be installed in `node_modules` under the root or one of its parents. If ESLint
-    can't parse the file, the import fails.
-  - For Oxlint, a comment before the first line of code disables `max-lines` or every rule, as in
-    `/* oxlint-disable max-lines */` or `/* oxlint-disable */`. `eslint-disable` comments also count
-    when Oxlint is installed, unless the Oxlint configuration sets
-    `options.respectEslintDisableDirectives` to `false`. Comments don't exempt a file that contains
-    `oxlint-enable` or `eslint-enable` anywhere.
+A file in any language is exempt when the linter's bulk suppressions file at the root,
+`eslint-suppressions.json` or `oxlint-suppressions.json`, lists it for `max-lines` with a count
+above zero. A JavaScript, JSX, TypeScript, or TSX file is also exempt when it disables the rule
+itself:
+
+<Tabs syncKey="linter">
+  <TabItem label="ESLint">
+
+Any directive that ESLint honors counts, because Sprawl Guard runs ESLint on the file. ESLint must
+be installed in `node_modules` under the root or one of its parents. If ESLint can't parse the
+file, the import fails.
+
+  </TabItem>
+  <TabItem label="Oxlint">
+
+A comment before the first line of code disables `max-lines` or every rule, as in
+`/* oxlint-disable max-lines */` or `/* oxlint-disable */`. `eslint-disable` comments also count
+when Oxlint is installed, unless the Oxlint configuration sets
+`options.respectEslintDisableDirectives` to `false`. Comments don't exempt a file that contains
+`oxlint-enable` or `eslint-enable` anywhere.
+
+  </TabItem>
+</Tabs>
 
 ### `tighten [PATHS]...`
 
@@ -128,8 +141,18 @@ file exists. Pass `--write` before the linter name, as in `config import --write
   it sets `skipBlankLines: true`.
 - The import fails if the rule is off or missing.
 
+<CliCommandReference path="sprawl-guard config import" />
+
+<Tabs syncKey="linter">
+  <TabItem label="ESLint">
+
 ESLint can configure each file differently, so `config import eslint` reads the rule that applies
 to the source file you name, relative to the root.
+
+<CliCommandReference path="sprawl-guard config import eslint" />
+
+  </TabItem>
+  <TabItem label="Oxlint">
 
 `config import oxlint` reads the Oxlint configuration that applies at the root. It ignores the
 configuration's `overrides`, so use Sprawl Guard
@@ -137,11 +160,10 @@ configuration's `overrides`, so use Sprawl Guard
 [can omit inherited options](https://github.com/oxc-project/oxc/issues/22230) when it prints the
 configuration, so compare the imported limit with any configuration that yours extends.
 
-<CliCommandReference path="sprawl-guard config import" />
-
-<CliCommandReference path="sprawl-guard config import eslint" />
-
 <CliCommandReference path="sprawl-guard config import oxlint" />
+
+  </TabItem>
+</Tabs>
 
 ### `schema {config|ratchet}`
 
