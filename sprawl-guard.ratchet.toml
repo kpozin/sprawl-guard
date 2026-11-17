@@ -1,0 +1,57 @@
+#:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.ratchet.schema.json
+schema_version = 1
+
+[[files]]
+path = "npm/scripts/publish-cargo-crates.ts"
+role = "production"
+max_lines = 959
+
+[[files]]
+path = "npm/scripts/publish-npm-packages.ts"
+role = "production"
+max_lines = 769
+
+[[files]]
+path = "npm/scripts/set-public-version.ts"
+role = "production"
+max_lines = 650
+
+[[files]]
+path = "npm/scripts/stage-publish-payloads.ts"
+role = "production"
+max_lines = 496
+
+[[files]]
+path = "npm/scripts/verify-packed-files.ts"
+role = "production"
+max_lines = 410
+
+[[directories]]
+path = "crates/sprawl-guard-lib/src"
+role = "production"
+group = "source"
+max_direct_files = 13
+
+[[directories]]
+path = "crates/sprawl-guard-lib/src/config"
+role = "production"
+group = "source"
+max_direct_files = 15
+
+[[directories]]
+path = "crates/sprawl-guard/tests/cli"
+role = "test"
+group = "source"
+max_direct_files = 12
+
+[[directories]]
+path = "npm/scripts"
+role = "production"
+group = "source"
+max_direct_files = 21
+
+[[directories]]
+path = "npm/scripts"
+role = "test"
+group = "source"
+max_direct_files = 20

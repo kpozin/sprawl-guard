@@ -23,6 +23,14 @@ Run the development binary directly through Cargo:
 cargo run --locked --package sprawl-guard -- --version
 ```
 
+CI checks this repository with the CLI built from it, using `sprawl-guard.toml` and
+`sprawl-guard.ratchet.toml` at the repository root. When it reports a violation, split the file or
+directory that grew. Run the same check locally:
+
+```sh
+cargo run --locked --package sprawl-guard -- check
+```
+
 ## Bazel
 
 The repository is also a Bazel module. Build and test it, then build the workspace in

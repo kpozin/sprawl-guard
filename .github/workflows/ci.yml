@@ -34,6 +34,11 @@ jobs:
       - name: Check workspace
         run: cargo check --locked --workspace --all-targets
 
+      # Checks this repository with the CLI built from it. The GitHub format adds annotations to
+      # the run, and beside a file in a pull request when the diff includes its first line.
+      - name: Check file and directory sizes
+        run: cargo run --locked --package sprawl-guard -- check --format github
+
       - name: Test workspace
         run: cargo test --locked --workspace
 

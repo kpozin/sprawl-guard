@@ -1,0 +1,23 @@
+#:schema https://kpozin.github.io/sprawl-guard/schemas/v2/sprawl-guard.schema.json
+# sprawl-guard.toml
+#
+# View all resolved defaults:
+#   sprawl-guard config resolved
+#
+# Debug why a path is included or excluded:
+#   sprawl-guard explain path/to/file
+
+schema_version = 2
+
+[limits.max_direct_files_per_directory]
+production = 10
+
+[language_groups.build_tooling]
+languages = ["bazel", "python", "shell"]
+
+[files]
+extend_exclude = [
+  "third_party/**",
+  "cargo-bazel-lock.json",
+  "site/src/generated/cli-reference.json",
+]
