@@ -1,3 +1,4 @@
+mod github;
 mod sarif;
 
 use std::path::Path;
@@ -39,6 +40,10 @@ pub(super) fn render_check_report(
 ) -> Result<String> {
     match format {
         CheckFormat::Human => Ok(human_check_report(report, quiet)),
+        CheckFormat::Github => Ok(github::github_check_report(
+            &human_check_report(report, quiet),
+            report,
+        )),
         CheckFormat::Json => serde_json::to_string_pretty(report)
             .map(|output| format!("{output}\n"))
             .map_err(|source| CliError::RenderJson { source }),
@@ -99,6 +104,19 @@ pub(super) fn render_check_traversal_failure_human(
     let mut output = config_source_notice(config_source, root);
     output.push_str(&traversal_failure_human(root, unreadable_paths));
     output
+}
+
+/// Renders the traversal failure report for GitHub output, as plain log text on stderr.
+pub(super) fn render_check_traversal_failure_github(
+    root: &Path,
+    config_source: &ConfigSource,
+    unreadable_paths: &[UnreadablePath],
+) -> String {
+    github::plain_log_text(&render_check_traversal_failure_human(
+        root,
+        config_source,
+        unreadable_paths,
+    ))
 }
 
 fn traversal_failure_human(root: &Path, unreadable_paths: &[UnreadablePath]) -> String {

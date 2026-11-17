@@ -127,10 +127,8 @@ fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcom
     let policy = loaded.resolved_config();
     let config_source = policy.source().clone();
     let format = match args.format {
-        Some(CheckFormat::Human) => CheckFormat::Human,
-        Some(CheckFormat::Json) => CheckFormat::Json,
-        Some(CheckFormat::Sarif) => CheckFormat::Sarif,
-        None => check_format_from_config(&loaded.config.output.format)?,
+        Some(format) => format,
+        None => check_format_from_config(&loaded.config.output.format),
     };
     let report = match run_check(CheckOptions {
         root: load_options.root.clone(),
@@ -148,6 +146,20 @@ fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcom
                 2,
                 String::new(),
                 check_output::render_check_traversal_failure_human(
+                    &root,
+                    &config_source,
+                    &unreadable_paths,
+                ),
+            ));
+        }
+        Err(SprawlError::TraversalFailed {
+            root,
+            unreadable_paths,
+        }) if format == CheckFormat::Github => {
+            return Ok(CommandOutcome::new(
+                2,
+                String::new(),
+                check_output::render_check_traversal_failure_github(
                     &root,
                     &config_source,
                     &unreadable_paths,
@@ -250,10 +262,11 @@ fn execute_languages(root: PathBuf, args: super::LanguagesArgs) -> Result<Comman
     Ok(CommandOutcome::new(0, stdout, String::new()))
 }
 
-fn check_format_from_config(format: &OutputFormat) -> Result<CheckFormat> {
+fn check_format_from_config(format: &OutputFormat) -> CheckFormat {
     match format {
-        OutputFormat::Human => Ok(CheckFormat::Human),
-        OutputFormat::Json => Ok(CheckFormat::Json),
-        OutputFormat::Sarif => Ok(CheckFormat::Sarif),
+        OutputFormat::Human => CheckFormat::Human,
+        OutputFormat::Json => CheckFormat::Json,
+        OutputFormat::Sarif => CheckFormat::Sarif,
+        OutputFormat::Github => CheckFormat::Github,
     }
 }

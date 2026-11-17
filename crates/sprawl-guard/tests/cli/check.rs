@@ -4,6 +4,7 @@ use serde_json::json;
 
 use super::common::*;
 
+mod github;
 mod ignore;
 
 mod when_a_check_succeeds {

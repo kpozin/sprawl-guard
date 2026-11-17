@@ -202,6 +202,18 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
 - JSON output is a structured report with the root, selected paths, where the configuration came
   from, the line counter, coverage, warnings, and violations.
 - SARIF output follows SARIF 2.1.0 and covers check results.
+- GitHub output prints the human report, then one GitHub Actions `::error` annotation per violation.
+  - The human report, and the report of unreadable paths on stderr, sit between
+    `::stop-commands::` and its resume line, so that file names in them can't act as workflow
+    commands.
+  - Each annotation's title is the violation's [SARIF rule ID](#sarif-rule-ids).
+  - File violations point at line 1 of the file. In GitHub Actions, the file's path is relative to
+    `GITHUB_WORKSPACE`; otherwise it's relative to the root. A pull request's diff shows the
+    annotation only when line 1 is part of the diff.
+  - Directory violations, stale ratchet entries, and file violations under a root outside
+    `GITHUB_WORKSPACE` name no file, so GitHub lists them only on the workflow run.
+  - GitHub shows at most 10 error annotations per step and 50 per job; the full report stays in the
+    step log.
 
 Human check output starts with `Configuration: PATH`, or with
 `Configuration: built-in defaults (no sprawl-guard.toml in ROOT)` when there is no config file. That
@@ -271,8 +283,8 @@ The report fields are:
   entry for it.
 
 When a path cannot be read, `check --format json` still prints a JSON report with `status: "error"`,
-and `check --format sarif` prints only a message on stderr. Other errors may also print only to
-stderr, so check the exit code before parsing stdout.
+and `check --format sarif` and `check --format github` print only a message on stderr. Other errors
+may also print only to stderr, so check the exit code before parsing stdout.
 
 ```sh title="Check as SARIF"
 sprawl-guard check --format sarif

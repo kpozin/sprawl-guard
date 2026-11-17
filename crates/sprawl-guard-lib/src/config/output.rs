@@ -19,6 +19,8 @@ pub enum OutputFormat {
     Json,
     /// SARIF output.
     Sarif,
+    /// Human-readable text output, followed by GitHub Actions annotations.
+    Github,
 }
 
 pub(super) fn merge_output(config: &mut OutputConfig, partial: PartialOutputConfig) {

@@ -62,6 +62,7 @@ mod when_the_hidden_cli_reference_generator_is_requested {
                 {"name": "human", "help": "Human-readable text output"},
                 {"name": "json", "help": "JSON output"},
                 {"name": "sarif", "help": "SARIF output"},
+                {"name": "github", "help": "Human-readable text output, followed by GitHub Actions annotations"},
             ]),
         );
         assert_eq!(

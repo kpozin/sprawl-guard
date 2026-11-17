@@ -77,6 +77,66 @@ fn rule(id: &str, short_description: &str, full_description: &str) -> Value {
     })
 }
 
+/// The rule a violation breaks and a one-sentence description of it. The SARIF and GitHub formats
+/// share it so that both describe a violation in the same words.
+pub(super) struct Finding {
+    pub(super) rule_id: &'static str,
+    pub(super) message: String,
+}
+
+/// Describes a violation in the words that every machine-readable format uses.
+pub(super) fn finding(violation: &CheckViolation) -> Finding {
+    match violation {
+        CheckViolation::FileLines(violation) => file_lines_finding(violation),
+        CheckViolation::DirectoryDirectFiles(violation) => {
+            directory_direct_files_finding(violation)
+        }
+        CheckViolation::Ratchet(violation) => Finding {
+            rule_id: RATCHET_STALE_RULE_ID,
+            message: ratchet_message(violation),
+        },
+    }
+}
+
+fn file_lines_finding(violation: &FileLinesViolation) -> Finding {
+    Finding {
+        rule_id: match violation.kind {
+            FileViolationKind::FileLines => FILE_LINES_RULE_ID,
+            FileViolationKind::TestFileLines => TEST_FILE_LINES_RULE_ID,
+        },
+        message: format!(
+            "{} has {} lines (counting {}), over the limit of {}{}.",
+            violation.path,
+            violation.measurement.actual().get(),
+            violation.measurement.count_lines(),
+            violation.limit,
+            ceiling_message(violation.ratchet)
+        ),
+    }
+}
+
+fn directory_direct_files_finding(violation: &DirectoryDirectFilesViolation) -> Finding {
+    let (rule_id, source_kind) = match violation.kind {
+        DirectoryViolationKind::DirectoryDirectFiles => {
+            (DIRECTORY_DIRECT_FILES_RULE_ID, "production")
+        }
+        DirectoryViolationKind::TestDirectoryDirectFiles => {
+            (TEST_DIRECTORY_DIRECT_FILES_RULE_ID, "test")
+        }
+    };
+    Finding {
+        rule_id,
+        message: format!(
+            "{} in group {} has {} direct {source_kind} files, over the limit of {}{}.",
+            display_path(&violation.path),
+            violation.group,
+            violation.actual,
+            violation.limit,
+            ceiling_message(violation.ratchet)
+        ),
+    }
+}
+
 fn results(report: &CheckReport) -> Vec<Value> {
     report
         .violations()
@@ -92,22 +152,12 @@ fn results(report: &CheckReport) -> Vec<Value> {
 }
 
 fn file_lines_result(violation: &FileLinesViolation) -> Value {
-    let rule_id = match violation.kind {
-        FileViolationKind::FileLines => FILE_LINES_RULE_ID,
-        FileViolationKind::TestFileLines => TEST_FILE_LINES_RULE_ID,
-    };
+    let Finding { rule_id, message } = file_lines_finding(violation);
     json!({
         "ruleId": rule_id,
         "level": "error",
         "message": {
-            "text": format!(
-                "{} has {} lines (counting {}), over the limit of {}{}.",
-                violation.path,
-                violation.measurement.actual().get(),
-                violation.measurement.count_lines(),
-                violation.limit,
-                ceiling_message(violation.ratchet)
-            )
+            "text": message
         },
         "locations": [location(&violation.path)],
         "properties": {
@@ -124,26 +174,12 @@ fn file_lines_result(violation: &FileLinesViolation) -> Value {
 }
 
 fn directory_direct_files_result(violation: &DirectoryDirectFilesViolation) -> Value {
-    let (rule_id, source_kind) = match violation.kind {
-        DirectoryViolationKind::DirectoryDirectFiles => {
-            (DIRECTORY_DIRECT_FILES_RULE_ID, "production")
-        }
-        DirectoryViolationKind::TestDirectoryDirectFiles => {
-            (TEST_DIRECTORY_DIRECT_FILES_RULE_ID, "test")
-        }
-    };
+    let Finding { rule_id, message } = directory_direct_files_finding(violation);
     let mut result = json!({
         "ruleId": rule_id,
         "level": "error",
         "message": {
-            "text": format!(
-                "{} in group {} has {} direct {source_kind} files, over the limit of {}{}.",
-                display_path(&violation.path),
-                violation.group,
-                violation.actual,
-                violation.limit,
-                ceiling_message(violation.ratchet)
-            )
+            "text": message
         },
         "locations": [location(&violation.path)],
         "properties": {
@@ -263,7 +299,7 @@ fn display_path(path: &RelativePath) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use serde_json::json;
     use sprawl_guard_lib::check::{
         CounterInfo, DirectoryDirectFilesViolation, DirectoryViolationKind, FileLinesViolation,
@@ -289,7 +325,9 @@ mod tests {
         )
     }
 
-    fn report_with(violations: Vec<CheckViolation>) -> CheckReport {
+    pub(in crate::cli::check_output) fn report_with(
+        violations: Vec<CheckViolation>,
+    ) -> CheckReport {
         CheckReport::complete(
             sprawl_guard_lib::ReportRoot::trusted("/repo"),
             sprawl_guard_lib::ConfigSource::BuiltIn,
@@ -303,7 +341,10 @@ mod tests {
         )
     }
 
-    fn file_lines_violation(kind: FileViolationKind, path: &str) -> FileLinesViolation {
+    pub(in crate::cli::check_output) fn file_lines_violation(
+        kind: FileViolationKind,
+        path: &str,
+    ) -> FileLinesViolation {
         FileLinesViolation {
             kind,
             path: RelativePath::new(path).unwrap(),
@@ -326,7 +367,7 @@ mod tests {
         .unwrap()
     }
 
-    fn directory_direct_files_violation(
+    pub(in crate::cli::check_output) fn directory_direct_files_violation(
         kind: DirectoryViolationKind,
         path: &str,
         files: Vec<&str>,

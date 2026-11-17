@@ -4,6 +4,12 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `check --format github` and `[output].format = "github"` print the human report followed by GitHub
+  Actions annotations, so violations show up on the workflow run and, when a file's first line is in
+  the diff, beside that file in the pull request. The Run in CI guide's workflows now use it.
+
 ## [0.4.1] - 2026-11-16
 
 ### Changed

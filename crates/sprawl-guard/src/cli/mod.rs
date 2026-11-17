@@ -272,6 +272,8 @@ enum CheckFormat {
     Json,
     /// SARIF output.
     Sarif,
+    /// Human-readable text output, followed by GitHub Actions annotations.
+    Github,
 }
 
 /// CLI override for how unreadable paths are handled.

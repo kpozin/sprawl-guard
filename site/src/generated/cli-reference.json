@@ -173,6 +173,10 @@
             {
               "name": "sarif",
               "help": "SARIF output"
+            },
+            {
+              "name": "github",
+              "help": "Human-readable text output, followed by GitHub Actions annotations"
             }
           ]
         },

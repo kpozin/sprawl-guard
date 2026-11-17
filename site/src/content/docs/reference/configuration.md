@@ -224,9 +224,9 @@ themselves live in the ratchet file. See
 
 ### `[output]`
 
-| Field    | Type and default | Meaning                      |
-| -------- | ---------------- | ---------------------------- |
-| `format` | enum, `"human"`  | `human`, `json`, or `sarif`. |
+| Field    | Type and default | Meaning                                |
+| -------- | ---------------- | -------------------------------------- |
+| `format` | enum, `"human"`  | `human`, `json`, `sarif`, or `github`. |
 
 Only `check` reads `[output].format`, and `check --format` takes precedence. Other commands default
 to human output.
