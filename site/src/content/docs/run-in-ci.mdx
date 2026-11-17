@@ -33,6 +33,40 @@ jobs:
 ```
 
   </TabItem>
+  <TabItem label="pnpm">
+
+Pin the version in `package.json` first, and commit the updated lockfile:
+
+```sh
+pnpm add --save-dev --save-exact @kpozin/sprawl-guard@<VERSION>
+```
+
+`pnpm/action-setup` installs the pnpm version that the `packageManager` field in `package.json`
+names. If the project doesn't set that field, give the action a `version` input instead.
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec sprawl-guard config upgrade --check
+      - run: pnpm exec sprawl-guard check
+```
+
+  </TabItem>
   <TabItem label="npm">
 
 Pin the version in `package.json` first, and commit the updated lockfile:
@@ -58,8 +92,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci
-      - run: npm exec -- sprawl-guard config upgrade --check
-      - run: npm exec -- sprawl-guard check
+      - run: node_modules/.bin/sprawl-guard config upgrade --check
+      - run: node_modules/.bin/sprawl-guard check
 ```
 
   </TabItem>
@@ -81,6 +115,9 @@ CI never changes the ratchet file. Record improvements locally, as described in
 To catch failures before CI does, run `sprawl-guard check` in a Git pre-commit hook. For example,
 with the [pre-commit](https://pre-commit.com/) framework:
 
+<Tabs syncKey="package-manager">
+  <TabItem label="Cargo">
+
 ```yaml title=".pre-commit-config.yaml"
 repos:
   - repo: local
@@ -92,6 +129,52 @@ repos:
         always_run: true
         pass_filenames: false
 ```
+
+  </TabItem>
+  <TabItem label="pnpm">
+
+```yaml title=".pre-commit-config.yaml"
+repos:
+  - repo: local
+    hooks:
+      - id: sprawl-guard
+        name: Sprawl Guard
+        entry: pnpm exec sprawl-guard check
+        language: system
+        always_run: true
+        pass_filenames: false
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+Add a script to `package.json` that runs the check:
+
+```json title="package.json"
+{
+  "scripts": {
+    "sprawl-guard:check": "sprawl-guard check"
+  }
+}
+```
+
+The script runs the version in `node_modules` that the lockfile pins, so install the project's
+dependencies first.
+
+```yaml title=".pre-commit-config.yaml"
+repos:
+  - repo: local
+    hooks:
+      - id: sprawl-guard
+        name: Sprawl Guard
+        entry: npm run --silent sprawl-guard:check
+        language: system
+        always_run: true
+        pass_filenames: false
+```
+
+  </TabItem>
+</Tabs>
 
 `pass_filenames: false` makes the hook check the whole repository instead of only the changed
 files, and `always_run: true` runs it on commits that only delete files.

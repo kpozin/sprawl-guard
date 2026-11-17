@@ -31,7 +31,7 @@ sprawl-guard init --write
 sprawl-guard check
 ```
 
-With npm, run the same commands through `npm exec -- sprawl-guard`. `init --write` creates
+With npm, run the same commands through `npm exec -- @kpozin/sprawl-guard`. `init --write` creates
 `sprawl-guard.toml`; commit it alongside your source code. Run `init` without `--write` to preview
 it first.
 

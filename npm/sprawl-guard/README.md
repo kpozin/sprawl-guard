@@ -19,8 +19,8 @@ npm install --save-dev --save-exact @kpozin/sprawl-guard
 From the repository root:
 
 ```sh
-npm exec -- sprawl-guard init --write
-npm exec -- sprawl-guard check
+npm exec -- @kpozin/sprawl-guard init --write
+npm exec -- @kpozin/sprawl-guard check
 ```
 
 `init --write` creates `sprawl-guard.toml`. Run `init` without `--write` to preview it first. A

@@ -33,7 +33,7 @@ describe("documentation Markdown rendering", () => {
   <TabItem label="npm">
 
 \`\`\`sh
-npm exec -- sprawl-guard check
+npm exec -- @kpozin/sprawl-guard check
 \`\`\`
 
   </TabItem>
@@ -60,7 +60,7 @@ pnpm exec sprawl-guard check
       if (!result.ok) return;
       assert.match(result.value, /^# Quick start\n\nInstall and run the first check\./u);
       assert.match(result.value, /^### Installation commands$/mu);
-      assert.match(result.value, /\*\*npm\*\*[\s\S]*npm exec -- sprawl-guard check/u);
+      assert.match(result.value, /\*\*npm\*\*[\s\S]*npm exec -- @kpozin\/sprawl-guard check/u);
       assert.match(result.value, /\*\*pnpm\*\*[\s\S]*pnpm exec sprawl-guard check/u);
       assert.match(result.value, /1\. Inspect the repository\./u);
       assert.match(result.value, /2\. \[Run in CI\]\(\/sprawl-guard\/run-in-ci\.md\)\./u);

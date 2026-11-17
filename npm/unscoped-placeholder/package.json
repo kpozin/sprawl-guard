@@ -1,0 +1,14 @@
+{
+  "name": "sprawl-guard",
+  "version": "0.0.1",
+  "description": "Placeholder. Sprawl Guard is published as @kpozin/sprawl-guard.",
+  "license": "(MIT OR Apache-2.0)",
+  "homepage": "https://github.com/kpozin/sprawl-guard",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kpozin/sprawl-guard.git"
+  },
+  "files": [
+    "README.md"
+  ]
+}

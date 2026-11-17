@@ -11,7 +11,7 @@ grows.
 
 Run commands from the repository root, through the repository's own task for the check if it has
 one. If `sprawl-guard` is not on `PATH`, run it through the package manager, as in
-`npm exec -- sprawl-guard`.
+`npm exec -- @kpozin/sprawl-guard`.
 
 ## Before declaring work complete
 
