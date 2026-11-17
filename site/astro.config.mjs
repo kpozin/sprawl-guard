@@ -2,9 +2,23 @@ import { defineConfig, passthroughImageService } from "astro/config";
 import starlight from "@astrojs/starlight";
 import markdownOutputCheck from "./src/integrations/markdown-output-check.ts";
 
+const site = "https://kpozin.github.io";
+const base = "/sprawl-guard";
+
+/**
+ * The image that link previews show, rendered from `src/assets/social-card.svg` by
+ * `just sprawl-guard-public-site-social-card`. Open Graph needs an absolute URL.
+ */
+const socialCard = {
+  url: new URL(`${base}/social-card.png`, site).href,
+  width: 1200,
+  height: 630,
+  alt: "Sprawl Guard: keep source files and directories within explicit size limits.",
+};
+
 export default defineConfig({
-  site: "https://kpozin.github.io",
-  base: "/sprawl-guard",
+  site,
+  base,
   output: "static",
   image: {
     service: passthroughImageService(),
@@ -16,6 +30,12 @@ export default defineConfig({
         src: "./src/assets/sprawl-guard-mark.svg",
         alt: "",
       },
+      head: [
+        { tag: "meta", attrs: { property: "og:image", content: socialCard.url } },
+        { tag: "meta", attrs: { property: "og:image:width", content: String(socialCard.width) } },
+        { tag: "meta", attrs: { property: "og:image:height", content: String(socialCard.height) } },
+        { tag: "meta", attrs: { property: "og:image:alt", content: socialCard.alt } },
+      ],
       customCss: ["./src/styles/theme.css"],
       routeMiddleware: "./src/starlight-route-data.ts",
       components: {

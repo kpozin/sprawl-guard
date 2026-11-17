@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630">
+  <!--
+    Source for public/social-card.png, the image that link previews show. The mark is a copy of
+    sprawl-guard-mark.svg. After you edit either file, regenerate both the copy and the PNG with
+    `just sprawl-guard-public-site-social-card`.
+  -->
+  <rect width="1200" height="630" fill="#f7faf8" />
+  <rect width="1200" height="16" fill="#356f52" />
+  <svg id="mark" x="96" y="155" width="285" height="320" viewBox="-0.5 0 220 246" color="#18242d">
+    <defs>
+      <rect id="upper-jaw" x="123.5" y="65" width="81" height="30" rx="7" />
+      <rect id="lower-jaw" x="123.5" y="150" width="81" height="30" rx="7" />
+      <g id="handle">
+        <path d="M153 180h22v41h-22z" />
+        <rect x="146" y="213" width="36" height="25" rx="7" />
+        <rect x="129" y="219" width="70" height="13" rx="6.5" />
+        <circle cx="129" cy="225.5" r="10" />
+        <circle cx="199" cy="225.5" r="10" />
+      </g>
+      <mask id="shield-behind-clamp" maskUnits="userSpaceOnUse">
+        <rect width="220" height="246" fill="white" />
+        <use href="#upper-jaw" fill="black" stroke="black" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" />
+        <use href="#lower-jaw" fill="black" stroke="black" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" />
+      </mask>
+      <mask id="screw-behind-jaws" maskUnits="userSpaceOnUse">
+        <rect width="220" height="246" fill="white" />
+        <use href="#upper-jaw" fill="black" stroke="black" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" />
+        <use href="#lower-jaw" fill="black" stroke="black" stroke-linecap="round" stroke-linejoin="round" stroke-width="16" />
+      </mask>
+    </defs>
+    <path d="M164 65V45L92 18 20 45v81c0 40 23 73 72 100 4.9-2.7 9.44-5.32 13.64-7.86" fill="none" mask="url(#shield-behind-clamp)" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="20" />
+    <g mask="url(#screw-behind-jaws)">
+      <rect x="157" y="95" width="14" height="55" rx="7" fill="currentColor" />
+      <path d="m154 99 20 4m-20 5 20 4m-20 5 20 4m-20 5 20 4m-20 5 20 4m-20 5 20 4" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="6" />
+      <use href="#handle" fill="currentColor" />
+    </g>
+    <use href="#upper-jaw" fill="currentColor" />
+    <use href="#lower-jaw" fill="currentColor" />
+  </svg>
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif">
+    <text x="450" y="280" font-size="104" font-weight="700" fill="#18242d">Sprawl Guard</text>
+    <text x="452" y="358" font-size="40" fill="#285b42">Keep source files and directories</text>
+    <text x="452" y="410" font-size="40" fill="#285b42">within explicit size limits.</text>
+    <text x="452" y="500" font-size="30" fill="#5b6b74">kpozin.github.io/sprawl-guard</text>
+  </g>
+</svg>
