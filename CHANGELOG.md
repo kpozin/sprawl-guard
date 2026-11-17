@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-17
+
 ### Fixed
 
 - The configuration and ratchet schemas no longer give integers a non-standard `format`, such as
