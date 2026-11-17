@@ -8,12 +8,12 @@ import { cliCommandTabsPlugin } from "./cli-command-tabs.ts";
 const options = { mdastPlugins: [cliCommandTabsPlugin] };
 
 /** The tabs that the plugin builds for one block, given each installation's commands. */
-function tabs(meta: string | null, commands: readonly [string, string, string]) {
+function tabs(meta: string | null, commands: readonly [string, string, string, string]) {
   return {
     type: "mdxJsxFlowElement",
     name: "SprawlGuardCliTabs",
     attributes: [{ type: "mdxJsxAttribute", name: "syncKey", value: "package-manager" }],
-    children: (["Cargo", "pnpm", "npm"] as const).map((label, index) => ({
+    children: (["Cargo", "Homebrew", "pnpm", "npm"] as const).map((label, index) => ({
       type: "mdxJsxFlowElement",
       name: "SprawlGuardCliTabItem",
       attributes: [{ type: "mdxJsxAttribute", name: "label", value: label }],
@@ -37,10 +37,12 @@ describe("CLI command tabs", () => {
         },
         tabs('title="Check"', [
           "sprawl-guard check",
+          "sprawl-guard check",
           "pnpm exec sprawl-guard check",
           "npm exec -- @kpozin/sprawl-guard check",
         ]),
         tabs(null, [
+          "sprawl-guard update",
           "sprawl-guard update",
           "pnpm exec sprawl-guard update",
           "npm exec -- @kpozin/sprawl-guard update",

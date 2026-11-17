@@ -92,6 +92,46 @@ Actions builds native artifacts on each target platform, assembles the npm packa
 the release candidates. See the workflows in [`.github/workflows`](../.github/workflows/) for the
 complete release graph.
 
+The Homebrew formula lives in the [kpozin/homebrew-tap](https://github.com/kpozin/homebrew-tap)
+repository and builds Sprawl Guard from the release's source archive. When you publish a stable
+GitHub Release, the `Homebrew` workflow waits for approval in the `release` environment, then starts
+the tap's `Bump` workflow. If the release is GitHub's latest release, `Bump` opens a pull request in
+the tap that moves the formula to the new version; a stable release on another npm channel leaves
+the formula alone. The tap has no CI, so build and test the pull request locally before you merge
+it, replacing `NUMBER` with its number:
+
+```sh
+cd "$(brew --repository kpozin/tap)"
+gh pr checkout NUMBER
+brew reinstall --build-from-source kpozin/tap/sprawl-guard
+brew test kpozin/tap/sprawl-guard
+git checkout main
+```
+
+Merging the pull request ships the release to Homebrew users.
+
+The workflow reads the `HOMEBREW_TAP_TOKEN` secret of the `release` environment: a fine-grained
+personal access token with read and write access to the tap's actions, and no other permissions or
+repositories. It can start the tap's workflows but can't change the formula. The tap's `Bump`
+workflow opens the pull request with its own token, which needs the tap's "Allow GitHub Actions to
+create and approve pull requests" setting. The personal access token expires; when it does, the
+workflow fails with a 401 error from GitHub, so create a new token and replace the secret. If the
+`Homebrew` workflow fails, start the tap's workflow yourself, replacing `VERSION` with the
+release's version:
+
+```sh
+gh workflow run bump.yml --repo kpozin/homebrew-tap --field tag=vVERSION
+```
+
+If the tap's `Bump` workflow fails, read its log, then open the pull request from your own machine:
+
+```sh
+brew tap kpozin/tap
+brew bump-formula-pr --no-fork \
+  --url https://github.com/kpozin/sprawl-guard/archive/refs/tags/vVERSION.tar.gz \
+  kpozin/tap/sprawl-guard
+```
+
 [SchemaStore](https://www.schemastore.org/) maps `sprawl-guard.toml` and
 `sprawl-guard.ratchet.toml` to one schema URL each, and it can't read `schema_version` from the
 file. When a release adds a new configuration or ratchet schema version, wait for the release's

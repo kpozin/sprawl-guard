@@ -1,7 +1,7 @@
 import type { Paragraph, PhrasingContent } from "mdast";
 import type { MdastNode } from "satteri";
 
-import { INSTALLATIONS, parseCodeBlock } from "./cli-commands.ts";
+import { INSTALLATIONS, type Installation, parseCodeBlock, PROGRAM_NAME } from "./cli-commands.ts";
 
 /** Reports whether any code block in `nodes`, however deeply nested, is flagged as commands. */
 export function containsCliCommandBlock(nodes: readonly MdastNode[]): boolean {
@@ -21,18 +21,22 @@ export function containsCliCommandBlock(nodes: readonly MdastNode[]): boolean {
  * Sprawl Guard through a package manager, since that output has no tabs.
  */
 export function installationNote(): Paragraph {
-  const [cargo, ...packageManagers] = INSTALLATIONS;
-  const labels = packageManagers.map((installation) => installation.label).join(" or ");
+  const direct = INSTALLATIONS.filter((installation) => installation.command === PROGRAM_NAME);
+  const packageManagers = INSTALLATIONS.filter(
+    (installation) => installation.command !== PROGRAM_NAME,
+  );
+  const labelsOf = (installations: readonly Installation[]) =>
+    installations.map((installation) => installation.label).join(" or ");
   return {
     type: "paragraph",
     children: [
       { type: "text", value: "Commands on this page run " },
-      { type: "inlineCode", value: cargo.command },
+      { type: "inlineCode", value: PROGRAM_NAME },
       {
         type: "text",
-        value: ` as installed with ${cargo.label}. If you installed Sprawl Guard with ${labels}, replace `,
+        value: ` as installed with ${labelsOf(direct)}. If you installed Sprawl Guard with ${labelsOf(packageManagers)}, replace `,
       },
-      { type: "inlineCode", value: cargo.command },
+      { type: "inlineCode", value: PROGRAM_NAME },
       { type: "text", value: " with " },
       ...packageManagers.flatMap((installation, index): PhrasingContent[] => [
         ...(index === 0 ? [] : [{ type: "text" as const, value: " or " }]),

@@ -32,6 +32,7 @@ describe("command block parsing", () => {
           INSTALLATIONS.map((installation) => commandsFor(block, installation)),
           [
             "sprawl-guard init\nsprawl-guard init --write",
+            "sprawl-guard init\nsprawl-guard init --write",
             "pnpm exec sprawl-guard init\npnpm exec sprawl-guard init --write",
             "npm exec -- @kpozin/sprawl-guard init\nnpm exec -- @kpozin/sprawl-guard init --write",
           ],

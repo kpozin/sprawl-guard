@@ -12,6 +12,12 @@ Install with Cargo:
 cargo install sprawl-guard
 ```
 
+Or with Homebrew on macOS or Linux, which builds it from source:
+
+```sh
+brew install kpozin/tap/sprawl-guard
+```
+
 Or install it as a project-local development dependency with npm or another Node package manager.
 The npm package requires Node.js 22 or newer:
 

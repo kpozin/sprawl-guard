@@ -10,7 +10,7 @@ import type { Result } from "./routes.ts";
 export const CLI_COMMANDS_FLAG = "sprawl-guard";
 
 /** The program name that every line of a command block starts with. */
-const PROGRAM_NAME = "sprawl-guard";
+export const PROGRAM_NAME = "sprawl-guard";
 
 /** The only fence language a command block may use. */
 const SHELL_LANGUAGE = "sh";
@@ -21,6 +21,7 @@ export const PACKAGE_MANAGER_SYNC_KEY = "package-manager";
 /** The ways a reader can install Sprawl Guard, each with the command that runs it. */
 export const INSTALLATIONS = [
   { label: "Cargo", command: "sprawl-guard" },
+  { label: "Homebrew", command: "sprawl-guard" },
   { label: "pnpm", command: "pnpm exec sprawl-guard" },
   { label: "npm", command: "npm exec -- @kpozin/sprawl-guard" },
 ] as const;

@@ -7,7 +7,8 @@ import { Steps, TabItem, Tabs } from "@astrojs/starlight/components";
 
 ## Install
 
-Install the command-line tool with Cargo, or add it to a Node.js project (Node.js 22 or newer):
+Install the command-line tool with Cargo or Homebrew, or add it to a Node.js project (Node.js 22 or
+newer):
 
 <Tabs syncKey="package-manager">
   <TabItem label="Cargo">
@@ -15,6 +16,16 @@ Install the command-line tool with Cargo, or add it to a Node.js project (Node.j
 ```sh
 cargo install sprawl-guard
 ```
+
+  </TabItem>
+  <TabItem label="Homebrew">
+
+```sh
+brew install kpozin/tap/sprawl-guard
+```
+
+Homebrew builds Sprawl Guard from the release's source code, so the first install also installs
+Rust and takes a few minutes.
 
   </TabItem>
   <TabItem label="pnpm">
@@ -39,7 +50,7 @@ Command examples on this site have an npm tab. For a command written in the text
   </TabItem>
 </Tabs>
 
-To confirm that what you installed was built by the Sprawl Guard release workflow, follow
+To confirm that a crate or npm package came from the Sprawl Guard release workflow, follow
 [Verify a release](https://github.com/kpozin/sprawl-guard/blob/main/SECURITY.md#verify-a-release).
 
 ## Check a repository
