@@ -1,7 +1,7 @@
 use nutype::nutype;
-use schemars::{Schema, SchemaGenerator};
 use schemars::generate::SchemaSettings;
 use schemars::transform::ReplaceConstValue;
+use schemars::{Schema, SchemaGenerator};
 
 const TOML_SCHEMA_META_SCHEMA: &str = "http://json-schema.org/draft-04/schema#";
 
