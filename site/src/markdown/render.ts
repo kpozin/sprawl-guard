@@ -4,8 +4,8 @@ import { gfmToMarkdown } from "mdast-util-gfm";
 import { toMarkdown } from "mdast-util-to-markdown";
 import { mdxToMdast, type MdastNode, type MdxJsxFlowElement } from "satteri";
 
+import { containsCliCommandBlock, installationNote } from "./cli-command-nodes.ts";
 import {
-  INSTALLATIONS,
   formatCliCommandBlockError,
   parseCodeBlock,
   type CliCommandBlockError,
@@ -293,40 +293,6 @@ function transformCode(
     case "other":
       return { ok: true, value: [node] };
   }
-}
-
-/** Reports whether any code block in `nodes`, however deeply nested, is flagged as commands. */
-function containsCliCommandBlock(nodes: readonly MdastNode[]): boolean {
-  return nodes.some((node) => {
-    if (node.type === "code") {
-      const parsed = parseCodeBlock(node);
-      return parsed.ok && parsed.value.kind === "cli_commands";
-    }
-    return (
-      "children" in node && Array.isArray(node.children) && containsCliCommandBlock(node.children)
-    );
-  });
-}
-
-/** Tells readers how to run the page's commands when they installed Sprawl Guard through a package manager. */
-function installationNote(): Paragraph {
-  const [cargo, ...packageManagers] = INSTALLATIONS;
-  const labels = packageManagers.map((installation) => installation.label).join(" or ");
-  return paragraphWithChildren([
-    { type: "text", value: "Commands on this page run " },
-    { type: "inlineCode", value: cargo.command },
-    {
-      type: "text",
-      value: ` as installed with ${cargo.label}. If you installed Sprawl Guard with ${labels}, replace `,
-    },
-    { type: "inlineCode", value: cargo.command },
-    { type: "text", value: " with " },
-    ...packageManagers.flatMap((installation, index): PhrasingContent[] => [
-      ...(index === 0 ? [] : [{ type: "text" as const, value: " or " }]),
-      { type: "inlineCode", value: installation.command },
-    ]),
-    { type: "text", value: "." },
-  ]);
 }
 
 function transformComponent(
