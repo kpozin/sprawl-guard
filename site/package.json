@@ -22,8 +22,11 @@
   "devDependencies": {
     "@astrojs/check": "0.9.12",
     "@types/mdast": "4.0.4",
+    "ajv": "8.20.0",
+    "ajv-draft-04": "1.0.0",
     "oxfmt": "0.78.0",
     "oxlint": "1.93.0",
+    "smol-toml": "1.9.1",
     "typescript": "6.0.3"
   },
   "engines": {

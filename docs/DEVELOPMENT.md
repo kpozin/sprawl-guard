@@ -91,3 +91,9 @@ The checked-in `justfile` exposes the Cargo release preparation and publication 
 Actions builds native artifacts on each target platform, assembles the npm packages, and verifies
 the release candidates. See the workflows in [`.github/workflows`](../.github/workflows/) for the
 complete release graph.
+
+[SchemaStore](https://www.schemastore.org/) maps `sprawl-guard.toml` and
+`sprawl-guard.ratchet.toml` to one schema URL each, and it can't read `schema_version` from the
+file. When a release adds a new configuration or ratchet schema version, wait for the release's
+Pages deployment to succeed and check that the new URL serves the schema. Then open a pull request
+to SchemaStore that points only the affected entry at the new URL.

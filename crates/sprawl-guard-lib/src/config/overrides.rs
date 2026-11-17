@@ -253,10 +253,16 @@ impl From<PartialOverrideMaxDirectFilesPerDirectoryLimits>
 /// Path override entry.
 #[derive(Clone, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+// The schema requires at least one limit. Each `anyOf` branch also declares the property it
+// requires, because strict validators such as SchemaStore's reject a schema that lists a property
+// in `required` without declaring it in that schema's `properties`.
 #[schemars(extend(
     "anyOf" = [
-        { "required": ["max_lines_per_file"] },
-        { "required": ["max_direct_files_per_directory"] }
+        { "properties": { "max_lines_per_file": {} }, "required": ["max_lines_per_file"] },
+        {
+            "properties": { "max_direct_files_per_directory": {} },
+            "required": ["max_direct_files_per_directory"]
+        }
     ]
 ))]
 pub struct PathOverride {

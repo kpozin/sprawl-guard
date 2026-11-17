@@ -4,6 +4,12 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The configuration and ratchet schemas no longer give integers a non-standard `format`, such as
+  `uint32`, so strict JSON Schema validators like SchemaStore's accept them. Limits that Sprawl
+  Guard reads as 32-bit numbers have a `maximum` instead, so editors flag values that are too large.
+
 ## [0.5.0] - 2026-11-17
 
 ### Added
