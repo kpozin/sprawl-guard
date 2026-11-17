@@ -1,8 +1,8 @@
-"""Copies the site's mark into the social card SVG.
+"""Copies the site's full logo into the social card SVG.
 
 An SVG viewed as an image can't load other files, so the card carries its own copy of
-`sprawl-guard-mark.svg` inside the nested `<svg id="mark">` element. `write` refreshes that copy;
-`check` exits with an error when it no longer matches the mark file.
+`sprawl-guard-shield-clamp.svg`, the logo with braces, inside the nested `<svg id="mark">` element.
+`write` refreshes that copy; `check` exits with an error when it no longer matches the logo file.
 """
 
 from __future__ import annotations

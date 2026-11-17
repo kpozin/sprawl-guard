@@ -3,7 +3,6 @@
   <style>
     :root {
       color: #18242d;
-      --brace-color: #356f52;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -85,7 +84,7 @@
   />
   <g
     fill="none"
-    stroke="var(--brace-color)"
+    stroke="var(--brace-color, #356f52)"
     stroke-linecap="round"
     stroke-linejoin="round"
     stroke-width="7"
