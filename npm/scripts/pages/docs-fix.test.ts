@@ -190,6 +190,24 @@ describe("applyDocsFix", () => {
       });
     });
 
+    describe("and the script runs from a subdirectory of the checkout", () => {
+      it("still applies the site's changes", () => {
+        const fixture = createFixture();
+
+        const result = applyDocsFix({
+          docsCommit: fixture.commits.mixed,
+          releaseTag: RELEASE_TAG,
+          repository: path.join(fixture.clone, "src"),
+        });
+
+        assert.ok(result.kind === "applied");
+        assert.equal(
+          git(fixture.origin, "diff", "--name-only", RELEASE_TAG, result.commit),
+          "site/astro.config.mjs\nsite/public/card.png",
+        );
+      });
+    });
+
     describe("and the commit changes only code", () => {
       it("rejects it and leaves the branch as it is", () => {
         const fixture = createFixture();

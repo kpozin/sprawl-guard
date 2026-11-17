@@ -56,7 +56,10 @@ export interface ApplyDocsFixArgs {
   readonly docsCommit: string;
   /** The latest stable release's tag, not yet validated. */
   readonly releaseTag: string;
-  /** A clean checkout whose `origin` remote is the public repository. */
+  /**
+   * A directory in a clean checkout whose `origin` remote is the public repository. Git runs from
+   * the checkout's top level, because paths in this script are relative to it.
+   */
   readonly repository: string;
 }
 
@@ -106,7 +109,11 @@ export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
   if (release.kind !== "ok") {
     return release;
   }
-  const git = (...gitArgs: readonly string[]) => runGit(args.repository, gitArgs);
+  const topLevel = runGit(args.repository, ["rev-parse", "--show-toplevel"]);
+  if (topLevel.kind === "failed") {
+    return gitFailure("rev-parse", topLevel.detail);
+  }
+  const git = (...gitArgs: readonly string[]) => runGit(topLevel.stdout, gitArgs);
   const branch = `docs/${release.releaseTag}`;
   const branchTrackingRef = `refs/remotes/origin/${branch}`;
 
