@@ -139,6 +139,15 @@ with the [pre-commit](https://pre-commit.com/) framework:
 <Tabs syncKey="package-manager">
   <TabItem label="Cargo">
 
+The hook runs whichever `sprawl-guard` is on your `PATH`, so install the version that the CI workflow pins:
+
+```sh
+cargo install sprawl-guard --version <VERSION> --locked
+```
+
+When you change the version in CI, run the command again with the new version. To see which
+version you have, run `sprawl-guard --version`.
+
 ```yaml title=".pre-commit-config.yaml"
 repos:
   - repo: local
@@ -153,6 +162,9 @@ repos:
 
   </TabItem>
   <TabItem label="pnpm">
+
+The hook runs the version in `node_modules` that the lockfile pins, so install the project's
+dependencies first.
 
 ```yaml title=".pre-commit-config.yaml"
 repos:
