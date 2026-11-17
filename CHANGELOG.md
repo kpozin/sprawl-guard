@@ -4,19 +4,26 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-17
+
 ### Added
 
 - `check --format github` and `[output].format = "github"` print the human report followed by GitHub
   Actions annotations, so violations show up on the workflow run and, when a file's first line is in
-  the diff, beside that file in the pull request. The Run in CI guide's workflows now use it.
+  the diff, beside that file in the pull request.
+- In the `sprawl-guard-lib` crate, `OutputFormat` has a new `Github` variant, so a `match`
+  that lists every variant needs a new arm.
+
+### Fixed
+
+- The npm package README and the agent skill now say to run Sprawl Guard through npm as
+  `npm exec -- @kpozin/sprawl-guard`. The previous form, `npm exec -- sprawl-guard`, could run an
+  unrelated package named `sprawl-guard` when Sprawl Guard wasn't installed in the project.
 
 ## [0.4.1] - 2026-11-16
 
 ### Changed
 
-- Get started explains how to start from an ESLint or Oxlint `max-lines` rule. The CLI reference
-  documents `config import` and `update --import` with each command, and says which imports need
-  the linter installed.
 - CLI help: `config import eslint` names its argument `FILE`, and `update --import` names its value
   `LINTER`. The `--unreadable-paths` help and the `[traversal].unreadable_paths` schema
   description refer to the unreadable paths found while scanning.
@@ -53,8 +60,6 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ### Removed
 
-- The documentation site no longer publishes the v1 configuration schema. Run
-  `sprawl-guard config upgrade --write` to move a configuration to schema v2.
 - In the `sprawl-guard-lib` crate, `TomlSchemaUrl::ConfigV1` is removed.
   `ConfigSchemaVersion::schema_url()` and `schema_directive()` are replaced by
   `ConfigSchemaVersion::CURRENT_SCHEMA_URL` and `ConfigSchemaVersion::current_schema_directive()`.
@@ -143,9 +148,6 @@ need the renames below applied by hand.
   extensions. Use `--format json` for the full language details.
 - SARIF rule descriptions and messages use the same vocabulary.
 - Each command's help lists only its own `--format` values and states every default.
-- The documentation uses one vocabulary, defined on the "How checks work" page. The guide is now
-  five pages: "Get started", "Run in CI", "Use with Bazel", "Work with the ratchet", and
-  "Configure checks".
 - Language detection uses Tokei 15. It recognizes Blade, C3, Djot, and Godot text scene files, so
   `check` now includes them.
 
@@ -170,7 +172,7 @@ need the renames below applied by hand.
 
 - The `*_increased` JSON ratchet kinds and the `sprawl-guard/ratchet-increase` SARIF rule. A
   violation that grew above its ceiling is reported only by its limit violation.
-- The staged-snapshot preparation hook and its documentation. To check before you commit, run
+- The staged-snapshot preparation hook. To check before you commit, run
   `sprawl-guard check` in a pre-commit hook, as described in "Run in CI".
 
 ## [0.3.0-dev.0] - 2026-10-22
@@ -185,7 +187,7 @@ This development release changes command names and source-selection behavior. Ru
 - Configuration upgrades that preserve authored comments and formatting, with a read-only CI check.
 - Ratchet change previews with before-and-after ceilings; complete TOML remains available.
 - Requested scan scope and configuration provenance in inspection output.
-- Markdown documentation pages for coding agents and an optional staged-snapshot preparation hook.
+- An optional staged-snapshot preparation hook.
 
 ### Changed
 
@@ -229,8 +231,6 @@ This development release changes command names and source-selection behavior. Ru
 ### Changed
 
 - All bundled languages are enabled by default.
-- Configuration and setup documentation now covers the complete schema and package installation
-  paths.
 
 ## [0.1.0] - 2026-07-23
 
