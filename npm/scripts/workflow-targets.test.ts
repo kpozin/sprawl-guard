@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { parse } from "yaml";
@@ -66,9 +67,11 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
           default: z.literal(false),
           type: z.literal("boolean"),
         }),
-        publish_registries: z.object({
-          default: z.literal(false),
-          type: z.literal("boolean"),
+        release_mode: z.object({
+          default: z.literal("choose"),
+          options: z.tuple([z.literal("choose"), z.literal("draft"), z.literal("publish")]),
+          required: z.literal(true),
+          type: z.literal("choice"),
         }),
       }).strict(),
     }),
@@ -357,10 +360,59 @@ describe("native runtime workflow coverage", () => {
         releaseWorkflow.on.workflow_dispatch.inputs.verify_npm.default,
         false,
       );
-      assert.equal(
-        releaseWorkflow.on.workflow_dispatch.inputs.publish_registries.default,
-        false,
-      );
+    });
+  });
+
+  describe("when dispatching a release", () => {
+    it("checks the release mode before any other step", () => {
+      const steps = parseWorkflow(RELEASE_WORKFLOW_URL, RELEASE_WORKFLOW_SCHEMA).jobs[
+        "release-metadata"
+      ].steps;
+
+      assert.equal(steps[0]?.name, "Check release mode");
+    });
+
+    describe("with each release mode", () => {
+      const runModeCheck = (
+        releaseMode: string,
+        repositoryVisibility: string,
+      ): { readonly status: number | null; readonly stdout: string } => {
+        const command = commandForStep(
+          parseWorkflow(RELEASE_WORKFLOW_URL, RELEASE_WORKFLOW_SCHEMA).jobs["release-metadata"]
+            .steps,
+          "Check release mode",
+        );
+        return spawnSync("bash", ["-euo", "pipefail", "-c", command], {
+          encoding: "utf8",
+          env: {
+            PATH: process.env["PATH"],
+            RELEASE_MODE: releaseMode,
+            REPOSITORY_VISIBILITY: repositoryVisibility,
+          },
+        });
+      };
+
+      it("rejects the form's initial choice", () => {
+        const result = runModeCheck("choose", "public");
+
+        assert.equal(result.status, 1);
+        assert.match(result.stdout, /::error::Set release_mode to draft or publish/u);
+      });
+
+      it("accepts a draft in any repository", () => {
+        assert.equal(runModeCheck("draft", "private").status, 0);
+      });
+
+      it("accepts publishing from the public repository", () => {
+        assert.equal(runModeCheck("publish", "public").status, 0);
+      });
+
+      it("rejects publishing from a repository that is not public", () => {
+        const result = runModeCheck("publish", "private");
+
+        assert.equal(result.status, 1);
+        assert.match(result.stdout, /::error::release_mode publish needs a public repository/u);
+      });
     });
   });
 
@@ -561,8 +613,7 @@ describe("native runtime workflow coverage", () => {
           contents: "read",
           "id-token": "write",
         });
-        assert.match(job.if, /inputs\.publish_registries/u);
-        assert.match(job.if, /repository\.visibility == 'public'/u);
+        assert.equal(job.if, "${{ inputs.release_mode == 'publish' }}");
         assert.ok(job.needs.includes("draft-release"));
       }
       assert.ok(npmJob.needs.includes("publish-cargo"));

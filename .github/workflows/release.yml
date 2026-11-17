@@ -20,11 +20,17 @@ on:
         default: ""
         required: false
         type: string
-      publish_registries:
-        description: Publish to crates.io and npm with trusted publishing
-        default: false
-        required: false
-        type: boolean
+      # The form starts on `choose`, which the first job rejects, so a run publishes or drafts only
+      # when the person dispatching it picks that mode.
+      release_mode:
+        description: Pick draft (draft GitHub Release only) or publish (also crates.io and npm); choose fails the run
+        default: choose
+        options:
+          - choose
+          - draft
+          - publish
+        required: true
+        type: choice
       verify_crates:
         description: Verify the locally published Cargo crates from clean registry installs
         default: false
@@ -54,6 +60,27 @@ jobs:
       github_prerelease: ${{ steps.resolve.outputs.github_prerelease }}
       github_latest: ${{ steps.resolve.outputs.github_latest }}
     steps:
+      # Registry publishing needs trusted publishing, which only the public repository has.
+      - name: Check release mode
+        shell: bash
+        run: |
+          case "${RELEASE_MODE}" in
+            draft) ;;
+            publish)
+              if [[ "${REPOSITORY_VISIBILITY}" != "public" ]]; then
+                echo "::error::release_mode publish needs a public repository; this one is ${REPOSITORY_VISIBILITY}."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Set release_mode to draft or publish."
+              exit 1
+              ;;
+          esac
+        env:
+          RELEASE_MODE: ${{ inputs.release_mode }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -778,7 +805,7 @@ jobs:
           RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
 
   publish-cargo:
-    if: ${{ inputs.publish_registries && github.event.repository.visibility == 'public' }}
+    if: ${{ inputs.release_mode == 'publish' }}
     needs:
       - cargo-candidate
       - draft-release
@@ -835,7 +862,7 @@ jobs:
           RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
 
   publish-npm:
-    if: ${{ inputs.publish_registries && github.event.repository.visibility == 'public' }}
+    if: ${{ inputs.release_mode == 'publish' }}
     needs:
       - draft-release
       - package-assembly
@@ -888,7 +915,7 @@ jobs:
           RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
 
   verify-published-cargo:
-    if: ${{ always() && (inputs.verify_crates || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') }}
+    if: ${{ always() && (inputs.verify_crates || inputs.release_mode == 'publish') && needs.draft-release.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') }}
     needs:
       - draft-release
       - publish-cargo
@@ -939,7 +966,7 @@ jobs:
     # Covers registry retries while npm propagates the release, and stops the job if npm keeps
     # stalling.
     timeout-minutes: 60
-    if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
+    if: ${{ always() && (inputs.verify_npm || inputs.release_mode == 'publish') && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
       - publish-npm
@@ -990,7 +1017,7 @@ jobs:
     # Covers registry retries while npm propagates the release, and stops the job if npm keeps
     # stalling.
     timeout-minutes: 60
-    if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
+    if: ${{ always() && (inputs.verify_npm || inputs.release_mode == 'publish') && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
       - publish-npm
@@ -1026,7 +1053,7 @@ jobs:
     # Covers registry retries while npm propagates the release, and stops the job if npm keeps
     # stalling.
     timeout-minutes: 60
-    if: ${{ always() && (inputs.verify_npm || (inputs.publish_registries && github.event.repository.visibility == 'public')) && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
+    if: ${{ always() && (inputs.verify_npm || inputs.release_mode == 'publish') && needs.draft-release.result == 'success' && (needs.publish-npm.result == 'success' || needs.publish-npm.result == 'skipped') }}
     needs:
       - draft-release
       - publish-npm
