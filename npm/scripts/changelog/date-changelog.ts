@@ -8,15 +8,18 @@ import {
   PUBLIC_PACKAGE_VERSION_SCHEMA,
   type PublicPackageVersion,
 } from "../package-version.ts";
+import {
+  latestRelease,
+  LIST_ITEM_PREFIX,
+  proseLines,
+  sectionBody,
+  versionHeadingPrefix,
+} from "./sections.ts";
 
 /** The changelog at the public repository root. */
 const CHANGELOG_URL = new URL("../../../CHANGELOG.md", import.meta.url);
 /** The heading of the section that collects changes for the next release. */
 const UNRELEASED_HEADING = "## [Unreleased]";
-/** The start of a changelog entry; a section without one has no notes, only headings. */
-const LIST_ITEM_PREFIX = "- ";
-/** A release heading such as `## [0.5.0] - 2026-11-17`, capturing the version. */
-const RELEASE_HEADING_PATTERN = /^## \[([^\]]+)\]/u;
 /** A release date as `YYYY-MM-DD`. */
 export const RELEASE_DATE_SCHEMA = z.iso.date().brand<"ReleaseDate">();
 
@@ -45,7 +48,7 @@ export function dateChangelog(args: {
   readonly date: ReleaseDate;
 }): DateChangelogResult {
   const lines = args.changelog.split("\n");
-  const unreleasedIndex = lines.indexOf(UNRELEASED_HEADING);
+  const unreleasedIndex = proseLines(lines).indexOf(UNRELEASED_HEADING);
   if (unreleasedIndex === -1) {
     return { kind: "missing_unreleased_section" };
   }
@@ -53,33 +56,16 @@ export function dateChangelog(args: {
   if (latest !== undefined && !semverGt(args.version, latest)) {
     return { kind: "version_not_newer", version: args.version, latest };
   }
-  const nextSectionIndex = lines.findIndex(
-    (line, index) => index > unreleasedIndex && line.startsWith("## "),
-  );
-  const unreleasedBody = lines.slice(
-    unreleasedIndex + 1,
-    nextSectionIndex === -1 ? undefined : nextSectionIndex,
-  );
+  const unreleasedBody = proseLines(sectionBody(lines, unreleasedIndex));
   if (!unreleasedBody.some((line) => line.startsWith(LIST_ITEM_PREFIX))) {
     return { kind: "empty_unreleased_section" };
   }
   return {
     kind: "ok",
     changelog: lines
-      .toSpliced(unreleasedIndex + 1, 0, "", `## [${args.version}] - ${args.date}`)
+      .toSpliced(unreleasedIndex + 1, 0, "", `${versionHeadingPrefix(args.version)} - ${args.date}`)
       .join("\n"),
   };
-}
-
-/** Returns the version of the first release heading, which the changelog lists newest first. */
-function latestRelease(lines: readonly string[]): PublicPackageVersion | undefined {
-  for (const line of lines) {
-    const version = PUBLIC_PACKAGE_VERSION_SCHEMA.safeParse(RELEASE_HEADING_PATTERN.exec(line)?.[1]);
-    if (version.success) {
-      return version.data;
-    }
-  }
-  return undefined;
 }
 
 /** Writes the dated changelog, or only reports whether it could be dated. */

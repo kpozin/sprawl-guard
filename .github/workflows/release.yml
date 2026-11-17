@@ -128,6 +128,12 @@ jobs:
           GITHUB_REF_TYPE: ${{ github.ref_type }}
           NPM_DIST_TAG: ${{ steps.npm-channel.outputs.npm_dist_tag }}
 
+      # The draft release takes its notes from this section, so check it before the builds start.
+      - name: Check release notes
+        run: node npm/scripts/changelog/release-notes.ts "${RELEASE_VERSION}" > /dev/null
+        env:
+          RELEASE_VERSION: ${{ steps.resolve.outputs.release_version }}
+
   artifact-build:
     needs: release-metadata
     strategy:
@@ -788,7 +794,10 @@ jobs:
             fi
             gh release edit "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}"
           else
-            gh release create "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}" --generate-notes
+            # A re-run keeps the draft's notes, so the owner's edits to them survive.
+            notes_file="${RUNNER_TEMP}/release-notes.md"
+            node npm/scripts/changelog/release-notes.ts "${RELEASE_VERSION}" > "${notes_file}"
+            gh release create "${RELEASE_TAG}" --draft --verify-tag "${release_state_flags[@]}" --title "${release_title}" --notes-file "${notes_file}"
           fi
 
         env:
