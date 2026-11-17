@@ -38,7 +38,7 @@ resolve a merge conflict.
 After you shorten a file or move files out of a crowded directory, the check reports the ratchet
 entry as stale. Preview the change, then write it:
 
-```sh
+```sh sprawl-guard
 sprawl-guard tighten
 sprawl-guard tighten --write
 ```
@@ -51,7 +51,7 @@ back within its limit. It never raises a ceiling or adds an entry.
 When a file or directory has to exceed its limit for now, preview and write an entry for it. Pass
 the file or directory that is over its limit:
 
-```sh
+```sh sprawl-guard
 sprawl-guard update src/parser.rs
 sprawl-guard update src/parser.rs --write
 ```

@@ -1,9 +1,15 @@
 import { parse, type ImportDeclaration } from "acorn";
-import type { List, ListItem, Paragraph, PhrasingContent, Root, RootContent } from "mdast";
+import type { Code, List, ListItem, Paragraph, PhrasingContent, Root, RootContent } from "mdast";
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { toMarkdown } from "mdast-util-to-markdown";
 import { mdxToMdast, type MdastNode, type MdxJsxFlowElement } from "satteri";
 
+import {
+  INSTALLATIONS,
+  formatCliCommandBlockError,
+  parseCodeBlock,
+  type CliCommandBlockError,
+} from "./cli-commands.ts";
 import { cliCommandReferenceNodes } from "./cli-reference-nodes.ts";
 import { findCliReferenceCommand, type CliReferenceError } from "./cli-reference.ts";
 import {
@@ -63,6 +69,17 @@ export type MarkdownRenderError =
       readonly kind: "cli_reference";
       readonly entryId: DocsEntryId;
       readonly cause: CliReferenceError;
+    }
+  | {
+      readonly kind: "cli_command_block";
+      readonly entryId: DocsEntryId;
+      readonly cause: CliCommandBlockError;
+    }
+  | {
+      /** A shell block that runs only Sprawl Guard but lacks the flag that gives it tabs. */
+      readonly kind: "unflagged_cli_command_block";
+      readonly entryId: DocsEntryId;
+      readonly value: string;
     };
 
 interface TransformContext {
@@ -100,6 +117,7 @@ export function renderDocumentationMarkdown(
       { type: "heading", depth: 1, children: [{ type: "text", value: source.title }] },
       paragraph(source.description),
       ...heroNodes(source.hero, context),
+      ...(containsCliCommandBlock(tree.children) ? [installationNote()] : []),
       ...transformedBody.value,
     ],
   };
@@ -126,6 +144,10 @@ export function formatMarkdownRenderError(error: MarkdownRenderError): string {
       return `Malformed ${error.component} in ${error.entryId}: ${error.detail}`;
     case "cli_reference":
       return `Invalid CLI reference in ${error.entryId}: ${error.cause.kind}`;
+    case "cli_command_block":
+      return `Invalid command block in ${error.entryId}: ${formatCliCommandBlockError(error.cause)}`;
+    case "unflagged_cli_command_block":
+      return `Command block in ${error.entryId} needs the sprawl-guard fence flag: ${JSON.stringify(error.value)}`;
   }
 }
 
@@ -208,6 +230,8 @@ function transformNode(
     case "yaml":
     case "toml":
       return { ok: true, value: [] };
+    case "code":
+      return transformCode(node, context);
     default:
       return transformOrdinaryNode(node, context);
   }
@@ -240,6 +264,69 @@ function transformOrdinaryNode(
     ok: true,
     value: [{ ...link, children: children.value } as RootContent],
   };
+}
+
+/**
+ * Keeps a code block as written, minus the flag that gives command blocks their tabs on the HTML
+ * site. The flagged commands run Sprawl Guard as Cargo installs it; the page's installation note
+ * explains the other forms.
+ */
+function transformCode(
+  node: Code,
+  context: TransformContext,
+): Result<RootContent[], MarkdownRenderError> {
+  const parsed = parseCodeBlock(node);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      error: { kind: "cli_command_block", entryId: context.entryId, cause: parsed.error },
+    };
+  }
+  switch (parsed.value.kind) {
+    case "cli_commands":
+      return { ok: true, value: [{ ...node, meta: parsed.value.block.meta }] };
+    case "unflagged_cli_commands":
+      return {
+        ok: false,
+        error: { kind: "unflagged_cli_command_block", entryId: context.entryId, value: node.value },
+      };
+    case "other":
+      return { ok: true, value: [node] };
+  }
+}
+
+/** Reports whether any code block in `nodes`, however deeply nested, is flagged as commands. */
+function containsCliCommandBlock(nodes: readonly MdastNode[]): boolean {
+  return nodes.some((node) => {
+    if (node.type === "code") {
+      const parsed = parseCodeBlock(node);
+      return parsed.ok && parsed.value.kind === "cli_commands";
+    }
+    return (
+      "children" in node && Array.isArray(node.children) && containsCliCommandBlock(node.children)
+    );
+  });
+}
+
+/** Tells readers how to run the page's commands when they installed Sprawl Guard through a package manager. */
+function installationNote(): Paragraph {
+  const [cargo, ...packageManagers] = INSTALLATIONS;
+  const labels = packageManagers.map((installation) => installation.label).join(" or ");
+  return paragraphWithChildren([
+    { type: "text", value: "Commands on this page run " },
+    { type: "inlineCode", value: cargo.command },
+    {
+      type: "text",
+      value: ` as installed with ${cargo.label}. If you installed Sprawl Guard with ${labels}, replace `,
+    },
+    { type: "inlineCode", value: cargo.command },
+    { type: "text", value: " with " },
+    ...packageManagers.flatMap((installation, index): PhrasingContent[] => [
+      ...(index === 0 ? [] : [{ type: "text" as const, value: " or " }]),
+      { type: "inlineCode", value: installation.command },
+    ]),
+    { type: "text", value: "." },
+  ]);
 }
 
 function transformComponent(

@@ -1,5 +1,6 @@
 import { defineConfig, passthroughImageService } from "astro/config";
 import starlight from "@astrojs/starlight";
+import cliCommandTabs from "./src/integrations/cli-command-tabs.ts";
 import markdownOutputCheck from "./src/integrations/markdown-output-check.ts";
 
 const site = "https://kpozin.github.io";
@@ -81,6 +82,7 @@ export default defineConfig({
         },
       ],
     }),
+    cliCommandTabs(),
     markdownOutputCheck(),
   ],
 });

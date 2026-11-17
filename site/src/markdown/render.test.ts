@@ -296,4 +296,65 @@ import { TabItem } from "@astrojs/starlight/components";
       });
     });
   });
+  describe("when an entry has command blocks", () => {
+    /** Renders a quick-start entry whose body is `body`. */
+    const render = (body: string) =>
+      renderDocumentationMarkdown(
+        { id: "quick-start", title: "Commands", description: "Command example.", body },
+        routes,
+      );
+
+    describe("and flagged blocks are nested in a list", () => {
+      const result = render(
+        '1. Check.\n\n   ```sh sprawl-guard title="Check"\n   sprawl-guard check\n   ```\n\n2. Update.\n\n   ```sh sprawl-guard\n   sprawl-guard update\n   ```',
+      );
+
+      test("keeps the commands and title without the flag", () => {
+        assert.ok(result.ok);
+        assert.match(result.value, /^ {3}```sh title="Check"\n {3}sprawl-guard check\n {3}```$/mu);
+        assert.match(result.value, /^ {3}```sh\n {3}sprawl-guard update\n {3}```$/mu);
+      });
+
+      test("explains once how to run the commands through a package manager", () => {
+        assert.ok(result.ok);
+        const note =
+          "Commands on this page run `sprawl-guard` as installed with Cargo. If you installed Sprawl Guard with pnpm or npm, replace `sprawl-guard` with `pnpm exec sprawl-guard` or `npm exec -- @kpozin/sprawl-guard`.";
+        assert.equal(result.value.split(note).length - 1, 1);
+      });
+    });
+
+    describe("and no block is flagged", () => {
+      test("leaves out the package-manager note", () => {
+        const result = render("```sh\ncargo install sprawl-guard\n```");
+        assert.ok(result.ok);
+        assert.doesNotMatch(result.value, /Commands on this page/u);
+      });
+    });
+
+    describe("and a block runs only Sprawl Guard without the flag", () => {
+      test("fails so that the HTML site doesn't lose the block's tabs", () => {
+        assert.deepEqual(render("```sh\nsprawl-guard check\n```"), {
+          ok: false,
+          error: {
+            kind: "unflagged_cli_command_block",
+            entryId: "quick-start",
+            value: "sprawl-guard check",
+          },
+        });
+      });
+    });
+
+    describe("and a flagged block runs another program", () => {
+      test("fails with the line that isn't a command", () => {
+        assert.deepEqual(render("```sh sprawl-guard\ncargo install sprawl-guard\n```"), {
+          ok: false,
+          error: {
+            kind: "cli_command_block",
+            entryId: "quick-start",
+            cause: { kind: "not_a_command", line: "cargo install sprawl-guard" },
+          },
+        });
+      });
+    });
+  });
 });

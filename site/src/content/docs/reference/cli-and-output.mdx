@@ -112,11 +112,11 @@ Besides [`config import`](#config-import-eslintoxlint), the `config` command has
 
 To list only the languages found in the repository, use `languages --detected`.
 
-```sh title="Check that the configuration is current"
+```sh sprawl-guard title="Check that the configuration is current"
 sprawl-guard config upgrade --check
 ```
 
-```sh title="Inspect the configuration"
+```sh sprawl-guard title="Inspect the configuration"
 sprawl-guard config resolved
 sprawl-guard languages --detected
 ```
@@ -286,7 +286,7 @@ When a path cannot be read, `check --format json` still prints a JSON report wit
 and `check --format sarif` and `check --format github` print only a message on stderr. Other errors
 may also print only to stderr, so check the exit code before parsing stdout.
 
-```sh title="Check as SARIF"
+```sh sprawl-guard title="Check as SARIF"
 sprawl-guard check --format sarif
 ```
 
@@ -306,7 +306,7 @@ Configuration, path, I/O, parsing, and unreadable-path problems are errors, not 
 
 Check the exit code before you parse JSON or SARIF output:
 
-```sh title="Check as JSON"
+```sh sprawl-guard title="Check as JSON"
 sprawl-guard check --format json
 ```
 

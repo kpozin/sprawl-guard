@@ -23,6 +23,9 @@ cargo install sprawl-guard
 pnpm add --save-dev @kpozin/sprawl-guard
 ```
 
+Command examples on this site have a pnpm tab. For a command written in the text, such as
+`sprawl-guard check`, type `pnpm exec sprawl-guard` in place of `sprawl-guard`.
+
   </TabItem>
   <TabItem label="npm">
 
@@ -30,11 +33,11 @@ pnpm add --save-dev @kpozin/sprawl-guard
 npm install --save-dev @kpozin/sprawl-guard
 ```
 
+Command examples on this site have an npm tab. For a command written in the text, such as
+`sprawl-guard check`, type `npm exec -- @kpozin/sprawl-guard` in place of `sprawl-guard`.
+
   </TabItem>
 </Tabs>
-
-The examples on this site run `sprawl-guard` directly. In a Node.js project, run it as
-`pnpm exec sprawl-guard` or `npm exec -- @kpozin/sprawl-guard` instead.
 
 To confirm that what you installed was built by the Sprawl Guard release workflow, follow
 [Verify a release](https://github.com/kpozin/sprawl-guard/blob/main/SECURITY.md#verify-a-release).
@@ -47,7 +50,7 @@ Run these commands from the repository root.
 
 1. Create the configuration file, `sprawl-guard.toml`.
 
-   ```sh title="Initialize a repository"
+   ```sh sprawl-guard title="Initialize a repository"
    sprawl-guard init
    sprawl-guard init --write
    ```
@@ -61,7 +64,7 @@ Run these commands from the repository root.
 
 2. Run the check.
 
-   ```sh title="Run the first check"
+   ```sh sprawl-guard title="Run the first check"
    sprawl-guard check
    ```
 
@@ -100,7 +103,7 @@ and also if it shrinks, until you record the smaller size.
 
 1. Preview the violations to record.
 
-   ```sh
+   ```sh sprawl-guard
    sprawl-guard update
    ```
 
@@ -121,7 +124,7 @@ and also if it shrinks, until you record the smaller size.
 
 2. Write the ratchet file and run the check.
 
-   ```sh
+   ```sh sprawl-guard
    sprawl-guard update --write
    sprawl-guard check
    ```
@@ -159,7 +162,7 @@ If `sprawl-guard.toml` already exists, `config import --write` fails in step 1. 
 1. Preview a configuration based on the rule, then save it. ESLint can configure each file
    differently, so name a source file whose limit you want:
 
-   ```sh
+   ```sh sprawl-guard
    sprawl-guard config import eslint src/index.js
    sprawl-guard config import --write eslint src/index.js
    ```
@@ -167,7 +170,7 @@ If `sprawl-guard.toml` already exists, `config import --write` fails in step 1. 
 2. Preview [ratchet entries](#record-existing-violations) for the oversized files that ESLint
    exempts, then save them:
 
-   ```sh
+   ```sh sprawl-guard
    sprawl-guard update --import eslint
    sprawl-guard update --import eslint --write
    ```
@@ -181,7 +184,7 @@ If `sprawl-guard.toml` already exists, `config import --write` fails in step 1. 
 
 1. Preview a configuration based on the rule, then save it:
 
-   ```sh
+   ```sh sprawl-guard
    sprawl-guard config import oxlint
    sprawl-guard config import --write oxlint
    ```
@@ -189,7 +192,7 @@ If `sprawl-guard.toml` already exists, `config import --write` fails in step 1. 
 2. Preview [ratchet entries](#record-existing-violations) for the oversized files that Oxlint
    exempts, then save them:
 
-   ```sh
+   ```sh sprawl-guard
    sprawl-guard update --import oxlint
    sprawl-guard update --import oxlint --write
    ```
