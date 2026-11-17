@@ -41,6 +41,7 @@ interface FixtureCommits {
   readonly docs: string;
   readonly followUp: string;
   readonly intoDocs: string;
+  readonly mixed: string;
   readonly quotedName: string;
   readonly released: string;
   readonly unmerged: string;
@@ -85,12 +86,17 @@ function createFixture(): Fixture {
   const intoDocs = git(work, "rev-parse", "HEAD");
   const quotedName = commitFiles(work, "Add café guide", { "site/src/content/docs/café.md": "coffee\n" });
   const asset = commitFiles(work, "Add illustration", { "site/src/assets/tree.svg": "<svg/>\n" });
+  const mixed = commitFiles(work, "Add preview image and its tooling", {
+    "site/astro.config.mjs": "export default {};\n",
+    "site/public/card.png": "png\n",
+    "src/lib.rs": "fn unreleased() {}\nfn more() {}\nfn card() {}\n",
+  });
   git(work, "switch", "--quiet", "--create", "feature", released);
   const unmerged = commitFiles(work, "Draft guide", { "site/src/content/docs/draft.md": "draft\n" });
   git(work, "push", "--quiet", "origin", "main", "feature", RELEASE_TAG, `${released}:${DOCS_BRANCH}`);
   git(root, "clone", "--quiet", origin, clone);
 
-  return { clone, commits: { asset, code, conflicting, docs, followUp, intoDocs, quotedName, released, unmerged }, origin };
+  return { clone, commits: { asset, code, conflicting, docs, followUp, intoDocs, mixed, quotedName, released, unmerged }, origin };
 }
 
 function apply(fixture: Fixture, docsCommit: string) {
@@ -165,25 +171,44 @@ describe("applyDocsFix", () => {
       });
     });
 
-    describe("and the commit also changes code", () => {
+    describe("and the commit changes the site's configuration and static files along with code", () => {
+      it("adds only the site's changes", () => {
+        const fixture = createFixture();
+
+        const result = apply(fixture, fixture.commits.mixed);
+
+        assert.ok(result.kind === "applied");
+        assert.equal(originBranch(fixture), result.commit);
+        assert.equal(
+          git(fixture.origin, "diff", "--name-only", RELEASE_TAG, result.commit),
+          "site/astro.config.mjs\nsite/public/card.png",
+        );
+        assert.equal(
+          git(fixture.origin, "log", "-1", "--format=%an <%ae>", result.commit),
+          "Test <test@example.com>",
+        );
+      });
+    });
+
+    describe("and the commit changes only code", () => {
       it("rejects it and leaves the branch as it is", () => {
         const fixture = createFixture();
 
         const result = apply(fixture, fixture.commits.code);
 
-        assert.deepEqual(result, { kind: "non_documentation_paths", paths: ["src/lib.rs"] });
+        assert.deepEqual(result, { kind: "no_documentation_changes", docsCommit: fixture.commits.code });
         assert.equal(originBranch(fixture), fixture.commits.released);
       });
     });
 
     describe("and the commit moves a file into the documentation", () => {
-      it("rejects the file's removal from outside the documentation", () => {
+      it("adds the file and keeps the original outside the documentation", () => {
         const fixture = createFixture();
 
         const result = apply(fixture, fixture.commits.intoDocs);
 
-        assert.deepEqual(result, { kind: "non_documentation_paths", paths: ["src/notes.txt"] });
-        assert.equal(originBranch(fixture), fixture.commits.released);
+        assert.ok(result.kind === "applied");
+        assert.equal(git(fixture.origin, "diff", "--name-only", RELEASE_TAG, result.commit), "site/src/content/docs/notes.txt");
       });
     });
 

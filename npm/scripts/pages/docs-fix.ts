@@ -3,9 +3,10 @@
 /**
  * Publishes a documentation fix for the latest release without a new release.
  *
- * A fix is a commit on `main` that changes only documentation pages and images. It is cherry-picked
- * onto `docs/<release tag>`, a branch that starts at the release tag and collects such fixes, so the
- * deployed site keeps describing the released version rather than unreleased work on `main`.
+ * A fix is a commit on `main` whose changes to the documentation site go out before the next
+ * release. Only those changes are applied, onto `docs/<release tag>`: a branch that starts at the
+ * release tag and collects such fixes, so the deployed site keeps describing the released version
+ * rather than unreleased work on `main`. The commit's other changes wait for the next release.
  *
  * The owner creates each release's branch. GitHub refuses to let the workflow's token create a
  * branch whose workflow files differ from the default branch's, as a release tag's usually do. The
@@ -13,6 +14,8 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   parseReleaseTag,
@@ -27,10 +30,13 @@ import {
   type ReleaseCommit,
 } from "../release-source.ts";
 
-/** The repository directories whose files a documentation fix may change: pages and their images. */
-export const DOCUMENTATION_DIRECTORIES = ["site/src/content/", "site/src/assets/"] as const;
+/**
+ * The documentation site's directory: its pages, images, static files, configuration and build
+ * scripts. Only the deployed site is built from it, so a documentation fix may change anything here.
+ */
+export const DOCUMENTATION_DIRECTORY = "site/";
 
-/** Git options that record cherry-picked commits as GitHub's Actions bot. */
+/** Git options that record applied commits as GitHub's Actions bot. */
 const COMMITTER_OPTIONS = [
   "-c",
   "user.name=github-actions[bot]",
@@ -81,14 +87,15 @@ export type ApplyDocsFixResult =
       readonly branchHead: ReleaseCommit;
       readonly releaseTag: ReleaseTag;
     }
+  | { readonly kind: "no_documentation_changes"; readonly docsCommit: ReleaseCommit }
   | { readonly kind: "cherry_pick_failed"; readonly detail: string }
   | { readonly kind: "non_documentation_paths"; readonly paths: readonly string[] }
   | GitFailure;
 
 /**
- * Cherry-picks a documentation commit onto the release's existing documentation branch and pushes
- * it. The branch is pushed only if its whole difference from the release tag stays inside the
- * documentation directories.
+ * Applies a commit's documentation changes onto the release's existing documentation branch and
+ * pushes it. The branch is pushed only if its whole difference from the release tag stays inside the
+ * documentation directory, which also catches commits pushed to the branch by hand.
  */
 export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
   const docsCommit = RELEASE_COMMIT_SCHEMA.safeParse(args.docsCommit);
@@ -160,10 +167,10 @@ export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
   }
   const alreadyApplied = history.stdout.includes(`(cherry picked from commit ${docsCommit.data})`);
   if (!alreadyApplied) {
-    const picked = git(...COMMITTER_OPTIONS, "cherry-pick", "-x", docsCommit.data);
-    if (picked.kind === "failed") {
-      git("cherry-pick", "--abort");
-      return { kind: "cherry_pick_failed", detail: picked.detail };
+    const picked = pickDocumentation(git, docsCommit.data);
+    if (picked.kind !== "ok") {
+      git("reset", "--quiet", "--hard", "HEAD");
+      return picked;
     }
   }
 
@@ -175,7 +182,7 @@ export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
   const outside = changed.stdout
     .split("\0")
     .filter(
-      (file) => file.length > 0 && !DOCUMENTATION_DIRECTORIES.some((directory) => file.startsWith(directory)),
+      (file) => file.length > 0 && !file.startsWith(DOCUMENTATION_DIRECTORY),
     );
   if (outside.length > 0) {
     return { kind: "non_documentation_paths", paths: outside };
@@ -201,6 +208,58 @@ export function applyDocsFix(args: ApplyDocsFixArgs): ApplyDocsFixResult {
     releaseTag: release.releaseTag,
     releaseVersion: release.releaseVersion,
   };
+}
+
+type PickResult =
+  | { readonly kind: "ok" }
+  | { readonly kind: "no_documentation_changes"; readonly docsCommit: ReleaseCommit }
+  | { readonly kind: "cherry_pick_failed"; readonly detail: string }
+  | GitFailure;
+
+/**
+ * Commits the documentation part of `commit` on top of `HEAD`, with the commit's author and message
+ * and the `(cherry picked from commit …)` line that `git cherry-pick -x` writes. The patch is limited
+ * to the documentation directory, so the commit's other changes can't conflict.
+ */
+function pickDocumentation(git: (...gitArgs: readonly string[]) => GitResult, commit: ReleaseCommit): PickResult {
+  const patch = git("diff", "--binary", "--no-renames", `${commit}^`, commit, "--", DOCUMENTATION_DIRECTORY);
+  if (patch.kind === "failed") {
+    return gitFailure("diff", patch.detail);
+  }
+  if (patch.stdout.length === 0) {
+    return { kind: "no_documentation_changes", docsCommit: commit };
+  }
+  const patchDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "docs-fix-"));
+  try {
+    const patchFile = path.join(patchDirectory, "documentation.patch");
+    // `runGit` trims output, and `git apply` needs the patch's final newline.
+    fs.writeFileSync(patchFile, `${patch.stdout}\n`);
+    const applied = git("apply", "--3way", "--index", patchFile);
+    if (applied.kind === "failed") {
+      return { kind: "cherry_pick_failed", detail: applied.detail };
+    }
+  } finally {
+    fs.rmSync(patchDirectory, { force: true, recursive: true });
+  }
+
+  const message = git("log", "-1", "--format=%B", commit);
+  if (message.kind === "failed") {
+    return gitFailure("log", message.detail);
+  }
+  // `--reuse-message` keeps the original author and date; `--amend` then adds the provenance line.
+  const committed = git(...COMMITTER_OPTIONS, "commit", "--quiet", "--reuse-message", commit);
+  if (committed.kind === "failed") {
+    return gitFailure("commit", committed.detail);
+  }
+  const marked = git(
+    ...COMMITTER_OPTIONS,
+    "commit",
+    "--quiet",
+    "--amend",
+    "--message",
+    `${message.stdout}\n\n(cherry picked from commit ${commit})`,
+  );
+  return marked.kind === "failed" ? gitFailure("commit", marked.detail) : { kind: "ok" };
 }
 
 /** Whether one commit is an ancestor of, or the same as, another. */
@@ -264,13 +323,16 @@ function main(): number {
         ].join("\n"),
       );
       return 1;
+    case "no_documentation_changes":
+      console.error(`documentation commit changes nothing in ${DOCUMENTATION_DIRECTORY}: ${result.docsCommit}`);
+      return 1;
     case "cherry_pick_failed":
       console.error(`documentation commit does not apply to the release's documentation:\n${result.detail}`);
       return 1;
     case "non_documentation_paths":
       console.error(
         [
-          `documentation fixes may change only ${DOCUMENTATION_DIRECTORIES.join(" and ")}, not:`,
+          `the documentation branch may differ from its release only in ${DOCUMENTATION_DIRECTORY}, not:`,
           ...result.paths.map((file) => `- ${file}`),
         ].join("\n"),
       );

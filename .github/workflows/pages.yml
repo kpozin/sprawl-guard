@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       docs_commit:
-        description: Full SHA of a commit on main that changes only site/src/content or site/src/assets
+        description: Full SHA of a commit on main whose changes under site/ to publish
         required: false
 
 permissions:
