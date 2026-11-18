@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.2-beta.0] - 2026-11-18
+
 ### Fixed
 
 - The prebuilt Linux glibc binaries, in the npm packages and the release archives, now run on glibc
