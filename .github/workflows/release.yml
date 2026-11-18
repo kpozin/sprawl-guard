@@ -907,7 +907,6 @@ jobs:
     needs:
       - draft-release
       - package-assembly
-      - publish-cargo
       - release-metadata
     runs-on: ubuntu-24.04
     environment: release

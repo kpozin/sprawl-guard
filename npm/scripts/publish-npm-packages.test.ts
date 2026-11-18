@@ -13,6 +13,7 @@ import {
 import {
   reconcileNpmDistTag,
   reconcileNpmPackageIntegrity,
+  releasePackageList,
 } from "./npm-publication/model.ts";
 import {
   PACKAGE_VERSION,
@@ -56,7 +57,7 @@ describe("npmPublicationRequests", () => {
   describe("when deriving the first-release publication order", () => {
     it("publishes every runtime carrier before the wrapper", () => {
       const workspaceRootDirectory = WORKSPACE_ROOT_DIRECTORY;
-      const requests = npmPublicationRequests({ workspaceRootDirectory });
+      const requests = releasePackageList(npmPublicationRequests({ workspaceRootDirectory }));
 
       assert.deepEqual(
         requests.map(({ packageName }) => packageName),
@@ -213,7 +214,7 @@ describe("npm publication candidate", () => {
           '{"private":true,"packageManager":"pnpm@11.28.11"}\n',
         );
         const requests = npmPublicationRequests({ workspaceRootDirectory });
-        for (const request of requests) {
+        for (const request of releasePackageList(requests)) {
           for (const relativePath of request.expectedPackedPaths) {
             const filePath = path.join(request.packageDirectory, relativePath);
             fs.mkdirSync(path.dirname(filePath), { recursive: true });

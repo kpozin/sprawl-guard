@@ -9,7 +9,7 @@ max_lines = 959
 [[files]]
 path = "npm/scripts/publish-npm-packages.ts"
 role = "production"
-max_lines = 769
+max_lines = 763
 
 [[files]]
 path = "npm/scripts/set-public-version.ts"

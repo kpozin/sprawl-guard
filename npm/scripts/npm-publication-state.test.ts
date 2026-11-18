@@ -7,9 +7,11 @@ import {
 } from "./package-manifests.ts";
 import { NPM_DIST_TAG_SCHEMA } from "./npm-dist-tag.ts";
 import {
+  releasePackageList,
   type NpmPackageName,
   type NpmPublicationOperations,
   type NpmPublicationRequest,
+  type NpmReleasePackages,
   type RemoteNpmDistTagInspection,
   type RemotePackageIntegrityInspection,
 } from "./npm-publication/model.ts";
@@ -63,23 +65,23 @@ describe("npm publication value types", () => {
   });
 });
 
-const CARRIER_REQUEST: NpmPublicationRequest = {
-  archiveExpectation: {
-    kind: "files",
-    requiredPaths: [
-      PACKAGE_RELATIVE_PATH_SCHEMA.parse(FIRST_RUNTIME_PACKAGE.artifactRelativePath),
-    ],
-  },
-  expectedManifestText: MANIFEST_TEXT,
-  expectedPackedManifestText: MANIFEST_TEXT,
-  expectedPackedPaths: [
-    PACKAGE_RELATIVE_PATH_SCHEMA.parse(FIRST_RUNTIME_PACKAGE.artifactRelativePath),
-  ],
-  packageDirectory: ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(
-    `/release/npm/.stage/packages/${FIRST_RUNTIME_PACKAGE.slug}`,
-  ),
-  packageName: FIRST_RUNTIME_PACKAGE.packageName,
-};
+function platformRequest(
+  definition: (typeof RUNTIME_PACKAGE_DEFINITIONS)[number],
+): NpmPublicationRequest {
+  const payloadPath = PACKAGE_RELATIVE_PATH_SCHEMA.parse(definition.artifactRelativePath);
+  return {
+    archiveExpectation: { kind: "files", requiredPaths: [payloadPath] },
+    expectedManifestText: MANIFEST_TEXT,
+    expectedPackedManifestText: MANIFEST_TEXT,
+    expectedPackedPaths: [payloadPath],
+    packageDirectory: ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(
+      `/release/npm/.stage/packages/${definition.slug}`,
+    ),
+    packageName: definition.packageName,
+  };
+}
+
+const CARRIER_REQUEST = platformRequest(FIRST_RUNTIME_PACKAGE);
 const WRAPPER_REQUEST: NpmPublicationRequest = {
   archiveExpectation: { kind: "files", requiredPaths: [README_PATH] },
   expectedManifestText: MANIFEST_TEXT,
@@ -90,6 +92,94 @@ const WRAPPER_REQUEST: NpmPublicationRequest = {
   ),
   packageName: WRAPPER_PACKAGE_NAME,
 };
+const WRAPPER_ONLY: NpmReleasePackages<NpmPublicationRequest> = {
+  platformPackages: [],
+  wrapper: WRAPPER_REQUEST,
+};
+const ONE_CARRIER_AND_WRAPPER: NpmReleasePackages<NpmPublicationRequest> = {
+  platformPackages: [CARRIER_REQUEST],
+  wrapper: WRAPPER_REQUEST,
+};
+const FULL_RELEASE: NpmReleasePackages<NpmPublicationRequest> = {
+  platformPackages: RUNTIME_PACKAGE_DEFINITIONS.map(platformRequest),
+  wrapper: WRAPPER_REQUEST,
+};
+const PLATFORM_PACKAGE_NAMES = FULL_RELEASE.platformPackages.map(
+  ({ packageName }) => packageName,
+);
+const LAST_RUNTIME_PACKAGE = RUNTIME_PACKAGE_DEFINITIONS.at(-1);
+assert.ok(LAST_RUNTIME_PACKAGE !== undefined);
+
+/**
+ * A fake registry that serves each package as soon as it is uploaded. It records each upload
+ * (`upload:`) and each time a post-upload wait sees a package (`served:`), so tests can check the
+ * order of the phases.
+ */
+function simulatedRegistry(args: {
+  readonly alreadyPublished?: readonly NpmPackageName[];
+  readonly failsUploadOf?: NpmPackageName;
+  readonly servesConflictingContentsOf?: NpmPackageName;
+}) {
+  const events: string[] = [];
+  const servedPackages = new Set<NpmPackageName>(args.alreadyPublished);
+  const uploadedPackages = new Set<NpmPackageName>();
+  const packageNameOf = (path: string): NpmPackageName => {
+    const request = releasePackageList(FULL_RELEASE).find(
+      ({ packageName }) => path === archivePath(packageName),
+    );
+    assert.ok(request !== undefined);
+    return request.packageName;
+  };
+  const operations: NpmPublicationOperations = {
+    inspectRemoteDistTag: (packageName) => ({
+      kind: "ok",
+      remote: servedPackages.has(packageName)
+        ? { kind: "present", version: PACKAGE_VERSION }
+        : { kind: "present", version: VERSION_0_0_9 },
+    }),
+    inspectRemoteIntegrity: (packageName) => {
+      if (!servedPackages.has(packageName)) {
+        return { kind: "ok", integrity: { kind: "absent" } };
+      }
+      if (uploadedPackages.has(packageName)) {
+        events.push(`served:${packageName}`);
+      }
+      return {
+        kind: "ok",
+        integrity: {
+          kind: "present",
+          integrity: packageName === args.servesConflictingContentsOf
+            ? CONFLICTING_INTEGRITY
+            : LOCAL_INTEGRITY,
+        },
+      };
+    },
+    packPackage: (request) => ({
+      kind: "ok",
+      archivePath: archivePath(request.packageName),
+      integrity: LOCAL_INTEGRITY,
+      packageName: request.packageName,
+      version: PACKAGE_VERSION,
+    }),
+    publishArchive: (path, _integrity, npmDistTag) => {
+      const packageName = packageNameOf(path);
+      assert.equal(npmDistTag, BETA_DIST_TAG);
+      events.push(`upload:${packageName}`);
+      if (packageName === args.failsUploadOf) {
+        return { kind: "failed", detail: "npm publish exited with status 1" };
+      }
+      servedPackages.add(packageName);
+      uploadedPackages.add(packageName);
+      return { kind: "ok" };
+    },
+    sleepBeforeRetry: async () => {},
+  };
+  return { events, operations };
+}
+
+function eventsWithPrefix(events: readonly string[], prefix: string): string[] {
+  return events.filter((event) => event.startsWith(prefix));
+}
 
 function publicationOperations(args: {
   readonly distTagInspections?: RemoteNpmDistTagInspection[];
@@ -128,62 +218,176 @@ function publicationOperations(args: {
 }
 
 describe("publishNpmPublicationRequests", () => {
-  describe("when a complete package set is new", () => {
-    it("publishes carriers before the wrapper directly on the selected channel", async () => {
-      const events: string[] = [];
-      const integrityInspections = new Map<NpmPackageName, number>();
-      const published = new Set<NpmPackageName>();
-      const operations: NpmPublicationOperations = {
-        inspectRemoteDistTag: (packageName) => ({
-          kind: "ok",
-          remote: published.has(packageName)
-            ? { kind: "present", version: PACKAGE_VERSION }
-            : { kind: "absent" },
-        }),
-        inspectRemoteIntegrity: (packageName) => {
-          const inspection = (integrityInspections.get(packageName) ?? 0) + 1;
-          integrityInspections.set(packageName, inspection);
-          return inspection < 3
-            ? { kind: "ok", integrity: { kind: "absent" } }
-            : {
-                kind: "ok",
-                integrity: {
-                  kind: "present",
-                  integrity: LOCAL_INTEGRITY,
-                },
-              };
-        },
-        packPackage: (request) => ({
-          kind: "ok",
-          archivePath: archivePath(request.packageName),
-          integrity: LOCAL_INTEGRITY,
-          packageName: request.packageName,
-          version: PACKAGE_VERSION,
-        }),
-        publishArchive: (archivePath, _integrity, npmDistTag) => {
-          const publishedPackage = [CARRIER_REQUEST, WRAPPER_REQUEST].find(
-            ({ packageName }) => archivePath === `/release/${packageName}.tgz`,
-          );
-          assert.ok(publishedPackage !== undefined);
-          events.push(`publish:${publishedPackage.packageName}:${npmDistTag}`);
-          published.add(publishedPackage.packageName);
-          return { kind: "ok" };
-        },
-        sleepBeforeRetry: async () => {},
-      };
-
+  describe("when every platform package and the wrapper are new", () => {
+    async function publishFullRelease() {
+      const registry = simulatedRegistry({});
       const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
-        operations,
-        requests: [CARRIER_REQUEST, WRAPPER_REQUEST],
+        operations: registry.operations,
+        requests: FULL_RELEASE,
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+      return { ...registry, result };
+    }
+
+    it("succeeds", async () => {
+      const { result } = await publishFullRelease();
+      assert.deepEqual(result, { kind: "ok" });
+    });
+
+    it("starts the platform uploads in release order and the wrapper upload last", async () => {
+      const { events } = await publishFullRelease();
+      assert.deepEqual(eventsWithPrefix(events, "upload:"), [
+        ...PLATFORM_PACKAGE_NAMES.map((packageName) => `upload:${packageName}`),
+        `upload:${WRAPPER_PACKAGE_NAME}`,
+      ]);
+    });
+
+    it("uploads every platform package before waiting for any package", async () => {
+      const { events } = await publishFullRelease();
+      const lastPlatformUpload = Math.max(
+        ...PLATFORM_PACKAGE_NAMES.map((packageName) =>
+          events.indexOf(`upload:${packageName}`),
+        ),
+      );
+      assert.ok(lastPlatformUpload < events.findIndex((event) => event.startsWith("served:")));
+    });
+
+    it("uploads the wrapper only after npm serves every platform package", async () => {
+      const { events } = await publishFullRelease();
+      const wrapperUpload = events.indexOf(`upload:${WRAPPER_PACKAGE_NAME}`);
+      for (const packageName of PLATFORM_PACKAGE_NAMES) {
+        const served = events.indexOf(`served:${packageName}`);
+        assert.ok(served !== -1 && served < wrapperUpload, `${packageName} served first`);
+      }
+      assert.equal(events.at(-1), `served:${WRAPPER_PACKAGE_NAME}`);
+    });
+  });
+
+  describe("when some platform packages are already published", () => {
+    it("uploads and waits for only the absent packages", async () => {
+      const registry = simulatedRegistry({
+        alreadyPublished: [FIRST_RUNTIME_PACKAGE.packageName],
+      });
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: registry.operations,
+        requests: FULL_RELEASE,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
       assert.deepEqual(result, { kind: "ok" });
-      assert.deepEqual(events, [
-        `publish:${CARRIER_REQUEST.packageName}:beta`,
-        `publish:${WRAPPER_PACKAGE_NAME}:beta`,
+      const absentPackageNames = [
+        ...PLATFORM_PACKAGE_NAMES.slice(1),
+        WRAPPER_PACKAGE_NAME,
+      ];
+      assert.deepEqual(
+        eventsWithPrefix(registry.events, "upload:"),
+        absentPackageNames.map((packageName) => `upload:${packageName}`),
+      );
+      assert.deepEqual(
+        eventsWithPrefix(registry.events, "served:"),
+        absentPackageNames.map((packageName) => `served:${packageName}`),
+      );
+    });
+  });
+
+  describe("when a platform upload fails", () => {
+    async function publishWithFailedUpload() {
+      const registry = simulatedRegistry({
+        failsUploadOf: FIRST_RUNTIME_PACKAGE.packageName,
+      });
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: registry.operations,
+        requests: FULL_RELEASE,
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+      return { ...registry, result };
+    }
+
+    it("reports the failed platform package", async () => {
+      const { result } = await publishWithFailedUpload();
+      assert.deepEqual(result, {
+        kind: "failed",
+        packageName: FIRST_RUNTIME_PACKAGE.packageName,
+        detail: "npm publish exited with status 1",
+      });
+    });
+
+    it("starts no further upload", async () => {
+      const { events } = await publishWithFailedUpload();
+      assert.deepEqual(eventsWithPrefix(events, "upload:"), [
+        `upload:${FIRST_RUNTIME_PACKAGE.packageName}`,
       ]);
+    });
+
+    it("waits for no package", async () => {
+      const { events } = await publishWithFailedUpload();
+      assert.deepEqual(eventsWithPrefix(events, "served:"), []);
+    });
+  });
+
+  describe("when npm serves different contents for a platform package", () => {
+    it("reports that package without uploading the wrapper", async () => {
+      const registry = simulatedRegistry({
+        servesConflictingContentsOf: LAST_RUNTIME_PACKAGE.packageName,
+      });
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: registry.operations,
+        requests: FULL_RELEASE,
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.deepEqual(result, {
+        kind: "failed",
+        packageName: LAST_RUNTIME_PACKAGE.packageName,
+        detail: `published integrity ${CONFLICTING_INTEGRITY} differs from uploaded integrity ${LOCAL_INTEGRITY}`,
+      });
+      assert.equal(registry.events.includes(`upload:${WRAPPER_PACKAGE_NAME}`), false);
+    });
+  });
+
+  describe("when the wrapper upload fails", () => {
+    it("reports the wrapper after npm serves every platform package", async () => {
+      const registry = simulatedRegistry({ failsUploadOf: WRAPPER_PACKAGE_NAME });
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: registry.operations,
+        requests: FULL_RELEASE,
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.deepEqual(result, {
+        kind: "failed",
+        packageName: WRAPPER_PACKAGE_NAME,
+        detail: "npm publish exited with status 1",
+      });
+      assert.deepEqual(
+        eventsWithPrefix(registry.events, "served:"),
+        PLATFORM_PACKAGE_NAMES.map((packageName) => `served:${packageName}`),
+      );
+    });
+  });
+
+  describe("when npm serves different contents for the wrapper", () => {
+    it("reports the wrapper", async () => {
+      const registry = simulatedRegistry({
+        servesConflictingContentsOf: WRAPPER_PACKAGE_NAME,
+      });
+      const result = await publishNpmPublicationRequests({
+        npmDistTag: BETA_DIST_TAG,
+        operations: registry.operations,
+        requests: FULL_RELEASE,
+        temporaryDirectory: RELEASE_DIRECTORY,
+      });
+
+      assert.deepEqual(result, {
+        kind: "failed",
+        packageName: WRAPPER_PACKAGE_NAME,
+        detail: `published integrity ${CONFLICTING_INTEGRITY} differs from uploaded integrity ${LOCAL_INTEGRITY}`,
+      });
     });
   });
 
@@ -201,65 +405,12 @@ describe("publishNpmPublicationRequests", () => {
             },
           ],
         }),
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
       assert.deepEqual(result, { kind: "ok" });
       assert.deepEqual(events, ["pack", "inspect"]);
-    });
-  });
-
-  describe("when a carrier is already published on the selected channel", () => {
-    describe("and the wrapper is absent", () => {
-      it("publishes only the wrapper", async () => {
-        const events: string[] = [];
-        const published = new Set<NpmPackageName>([CARRIER_REQUEST.packageName]);
-        const wrapperInspections = { count: 0 };
-        const operations: NpmPublicationOperations = {
-          inspectRemoteDistTag: (packageName) => ({
-            kind: "ok",
-            remote: published.has(packageName)
-              ? { kind: "present", version: PACKAGE_VERSION }
-              : { kind: "present", version: VERSION_0_0_9 },
-          }),
-          inspectRemoteIntegrity: (packageName) => {
-            if (packageName === WRAPPER_PACKAGE_NAME) {
-              wrapperInspections.count += 1;
-            }
-            return packageName === WRAPPER_PACKAGE_NAME && wrapperInspections.count < 3
-              ? { kind: "ok", integrity: { kind: "absent" } }
-              : {
-                  kind: "ok",
-                  integrity: { kind: "present", integrity: LOCAL_INTEGRITY },
-                };
-          },
-          packPackage: (request) => ({
-            kind: "ok",
-            archivePath: archivePath(request.packageName),
-            integrity: LOCAL_INTEGRITY,
-            packageName: request.packageName,
-            version: PACKAGE_VERSION,
-          }),
-          publishArchive: (publishedArchivePath, _integrity, npmDistTag) => {
-            assert.equal(publishedArchivePath, archivePath(WRAPPER_PACKAGE_NAME));
-            events.push(`publish:${WRAPPER_PACKAGE_NAME}:${npmDistTag}`);
-            published.add(WRAPPER_PACKAGE_NAME);
-            return { kind: "ok" };
-          },
-          sleepBeforeRetry: async () => {},
-        };
-
-        const result = await publishNpmPublicationRequests({
-          npmDistTag: BETA_DIST_TAG,
-          operations,
-          requests: [CARRIER_REQUEST, WRAPPER_REQUEST],
-          temporaryDirectory: RELEASE_DIRECTORY,
-        });
-
-        assert.deepEqual(result, { kind: "ok" });
-        assert.deepEqual(events, [`publish:${WRAPPER_PACKAGE_NAME}:beta`]);
-      });
     });
   });
 
@@ -275,7 +426,7 @@ describe("publishNpmPublicationRequests", () => {
           events,
           inspections: [{ kind: "ok", integrity: { kind: "absent" } }],
         }),
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -310,7 +461,7 @@ describe("publishNpmPublicationRequests", () => {
             events.push("sleep");
           },
         },
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -348,7 +499,7 @@ describe("publishNpmPublicationRequests", () => {
             events.push("sleep");
           },
         },
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -376,7 +527,7 @@ describe("publishNpmPublicationRequests", () => {
             { kind: "ok", integrity: { kind: "present", integrity: LOCAL_INTEGRITY } },
           ],
         }),
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -401,7 +552,7 @@ describe("publishNpmPublicationRequests", () => {
             },
           ],
         }),
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -435,7 +586,7 @@ describe("publishNpmPublicationRequests", () => {
             },
           ],
         }),
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -461,7 +612,7 @@ describe("publishNpmPublicationRequests", () => {
             },
           ],
         }),
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -489,7 +640,7 @@ describe("publishNpmPublicationRequests", () => {
             { kind: "ok", integrity: { kind: "absent" } },
           ],
         }),
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -531,9 +682,9 @@ describe("publishNpmPublicationRequests", () => {
             events.push("publish");
             return { kind: "ok" };
           },
-                sleepBeforeRetry: async () => {},
-              },
-        requests: [CARRIER_REQUEST, WRAPPER_REQUEST],
+          sleepBeforeRetry: async () => {},
+        },
+        requests: ONE_CARRIER_AND_WRAPPER,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -567,7 +718,7 @@ describe("publishNpmPublicationRequests", () => {
                 };
           },
         },
-        requests: [CARRIER_REQUEST, WRAPPER_REQUEST],
+        requests: ONE_CARRIER_AND_WRAPPER,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -589,7 +740,7 @@ describe("publishNpmPublicationRequests", () => {
       const result = await publishNpmPublicationRequests({
         npmDistTag: BETA_DIST_TAG,
         operations: publicationOperations({ events, inspections: [] }),
-        requests: [CARRIER_REQUEST],
+        requests: ONE_CARRIER_AND_WRAPPER,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 
@@ -624,7 +775,7 @@ describe("publishNpmPublicationRequests", () => {
             events.push("sleep");
           },
         },
-        requests: [WRAPPER_REQUEST],
+        requests: WRAPPER_ONLY,
         temporaryDirectory: RELEASE_DIRECTORY,
       });
 

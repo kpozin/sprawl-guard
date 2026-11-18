@@ -439,7 +439,8 @@ describe("native runtime workflow coverage", () => {
         assert.equal(job.if, "${{ inputs.release_mode == 'publish' }}");
         assert.ok(job.needs.includes("draft-release"));
       }
-      assert.ok(npmJob.needs.includes("publish-cargo"));
+      // The two registries publish at the same time, so their approvals can be given together.
+      assert.equal(npmJob.needs.includes("publish-cargo"), false);
 
       const cargoPublish = stepWithName(cargoJob.steps, "Publish Cargo crates");
       assert.equal(

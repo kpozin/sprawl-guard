@@ -107,6 +107,22 @@ export type PublishNpmPackagesResult =
       readonly detail: string;
     };
 
+/**
+ * The complete npm release, split by role. npm must serve every platform package before the
+ * wrapper, because the wrapper lists them as optional dependencies.
+ */
+export interface NpmReleasePackages<TPackage> {
+  readonly platformPackages: readonly TPackage[];
+  readonly wrapper: TPackage;
+}
+
+/** Lists every package in the release in publication order: platform packages, then the wrapper. */
+export function releasePackageList<TPackage>(
+  packages: NpmReleasePackages<TPackage>,
+): readonly TPackage[] {
+  return [...packages.platformPackages, packages.wrapper];
+}
+
 /** Registry and package-manager operations used by the npm publication state machine. */
 export interface NpmPublicationOperations {
   readonly inspectRemoteDistTag: (
@@ -146,7 +162,7 @@ export interface PreparedNpmPublication extends PackagedNpmPublication {
 export type PrepareNpmPublicationsResult =
   | {
       readonly kind: "ok";
-      readonly publications: readonly PreparedNpmPublication[];
+      readonly publications: NpmReleasePackages<PreparedNpmPublication>;
     }
   | Extract<PublishNpmPackagesResult, { readonly kind: "failed" }>;
 

@@ -22,6 +22,7 @@ import {
   type NpmPackageName,
   type NpmPublicationOperations,
   type NpmPublicationRequest,
+  type NpmReleasePackages,
   type PackResult,
   type PublishArchiveResult,
   type PublishNpmPackagesResult,
@@ -29,8 +30,12 @@ import {
   type RemotePackageIntegrityInspection,
   type SuccessfulPackResult,
   type ValidationResult,
+  releasePackageList,
 } from "./npm-publication/model.ts";
-import { publishNpmPublicationRequests } from "./npm-publication/state.ts";
+import {
+  packPublication,
+  publishNpmPublicationRequests,
+} from "./npm-publication/state.ts";
 import {
   ABSOLUTE_DIRECTORY_PATH_SCHEMA,
   NPM_ARCHIVE_FILE_NAME_SCHEMA,
@@ -105,18 +110,18 @@ type NpmCommandResult =
 type NpmPublicationCandidateManifest = z.infer<
   typeof NPM_PUBLICATION_CANDIDATE_SCHEMA
 >;
-/** Returns all carrier packages followed by the user-facing wrapper package. */
+/** Returns the platform packages and the user-facing wrapper package that depends on them. */
 export function npmPublicationRequests(args: {
   readonly workspaceRootDirectory: AbsoluteDirectoryPath;
-}): readonly NpmPublicationRequest[] {
+}): NpmReleasePackages<NpmPublicationRequest> {
   const publishWorkspace = path.join(args.workspaceRootDirectory, PUBLISH_WORKSPACE_DIRECTORY);
   const generatedTextFiles = publishWorkspaceTextFiles();
   const wrapperManifestText = generatedTextFile(
     generatedTextFiles,
     `${PUBLISH_WORKSPACE_DIRECTORY}/sprawl-guard/package.json`,
   );
-  return [
-    ...RUNTIME_PACKAGE_DEFINITIONS.map((definition) => {
+  return {
+    platformPackages: RUNTIME_PACKAGE_DEFINITIONS.map((definition) => {
       const requiredPaths = parsePackageRelativePaths([
         "package.json",
         "README.md",
@@ -147,7 +152,7 @@ export function npmPublicationRequests(args: {
         packageName: definition.packageName,
       };
     }),
-    {
+    wrapper: {
       archiveExpectation: {
         kind: "files" as const,
         requiredPaths: WRAPPER_REQUIRED_PATHS,
@@ -160,7 +165,7 @@ export function npmPublicationRequests(args: {
       ),
       packageName: WRAPPER_PACKAGE_NAME,
     },
-  ];
+  };
 }
 
 /** Models pnpm's audited removal of its development-only selector from published metadata. */
@@ -235,21 +240,20 @@ export function prepareNpmPublicationCandidate(args: {
     };
   }
 
-  const requests = npmPublicationRequests({
+  const requests = releasePackageList(npmPublicationRequests({
     workspaceRootDirectory: args.workspaceRootDirectory,
-  });
+  }));
   const packages: NpmPublicationCandidateManifest["packages"] = [];
   for (const request of requests) {
-    const packed = packPackage(request, args.outputDirectory);
-    if (packed.kind === "failed") {
-      return failedPublication(request, packed.detail);
+    const packaged = packPublication({
+      packPackage,
+      request,
+      temporaryDirectory: args.outputDirectory,
+    });
+    if (packaged.kind === "failed") {
+      return packaged;
     }
-    if (packed.packageName !== request.packageName || packed.version !== PACKAGE_VERSION) {
-      return failedPublication(
-        request,
-        `packed identity ${packed.packageName}@${packed.version} does not match ${request.packageName}@${PACKAGE_VERSION}`,
-      );
-    }
+    const { packed } = packaged.value;
     packages.push({
       archiveFile: NPM_ARCHIVE_FILE_NAME_SCHEMA.parse(
         path.basename(packed.archivePath),
@@ -395,7 +399,7 @@ export async function publishNpmPackages(args: {
     candidateDirectory: args.candidateDirectory,
     expectation: args.expectation,
     npmDistTag: args.npmDistTag,
-    requests,
+    requests: releasePackageList(requests),
   });
   if (candidate.kind === "failed") {
     return candidate;
@@ -419,20 +423,9 @@ export function verifyNpmPublicationCandidate(args: {
     candidateDirectory: args.candidateDirectory,
     expectation: args.expectation,
     npmDistTag: args.npmDistTag,
-    requests: npmPublicationRequests(args),
+    requests: releasePackageList(npmPublicationRequests(args)),
   });
   return loaded.kind === "ok" ? { kind: "ok" } : loaded;
-}
-
-function failedPublication(
-  request: NpmPublicationRequest,
-  detail: string,
-): Extract<PublishNpmPackagesResult, { readonly kind: "failed" }> {
-  return {
-    kind: "failed",
-    packageName: request.packageName,
-    detail,
-  };
 }
 
 function packPackage(
