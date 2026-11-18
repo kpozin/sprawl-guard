@@ -1241,7 +1241,7 @@ checksum = "d0d5d4b1981b8bbbb7aed204cae5726d683d5d6ac7e74ec54122ea28f315e7c8"
 
 [[package]]
 name = "sprawl-guard"
-version = "0.5.2-beta.1"
+version = "0.5.2"
 dependencies = [
  "assert_fs",
  "clap",
@@ -1257,7 +1257,7 @@ dependencies = [
 
 [[package]]
 name = "sprawl-guard-lib"
-version = "0.5.2-beta.1"
+version = "0.5.2"
 dependencies = [
  "globset",
  "ignore",

@@ -25,9 +25,9 @@ brew install kpozin/tap/sprawl-guard
 ```
 
 Homebrew installs one copy for the whole machine and upgrades it whenever you upgrade your other
-packages. Use it to try Sprawl Guard or to check repositories that you don't maintain. On Arm
-Linux, the Homebrew copy needs glibc 2.39 or newer, as in Ubuntu 24.04. On older systems, install
-with Cargo.
+packages. Use it to try Sprawl Guard or to check repositories that you don't maintain. On
+Linux, the Homebrew copy needs glibc 2.35 or newer, as in Ubuntu 22.04 and Debian 12. On older
+systems, install with Cargo.
 
 If a project's CI runs Sprawl Guard, your local copy should match the version that CI uses. To
 install that version, follow [Run in CI](/sprawl-guard/run-in-ci/#run-the-check-before-you-commit).
