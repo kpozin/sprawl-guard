@@ -27,6 +27,14 @@ brew install kpozin/tap/sprawl-guard
 Homebrew builds Sprawl Guard from the release's source code, so the first install also installs
 Rust and takes a few minutes.
 
+Homebrew installs one copy for the whole machine and upgrades it whenever you upgrade your other
+packages. Use it to try Sprawl Guard or to check repositories that you don't maintain.
+
+If a project's CI runs Sprawl Guard, your local copy should match the version that CI uses. To
+install that version, follow [Run in CI](/sprawl-guard/run-in-ci/#run-the-check-before-you-commit).
+A Git hook runs the first `sprawl-guard` on your `PATH`, which might still be the Homebrew copy. Run
+`sprawl-guard --version` to see which version that is.
+
   </TabItem>
   <TabItem label="pnpm">
 

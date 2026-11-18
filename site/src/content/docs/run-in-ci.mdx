@@ -166,36 +166,6 @@ repos:
 ```
 
   </TabItem>
-  <TabItem label="Homebrew">
-
-The hook runs whichever `sprawl-guard` is on your `PATH`. Homebrew installs only the latest
-release and upgrades it along with your other packages, so pin it to keep the version that CI
-runs:
-
-```sh
-brew install kpozin/tap/sprawl-guard
-brew pin sprawl-guard
-sprawl-guard --version
-```
-
-In CI, use the workflow on the Cargo tab above, which downloads the release binary, and set its
-`VERSION` to the version that `sprawl-guard --version` prints. To move to a new release, run
-`brew unpin sprawl-guard` and `brew upgrade sprawl-guard`, pin it again, and update `VERSION` in
-CI to match.
-
-```yaml title=".pre-commit-config.yaml"
-repos:
-  - repo: local
-    hooks:
-      - id: sprawl-guard
-        name: Sprawl Guard
-        entry: sprawl-guard check
-        language: system
-        always_run: true
-        pass_filenames: false
-```
-
-  </TabItem>
   <TabItem label="pnpm">
 
 The hook runs the version in `node_modules` that the lockfile pins, so install the project's

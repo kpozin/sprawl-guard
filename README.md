@@ -12,7 +12,7 @@ Install with Cargo:
 cargo install sprawl-guard
 ```
 
-Or with Homebrew on macOS or Linux, which builds it from source:
+To try it on macOS or Linux, install it with Homebrew, which builds it from source:
 
 ```sh
 brew install kpozin/tap/sprawl-guard
