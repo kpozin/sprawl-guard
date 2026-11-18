@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0-beta.1] - 2026-11-18
+
 ### Added
 
 - Sprawl Guard is on PyPI as `sprawl-guard`, so Python projects can install it with uv, pip, or
