@@ -8,7 +8,6 @@
  * built-ins and validates its arguments without Zod.
  */
 
-import { type SpawnSyncOptionsWithStringEncoding, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -23,9 +22,17 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { RUNTIME_PACKAGE_DEFINITIONS } from "../../sprawl-guard/src/lib/runtime-packages.ts";
+import {
+  type CapturedCommandResult,
+  type CommandResult,
+  runNodeScript,
+  runNpm,
+} from "./npm-install-processes.ts";
 
 const WRAPPER_PACKAGE_NAME = "@kpozin/sprawl-guard";
 const RUNTIME_PACKAGE_PREFIX = `${WRAPPER_PACKAGE_NAME}-`;
+/** The wrapper's `bin` entry point, relative to its installed package directory. */
+export const WRAPPER_ENTRY_POINT = "dist/bin/sprawl-guard.js";
 const RUNTIME_PACKAGE_PATTERN = /^@kpozin\/sprawl-guard-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const DIST_TAG_PATTERN = /^[a-z][a-z0-9._-]*$/u;
@@ -38,12 +45,6 @@ const MAX_INSTALL_OVERHEAD_BYTES = 512 * 1024;
  */
 export const REGISTRY_INSTALL_ATTEMPTS = 30;
 const REGISTRY_INSTALL_INTERVAL_MILLISECONDS = 20_000;
-/**
- * How long one npm command may run before it is stopped and counts as a failed attempt. npm
- * waits up to five minutes for each registry request, so a stalled connection could otherwise
- * hold one attempt far longer than the whole retry schedule.
- */
-const NPM_COMMAND_TIMEOUT_MILLISECONDS = 120_000;
 
 // These brands mirror the workspace's package-version and dist-tag schemas, which this
 // built-ins-only script can't import.
@@ -81,14 +82,15 @@ export interface NpmInstallCheck {
   readonly version: PackageVersion;
 }
 
-/** The outcome of one npm command. */
-export type NpmCommandResult =
-  | { readonly kind: "ok"; readonly stdout: string }
-  | { readonly kind: "failed"; readonly detail: string };
-
 /** Side effects that tests replace. */
 export interface NpmInstallCheckOperations {
-  readonly runNpm: (args: readonly string[]) => NpmCommandResult;
+  /** Runs npm and streams its stderr, so a slow install shows progress as it happens. */
+  readonly runNpm: (args: readonly string[]) => CommandResult;
+  /** Runs an installed JavaScript entry point with Node.js and returns its stderr. */
+  readonly runEntryPoint: (
+    entryPoint: AbsolutePath,
+    argument: WrapperArgument,
+  ) => CapturedCommandResult;
   readonly sleepBeforeRetry: () => Promise<void>;
 }
 
@@ -112,14 +114,20 @@ interface InstallFootprint {
   readonly overheadBytes: number;
 }
 
+/** An argument that the check runs the installed wrapper with. */
+export type WrapperArgument = "--help" | "--version";
+
 /** The result of an install check. */
 export type NpmInstallCheckResult =
   | { readonly kind: "ok"; readonly footprint: InstallFootprint }
   | { readonly kind: "project_exists"; readonly projectDirectory: AbsolutePath }
   | InstallFailure
   | { readonly kind: "footprint_budget_exceeded"; readonly footprint: InstallFootprint }
-  | { readonly kind: "command_failed"; readonly command: string; readonly detail: string }
-  | { readonly kind: "unexpected_version_output"; readonly output: string };
+  | { readonly kind: "command_failed"; readonly argument: WrapperArgument; readonly detail: string }
+  | { readonly kind: "unexpected_stderr"; readonly argument: WrapperArgument; readonly stderr: string }
+  | { readonly kind: "unexpected_version_output"; readonly output: string }
+  /** The entry point runs, but npm can't run it through the project's `sprawl-guard` bin link. */
+  | { readonly kind: "bin_link_failed"; readonly detail: string };
 
 /** Installs the packages, retrying registry installs, then runs the installed wrapper. */
 export async function checkNpmInstall(
@@ -269,30 +277,72 @@ function readInstalledVersion(
     : null;
 }
 
-/** Runs the installed wrapper's `--version` and `--help` through npm's bin links. */
+/** A wrapper run's failure, or its stdout when it exited cleanly and wrote nothing to stderr. */
+type WrapperRun =
+  | Extract<NpmInstallCheckResult, { kind: "command_failed" | "unexpected_stderr" }>
+  | { readonly kind: "ran"; readonly stdout: string };
+
+/**
+ * Runs the installed wrapper's entry point with Node.js. Any stderr fails the run, because a
+ * loader or runtime warning there, such as a missing glibc version, reaches every user. Running it
+ * without npm keeps npm's own warnings, such as an unknown config notice, out of that stderr.
+ */
+function runWrapper(
+  check: NpmInstallCheck,
+  operations: NpmInstallCheckOperations,
+  argument: WrapperArgument,
+): WrapperRun {
+  const entryPoint = path.join(
+    check.projectDirectory,
+    "node_modules",
+    WRAPPER_PACKAGE_NAME,
+    WRAPPER_ENTRY_POINT,
+  ) as AbsolutePath;
+  const result = operations.runEntryPoint(entryPoint, argument);
+  if (result.kind === "failed") {
+    return { kind: "command_failed", argument, detail: result.detail };
+  }
+  if (result.stderr !== "") {
+    return { kind: "unexpected_stderr", argument, stderr: result.stderr };
+  }
+  return { kind: "ran", stdout: result.stdout };
+}
+
+/** Runs the installed wrapper's `--version` and `--help`, then runs it through npm's bin link. */
 function runInstalledWrapper(
   check: NpmInstallCheck,
   operations: NpmInstallCheckOperations,
 ):
-  | Extract<NpmInstallCheckResult, { kind: "command_failed" | "unexpected_version_output" }>
+  | Extract<
+    NpmInstallCheckResult,
+    {
+      kind: "bin_link_failed" | "command_failed" | "unexpected_stderr" | "unexpected_version_output";
+    }
+  >
   | { readonly kind: "passed" } {
-  const execPrefix = ["--prefix", check.projectDirectory, "exec", "--", "sprawl-guard"];
-  const versionOutput = operations.runNpm([...execPrefix, "--version"]);
-  if (versionOutput.kind === "failed") {
-    return {
-      kind: "command_failed",
-      command: "sprawl-guard --version",
-      detail: versionOutput.detail,
-    };
+  const version = runWrapper(check, operations, "--version");
+  if (version.kind !== "ran") {
+    return version;
   }
-  const output = versionOutput.stdout.trim();
+  const output = version.stdout.trim();
   if (output !== `sprawl-guard ${check.version}`) {
     return { kind: "unexpected_version_output", output };
   }
-  const help = operations.runNpm([...execPrefix, "--help"]);
-  return help.kind === "failed"
-    ? { kind: "command_failed", command: "sprawl-guard --help", detail: help.detail }
-    : { kind: "passed" };
+  const help = runWrapper(check, operations, "--help");
+  if (help.kind !== "ran") {
+    return help;
+  }
+  const linked = operations.runNpm([
+    "--prefix",
+    check.projectDirectory,
+    "exec",
+    "--",
+    "sprawl-guard",
+    "--help",
+  ]);
+  return linked.kind === "ok"
+    ? { kind: "passed" }
+    : { kind: "bin_link_failed", detail: linked.detail };
 }
 
 /** Formats the measured size and budget for release logs. */
@@ -314,9 +364,13 @@ function describeFailure(failure: Exclude<NpmInstallCheckResult, { readonly kind
     case "footprint_budget_exceeded":
       return `npm install exceeds the footprint budget: ${describeFootprint(failure.footprint)}`;
     case "command_failed":
-      return `${failure.command} failed: ${failure.detail}`;
+      return `sprawl-guard ${failure.argument} failed: ${failure.detail}`;
+    case "unexpected_stderr":
+      return `sprawl-guard ${failure.argument} wrote to stderr: "${failure.stderr.trim()}"`;
     case "unexpected_version_output":
       return `sprawl-guard --version printed "${failure.output}"`;
+    case "bin_link_failed":
+      return `npm exec could not run the installed sprawl-guard bin link: ${failure.detail}`;
   }
 }
 
@@ -396,55 +450,6 @@ export function parseNpmInstallCheckArguments(
   };
 }
 
-/** How to start npm with some arguments: as one shell command line, or directly. */
-export type NpmSpawn =
-  | { readonly kind: "shell"; readonly commandLine: string }
-  | { readonly kind: "direct"; readonly args: readonly string[] };
-
-/**
- * Returns how to start npm on a platform.
- *
- * On Windows npm is a `.cmd` script, which Node.js starts only through a shell. The name `npm`
- * stays unquoted: when cmd.exe finds a quoted batch name on `PATH`, the script sees the current
- * directory as its own and fails to find npm's JavaScript entry point. Each argument is quoted;
- * none can contain a double quote, which Windows paths, npm package names, versions, and
- * dist-tags never do.
- */
-export function npmSpawn(platform: NodeJS.Platform, args: readonly string[]): NpmSpawn {
-  return platform === "win32"
-    ? { kind: "shell", commandLine: ["npm", ...args.map((arg) => `"${arg}"`)].join(" ") }
-    : { kind: "direct", args };
-}
-
-/**
- * Runs npm with the wrapper's binary override removed, so the installed platform package is
- * the one that runs.
- */
-function runNpm(args: readonly string[]): NpmCommandResult {
-  const env = { ...process.env };
-  delete env.SPRAWL_GUARD_BINARY;
-  const spawn = npmSpawn(process.platform, args);
-  const options: SpawnSyncOptionsWithStringEncoding = {
-    encoding: "utf8",
-    env,
-    // npm can outlive SIGTERM, and `spawnSync` waits for the process to exit.
-    killSignal: "SIGKILL",
-    stdio: ["ignore", "pipe", "inherit"],
-    timeout: NPM_COMMAND_TIMEOUT_MILLISECONDS,
-  };
-  const result =
-    spawn.kind === "shell"
-      ? spawnSync(spawn.commandLine, { ...options, shell: true })
-      : spawnSync("npm", spawn.args, options);
-  process.stdout.write(result.stdout ?? "");
-  if (result.error !== undefined) {
-    return { kind: "failed", detail: result.error.message };
-  }
-  return result.status === 0
-    ? { kind: "ok", stdout: result.stdout }
-    : { kind: "failed", detail: `npm ${args.join(" ")} exited with ${result.status ?? result.signal}` };
-}
-
 async function main(): Promise<number> {
   const parsed = parseNpmInstallCheckArguments(process.argv.slice(2));
   if (parsed.kind === "invalid_arguments") {
@@ -453,6 +458,7 @@ async function main(): Promise<number> {
   }
   const result = await checkNpmInstall(parsed.check, {
     runNpm,
+    runEntryPoint: (entryPoint, argument) => runNodeScript(entryPoint, [argument]),
     sleepBeforeRetry: () => sleep(REGISTRY_INSTALL_INTERVAL_MILLISECONDS),
   });
   if (result.kind !== "ok") {

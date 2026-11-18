@@ -23,7 +23,7 @@ import {
   type ExecutablePath,
   type WasmModulePath,
 } from "./paths.js";
-import { startWithoutWasiExperimentalWarning } from "./wasi-warning.js";
+import { loadWithoutWasiExperimentalWarning } from "./wasi-warning.js";
 
 export type ExecutionPlan =
   | {
@@ -50,9 +50,12 @@ type WasiRunnerModule = typeof import("./run-wasi.js");
 
 let wasiRunnerImport: Promise<WasiRunnerModule> | undefined;
 
-/** Loads Node's WASI API without exposing its runtime warning as CLI stderr. */
+/**
+ * Loads Node's WASI API without exposing its runtime warning as CLI stderr. The import is cached,
+ * so the warning filter is installed only once.
+ */
 function loadWasiRunner(): Promise<WasiRunnerModule> {
-  wasiRunnerImport ??= startWithoutWasiExperimentalWarning(
+  wasiRunnerImport ??= loadWithoutWasiExperimentalWarning(
     () => import("./run-wasi.js"),
   );
   return wasiRunnerImport;

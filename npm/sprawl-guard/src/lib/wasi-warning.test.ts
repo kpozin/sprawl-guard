@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { startWithoutWasiExperimentalWarning } from "./wasi-warning.js";
+import { loadWithoutWasiExperimentalWarning } from "./wasi-warning.js";
 
 const WASI_EXPERIMENTAL_WARNING =
   "WASI is an experimental feature and might change at any time";
@@ -13,62 +13,60 @@ function warningHook(calls: WarningCall[]): typeof process.emitWarning {
   }) as typeof process.emitWarning;
 }
 
-describe("startWithoutWasiExperimentalWarning", () => {
-  test("it suppresses only Node's WASI experimental warning", () => {
-    const originalEmitWarning = process.emitWarning;
-    const forwardedCalls: WarningCall[] = [];
-    process.emitWarning = warningHook(forwardedCalls);
+/** Installs a recording warning hook for one test and puts Node's own hook back afterwards. */
+async function withWarningHook(
+  calls: WarningCall[],
+  run: (hook: typeof process.emitWarning) => Promise<void>,
+): Promise<void> {
+  const originalEmitWarning = process.emitWarning;
+  const hook = warningHook(calls);
+  process.emitWarning = hook;
+  try {
+    await run(hook);
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+}
 
-    try {
-      startWithoutWasiExperimentalWarning(() => {
-        process.emitWarning(WASI_EXPERIMENTAL_WARNING);
-        process.emitWarning("an unrelated warning", { code: "OTHER_WARNING" });
+describe("loadWithoutWasiExperimentalWarning", () => {
+  describe("when the load emits warnings after it first yields", () => {
+    test("it suppresses only Node's WASI experimental warning", async () => {
+      const forwardedCalls: WarningCall[] = [];
+      await withWarningHook(forwardedCalls, async () => {
+        await loadWithoutWasiExperimentalWarning(async () => {
+          await Promise.resolve();
+          process.emitWarning(WASI_EXPERIMENTAL_WARNING);
+          process.emitWarning("an unrelated warning", { code: "OTHER_WARNING" });
+        });
+
+        assert.deepEqual(forwardedCalls, [
+          ["an unrelated warning", { code: "OTHER_WARNING" }],
+        ]);
       });
-
-      assert.deepEqual(forwardedCalls, [
-        ["an unrelated warning", { code: "OTHER_WARNING" }],
-      ]);
-    } finally {
-      process.emitWarning = originalEmitWarning;
-    }
+    });
   });
 
-  test("it restores the previous warning hook after success or failure", () => {
-    const originalEmitWarning = process.emitWarning;
-    const previousHook = warningHook([]);
-    process.emitWarning = previousHook;
+  describe("when the load settles", () => {
+    test("it returns the loaded value and restores the previous hook", async () => {
+      await withWarningHook([], async (previousHook) => {
+        const loaded = await loadWithoutWasiExperimentalWarning(async () => "module");
 
-    try {
-      startWithoutWasiExperimentalWarning(() => undefined);
-      assert.equal(process.emitWarning, previousHook);
+        assert.equal(loaded, "module");
+        assert.equal(process.emitWarning, previousHook);
+      });
+    });
 
-      assert.throws(
-        () =>
-          startWithoutWasiExperimentalWarning(() => {
+    test("it rejects with the load's error and restores the previous hook", async () => {
+      await withWarningHook([], async (previousHook) => {
+        await assert.rejects(
+          loadWithoutWasiExperimentalWarning(async () => {
             throw new Error("loader failed");
           }),
-        /loader failed/u,
-      );
-      assert.equal(process.emitWarning, previousHook);
-    } finally {
-      process.emitWarning = originalEmitWarning;
-    }
-  });
+          /loader failed/u,
+        );
 
-  test("it restores warning hooks before concurrent promises settle", async () => {
-    const originalEmitWarning = process.emitWarning;
-    const previousHook = warningHook([]);
-    process.emitWarning = previousHook;
-
-    try {
-      const first = startWithoutWasiExperimentalWarning(async () => "first");
-      assert.equal(process.emitWarning, previousHook);
-      const second = startWithoutWasiExperimentalWarning(async () => "second");
-      assert.equal(process.emitWarning, previousHook);
-
-      assert.deepEqual(await Promise.all([first, second]), ["first", "second"]);
-    } finally {
-      process.emitWarning = originalEmitWarning;
-    }
+        assert.equal(process.emitWarning, previousHook);
+      });
+    });
   });
 });

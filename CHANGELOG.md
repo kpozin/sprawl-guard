@@ -4,6 +4,13 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.2-beta.1] - 2026-11-18
+
+### Fixed
+
+- On Node.js 22, the npm package no longer prints Node's "WASI is an experimental feature" warning
+  on every run when it falls back to the WebAssembly build.
+
 ## [0.5.2-beta.0] - 2026-11-18
 
 ### Fixed

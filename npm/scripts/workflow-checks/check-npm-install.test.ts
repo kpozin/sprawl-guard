@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   REGISTRY_INSTALL_ATTEMPTS,
+  WRAPPER_ENTRY_POINT,
   checkNpmInstall,
-  npmSpawn,
   parseNpmInstallCheckArguments,
   type NpmInstallCheck,
   type NpmInstallCheckOperations,
@@ -53,11 +53,14 @@ function writeInstalledManifest(
 
 /**
  * Fakes npm: each install writes the next queued set of versions or fails like a registry 404,
- * and `exec` prints the installed wrapper's version.
+ * the wrapper's entry point prints the installed version and any configured stderr, and `exec`
+ * runs the bin link unless it is broken.
  */
 function fakeNpm(args: {
+  readonly binLink?: "broken";
   readonly installs: (InstalledVersions | "not_found")[];
   readonly versionOutput?: string;
+  readonly wrapperStderr?: string;
 }): NpmInstallCheckOperations & {
   readonly calls: (readonly string[])[];
   readonly sleeps: { count: number };
@@ -73,26 +76,43 @@ function fakeNpm(args: {
       const [prefixFlag, projectDirectory, command] = npmArguments;
       assert.equal(prefixFlag, "--prefix");
       assert.ok(projectDirectory !== undefined);
-      if (command === "install") {
-        const installed = args.installs.shift();
-        if (installed === undefined || installed === "not_found") {
-          return { kind: "failed", detail: "npm error 404 Not Found" };
-        }
-        installedWrapper = installed.wrapper;
-        writeInstalledManifest(projectDirectory, WRAPPER_PACKAGE_NAME, installed.wrapper);
-        if (installed.runtime !== null) {
-          writeInstalledManifest(projectDirectory, RUNTIME_PACKAGE_NAME, installed.runtime);
-        }
-        return { kind: "ok", stdout: "added 2 packages\n" };
+      if (command === "exec") {
+        return args.binLink === "broken"
+          ? { kind: "failed", detail: "npm exec exited with 127" }
+          : { kind: "ok", stdout: "Usage: sprawl-guard <COMMAND>\n" };
       }
-      return npmArguments.at(-1) === "--version"
-        ? { kind: "ok", stdout: args.versionOutput ?? `sprawl-guard ${installedWrapper}\n` }
-        : { kind: "ok", stdout: "Usage: sprawl-guard <COMMAND>\n" };
+      assert.equal(command, "install");
+      const installed = args.installs.shift();
+      if (installed === undefined || installed === "not_found") {
+        return { kind: "failed", detail: "npm error 404 Not Found" };
+      }
+      installedWrapper = installed.wrapper;
+      writeInstalledManifest(projectDirectory, WRAPPER_PACKAGE_NAME, installed.wrapper);
+      if (installed.runtime !== null) {
+        writeInstalledManifest(projectDirectory, RUNTIME_PACKAGE_NAME, installed.runtime);
+      }
+      return { kind: "ok", stdout: "added 2 packages\n" };
+    },
+    runEntryPoint: (entryPoint, argument) => {
+      calls.push([entryPoint, argument]);
+      const stderr = args.wrapperStderr ?? "";
+      return argument === "--version"
+        ? {
+          kind: "ok",
+          stdout: args.versionOutput ?? `sprawl-guard ${installedWrapper}\n`,
+          stderr,
+        }
+        : { kind: "ok", stdout: "Usage: sprawl-guard <COMMAND>\n", stderr };
     },
     sleepBeforeRetry: async () => {
       sleeps.count += 1;
     },
   };
+}
+
+/** Where the check finds the installed wrapper's entry point. */
+function wrapperEntryPoint(projectDirectory: string): string {
+  return path.join(projectDirectory, "node_modules", WRAPPER_PACKAGE_NAME, WRAPPER_ENTRY_POINT);
 }
 
 /** Parses command-line arguments that the test expects to be valid. */
@@ -155,7 +175,8 @@ describe("checkNpmInstall", () => {
             path.resolve("/candidate", `kpozin-sprawl-guard-${RELEASE_VERSION}.tgz`),
             path.resolve("/candidate", `kpozin-sprawl-guard-linux-x64-musl-${RELEASE_VERSION}.tgz`),
           ],
-          ["--prefix", projectDirectory, "exec", "--", "sprawl-guard", "--version"],
+          [wrapperEntryPoint(projectDirectory), "--version"],
+          [wrapperEntryPoint(projectDirectory), "--help"],
           ["--prefix", projectDirectory, "exec", "--", "sprawl-guard", "--help"],
         ]);
       });
@@ -309,6 +330,43 @@ describe("checkNpmInstall", () => {
     });
   });
 
+  describe("when the installed wrapper writes to stderr", () => {
+    it("fails with the warning even though the version matches", async () => {
+      const warning = "ExperimentalWarning: WASI is an experimental feature\n";
+      const npm = fakeNpm({
+        installs: [{ runtime: RELEASE_VERSION, wrapper: RELEASE_VERSION }],
+        wrapperStderr: warning,
+      });
+
+      const result = await checkNpmInstall(
+        registryCheck(absentDirectory(), "automatic"),
+        npm,
+      );
+
+      assert.deepEqual(result, {
+        kind: "unexpected_stderr",
+        argument: "--version",
+        stderr: warning,
+      });
+    });
+  });
+
+  describe("when npm cannot run the installed bin link", () => {
+    it("fails after the entry point runs cleanly", async () => {
+      const npm = fakeNpm({
+        binLink: "broken",
+        installs: [{ runtime: RELEASE_VERSION, wrapper: RELEASE_VERSION }],
+      });
+
+      const result = await checkNpmInstall(
+        registryCheck(absentDirectory(), "automatic"),
+        npm,
+      );
+
+      assert.deepEqual(result, { kind: "bin_link_failed", detail: "npm exec exited with 127" });
+    });
+  });
+
   describe("when the project directory already exists", () => {
     it("fails before running npm", async () => {
       const projectDirectory = absentDirectory();
@@ -432,18 +490,19 @@ function packFixture(
 function fixtureCandidate(
   reportedVersion: string,
   extraWrapperFiles: Readonly<Record<string, string>> = {},
+  wrapperStderr = "",
 ): string {
   const candidateDirectory = mkdtempSync(path.join(TEMPORARY_ROOT, "candidate-"));
   packFixture(
     candidateDirectory,
     {
-      bin: { "sprawl-guard": "bin/sprawl-guard.js" },
+      bin: { "sprawl-guard": WRAPPER_ENTRY_POINT },
       name: WRAPPER_PACKAGE_NAME,
       version: RELEASE_VERSION,
     },
     {
       ...extraWrapperFiles,
-      "bin/sprawl-guard.js": `#!/usr/bin/env node\nconsole.log(process.argv[2] === "--version" ? "sprawl-guard ${reportedVersion}" : "Usage: sprawl-guard <COMMAND>");\n`,
+      [WRAPPER_ENTRY_POINT]: `#!/usr/bin/env node\nprocess.stderr.write(${JSON.stringify(wrapperStderr)});\nconsole.log(process.argv[2] === "--version" ? "sprawl-guard ${reportedVersion}" : "Usage: sprawl-guard <COMMAND>");\n`,
     },
   );
   packFixture(
@@ -470,27 +529,22 @@ function runScript(candidateDirectory: string): ReturnType<typeof spawnSync> {
       "--candidate-directory",
       candidateDirectory,
     ],
-    { encoding: "utf8", env: { ...process.env, npm_config_offline: "true" } },
+    {
+      encoding: "utf8",
+      // npm warns about the unknown setting on stderr, which the wrapper check must not mistake
+      // for the wrapper's own output.
+      env: { ...process.env, npm_config_offline: "true", npm_config_sprawl_guard_unknown: "true" },
+    },
   );
 }
 
-describe("npmSpawn", () => {
-  describe("on Windows", () => {
-    it("starts npm through the shell by its bare name, with each argument quoted", () => {
-      assert.deepEqual(npmSpawn("win32", ["install", "C:\\Temp Dir\\wrapper.tgz"]), {
-        kind: "shell",
-        commandLine: 'npm "install" "C:\\Temp Dir\\wrapper.tgz"',
-      });
-    });
-  });
+describe("WRAPPER_ENTRY_POINT", () => {
+  it("is the wrapper package's `sprawl-guard` bin", () => {
+    const manifest = JSON.parse(
+      readFileSync(new URL("../../sprawl-guard/package.json", import.meta.url), "utf8"),
+    ) as { readonly bin: Readonly<Record<string, string>> };
 
-  describe("on other platforms", () => {
-    it("starts npm directly with its arguments", () => {
-      assert.deepEqual(npmSpawn("linux", ["install", "/tmp/dir with space/wrapper.tgz"]), {
-        kind: "direct",
-        args: ["install", "/tmp/dir with space/wrapper.tgz"],
-      });
-    });
+    assert.equal(path.posix.normalize(manifest.bin["sprawl-guard"] ?? ""), WRAPPER_ENTRY_POINT);
   });
 });
 
@@ -525,6 +579,18 @@ describe("check-npm-install command", () => {
 
       assert.equal(result.status, 1);
       assert.match(String(result.stderr), /sprawl-guard --version printed "sprawl-guard 1\.2\.2"/u);
+    });
+  });
+
+  describe("when the candidate wrapper prints a warning", () => {
+    it("exits with the warning", () => {
+      const result = runScript(fixtureCandidate(RELEASE_VERSION, {}, "loader warning\n"));
+
+      assert.equal(result.status, 1);
+      assert.match(
+        String(result.stderr),
+        /sprawl-guard --version wrote to stderr: "loader warning"/u,
+      );
     });
   });
 });
