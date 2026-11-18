@@ -24,11 +24,10 @@ cargo install sprawl-guard
 brew install kpozin/tap/sprawl-guard
 ```
 
-Homebrew builds Sprawl Guard from the release's source code, so the first install also installs
-Rust and takes a few minutes.
-
 Homebrew installs one copy for the whole machine and upgrades it whenever you upgrade your other
-packages. Use it to try Sprawl Guard or to check repositories that you don't maintain.
+packages. Use it to try Sprawl Guard or to check repositories that you don't maintain. On Arm
+Linux, the Homebrew copy needs glibc 2.39 or newer, as in Ubuntu 24.04. On older systems, install
+with Cargo.
 
 If a project's CI runs Sprawl Guard, your local copy should match the version that CI uses. To
 install that version, follow [Run in CI](/sprawl-guard/run-in-ci/#run-the-check-before-you-commit).
@@ -58,7 +57,7 @@ Command examples on this site have an npm tab. For a command written in the text
   </TabItem>
 </Tabs>
 
-To confirm that a crate or npm package came from the Sprawl Guard release workflow, follow
+To confirm that what you installed came from the Sprawl Guard release workflow, follow
 [Verify a release](https://github.com/kpozin/sprawl-guard/blob/main/SECURITY.md#verify-a-release).
 
 ## Check a repository

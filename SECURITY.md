@@ -25,7 +25,9 @@ Download each kind of file as follows, replacing `VERSION` with the version you 
 - Crate: `curl -LO https://static.crates.io/crates/sprawl-guard/sprawl-guard-VERSION.crate`
 - npm package: `npm pack @kpozin/sprawl-guard@VERSION`. Also download and verify the platform
   package that npm installed with it, such as `@kpozin/sprawl-guard-linux-x64-gnu`.
-- Release archives: `gh release download vVERSION --repo kpozin/sprawl-guard`
+- Release archives, including the one Homebrew installs:
+  `gh release download vVERSION --repo kpozin/sprawl-guard`. Verify the archive for your platform,
+  such as `sprawl-guard-VERSION-aarch64-apple-darwin.tar.gz`.
 
 ## Report a vulnerability
 

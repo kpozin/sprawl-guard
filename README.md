@@ -12,11 +12,14 @@ Install with Cargo:
 cargo install sprawl-guard
 ```
 
-To try it on macOS or Linux, install it with Homebrew, which builds it from source:
+To try it on macOS or Linux, install it with Homebrew:
 
 ```sh
 brew install kpozin/tap/sprawl-guard
 ```
+
+On Arm Linux, the Homebrew copy needs glibc 2.39 or newer, as in Ubuntu 24.04. On older systems,
+install with Cargo.
 
 Or install it as a project-local development dependency with npm or another Node package manager.
 The npm package requires Node.js 22 or newer:

@@ -93,17 +93,17 @@ the release candidates. See the workflows in [`.github/workflows`](../.github/wo
 complete release graph.
 
 The Homebrew formula lives in the [kpozin/homebrew-tap](https://github.com/kpozin/homebrew-tap)
-repository and builds Sprawl Guard from the release's source archive. When you publish a stable
+repository and installs the release's prebuilt binary on macOS and Linux. When you publish a stable
 GitHub Release, the `Homebrew` workflow waits for approval in the `release` environment, then starts
 the tap's `Bump` workflow. If the release is GitHub's latest release, `Bump` opens a pull request in
 the tap that moves the formula to the new version; a stable release on another npm channel leaves
-the formula alone. The tap has no CI, so build and test the pull request locally before you merge
+the formula alone. The tap has no CI, so install and test the pull request locally before you merge
 it, replacing `NUMBER` with its number:
 
 ```sh
 cd "$(brew --repository kpozin/tap)"
 gh pr checkout NUMBER
-brew reinstall --build-from-source kpozin/tap/sprawl-guard
+brew reinstall kpozin/tap/sprawl-guard
 brew test kpozin/tap/sprawl-guard
 git checkout main
 ```
@@ -126,10 +126,14 @@ gh workflow run bump.yml --repo kpozin/homebrew-tap --field tag=vVERSION
 If the tap's `Bump` workflow fails, read its log, then open the pull request from your own machine:
 
 ```sh
-brew tap kpozin/tap
-brew bump-formula-pr --no-fork \
-  --url https://github.com/kpozin/sprawl-guard/archive/refs/tags/vVERSION.tar.gz \
-  kpozin/tap/sprawl-guard
+cd "$(brew --repository kpozin/tap)"
+git switch main
+git pull --ff-only
+git switch --create bump-sprawl-guard-VERSION
+bin/bump-sprawl-guard vVERSION
+git commit --message "sprawl-guard VERSION" Formula/sprawl-guard.rb
+git push origin bump-sprawl-guard-VERSION
+gh pr create --fill
 ```
 
 [SchemaStore](https://www.schemastore.org/) maps `sprawl-guard.toml` and

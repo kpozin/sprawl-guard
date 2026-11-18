@@ -1,7 +1,7 @@
 name: Homebrew
 
 # Publishing a release starts the Bump workflow in the kpozin/homebrew-tap repository, which opens a
-# pull request there that moves the formula to the release's source archive.
+# pull request there that moves the formula to the release's prebuilt archives.
 on:
   release:
     types:
