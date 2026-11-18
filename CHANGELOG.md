@@ -4,6 +4,13 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Sprawl Guard is on PyPI as `sprawl-guard`, so Python projects can install it with uv, pip, or
+  pipx and pin it in their lockfile. Each wheel holds only the native binary, for macOS, Windows on
+  x64, Linux on x64 and Arm with glibc 2.35 or newer, and Linux on x64 with musl. The release
+  workflow publishes the wheels through PyPI trusted publishing, with attestations.
+
 ## [0.5.3] - 2026-11-18
 
 ### Fixed

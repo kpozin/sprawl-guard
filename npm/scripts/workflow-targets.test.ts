@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
 import { z } from "zod";
 import { RUNTIME_PACKAGE_DEFINITIONS, type RuntimePackageDefinition } from "./package-manifests.ts";
+import { WHEEL_PLATFORMS, wheelPlatformTag } from "./pypi/wheel-platforms.ts";
 import { ciRuntimeTargets } from "./runtime-target-matrix.ts";
 import {
   CI_WORKFLOW_SCHEMA,
@@ -48,6 +49,10 @@ const NPM_INSTALL_CHECK_JOB_NAMES = [
   "verify-published-npm-musl",
   "verify-published-npm-wasi",
 ] as const;
+/** Native runtime targets other than Linux musl, which the wheel jobs check in an Alpine container. */
+const NON_MUSL_NATIVE_SLUGS = RUNTIME_PACKAGE_DEFINITIONS.flatMap((definition) =>
+  definition.kind === "native" && definition.slug !== "linux-x64-musl" ? [definition.slug] : [],
+);
 /** Matches a check that a languages report found TypeScript sources. */
 const LANGUAGES_REPORT_CHECK_PATTERN = /check-languages-report\.ts (?:[^\n]|\\\n)*--language typescript/u;
 
@@ -143,6 +148,20 @@ describe("native runtime workflow coverage", () => {
         }
       });
     }
+
+    for (const jobName of ["verify-wheel-candidate-native", "verify-published-pypi-native"] as const) {
+      it(`runs ${jobName} for each target in its build container`, () => {
+        const containersBySlug = new Map<string, string | undefined>(
+          RUNTIME_PACKAGE_DEFINITIONS.map((definition) => [definition.slug, packageContainer(definition)]),
+        );
+        const include = releaseWorkflow().jobs[jobName].strategy.matrix.include;
+
+        assert.deepEqual(include.map(({ package_target: slug }) => slug).toSorted(), NON_MUSL_NATIVE_SLUGS.toSorted());
+        for (const { container, package_target: slug } of include) {
+          assert.equal(container, containersBySlug.get(slug), slug);
+        }
+      });
+    }
   });
 
   describe("when forwarding arguments through pnpm scripts", () => {
@@ -183,6 +202,7 @@ describe("native runtime workflow coverage", () => {
         releaseWorkflow.on.workflow_dispatch.inputs.verify_npm.default,
         false,
       );
+      assert.equal(releaseWorkflow.on.workflow_dispatch.inputs.verify_pypi.default, false);
     });
   });
 
@@ -348,6 +368,8 @@ describe("native runtime workflow coverage", () => {
         "verify-npm-candidate-musl",
         "verify-npm-candidate-native",
         "verify-npm-candidate-wasi",
+        "verify-wheel-candidate-musl",
+        "verify-wheel-candidate-native",
       ]);
       assert.ok(
         releaseWorkflow.jobs["draft-release"].needs.includes("artifact-attestation"),
@@ -370,6 +392,7 @@ describe("native runtime workflow coverage", () => {
       assert.match(subjects, /attestation-subjects\/github-release-assets\/\*/u);
       assert.match(subjects, /attestation-subjects\/cargo\/\*\.crate/u);
       assert.match(subjects, /attestation-subjects\/npm\/\*\.tgz/u);
+      assert.match(subjects, /attestation-subjects\/pypi\/\*\.whl/u);
       assert.doesNotMatch(String(attestation.with?.["subject-path"]), /release-.*\.tar/u);
       assert.match(attestationJob.if, /repository\.visibility == 'public'/u);
     });
@@ -431,7 +454,8 @@ describe("native runtime workflow coverage", () => {
       );
       const cargoJob = releaseWorkflow.jobs["publish-cargo"];
       const npmJob = releaseWorkflow.jobs["publish-npm"];
-      for (const job of [cargoJob, npmJob]) {
+      const pypiJob = releaseWorkflow.jobs["publish-pypi"];
+      for (const job of [cargoJob, npmJob, pypiJob]) {
         assert.deepEqual(job.permissions, {
           contents: "read",
           "id-token": "write",
@@ -441,6 +465,10 @@ describe("native runtime workflow coverage", () => {
       }
       // The two registries publish at the same time, so their approvals can be given together.
       assert.equal(npmJob.needs.includes("publish-cargo"), false);
+      assert.deepEqual(pypiJob.needs.toSorted(), ["draft-release", "package-assembly", "release-metadata"]);
+      const pypiPublish = stepWithName(pypiJob.steps, "Publish PyPI wheels");
+      assert.match(pypiPublish.uses ?? "", /^pypa\/gh-action-pypi-publish@[0-9a-f]{40}$/u);
+      assert.deepEqual(pypiPublish.with, { "packages-dir": "pypi-publication-candidate" });
 
       const cargoPublish = stepWithName(cargoJob.steps, "Publish Cargo crates");
       assert.equal(
@@ -458,7 +486,7 @@ describe("native runtime workflow coverage", () => {
           /pnpm install --frozen-lockfile --ignore-scripts/u,
         );
       }
-      assert.doesNotMatch(JSON.stringify([cargoJob, npmJob]), /secrets\./u);
+      assert.doesNotMatch(JSON.stringify([cargoJob, npmJob, pypiJob]), /secrets\./u);
     });
   });
 
@@ -557,6 +585,59 @@ describe("native runtime workflow coverage", () => {
       );
       assert.match(wasiComparison, LANGUAGES_REPORT_CHECK_PATTERN);
       assertComparesScanReports(wasiComparison);
+    });
+  });
+
+  describe("when verifying the PyPI wheel candidate", () => {
+    it("installs every wheel from the local candidate before creating the draft release", () => {
+      const releaseWorkflow = parseWorkflow(RELEASE_WORKFLOW_URL, RELEASE_WORKFLOW_SCHEMA);
+      const nativeJob = releaseWorkflow.jobs["verify-wheel-candidate-native"];
+      const muslJob = releaseWorkflow.jobs["verify-wheel-candidate-musl"];
+
+      assert.deepEqual(
+        [...nativeJob.strategy.matrix.include.map(({ wheel_tag: tag }) => tag), muslJob.env.WHEEL_TAG].toSorted(),
+        Object.values(WHEEL_PLATFORMS).map(wheelPlatformTag).toSorted(),
+      );
+      for (const { package_target: slug, wheel_tag: tag } of nativeJob.strategy.matrix.include) {
+        assert.ok(Object.hasOwn(WHEEL_PLATFORMS, slug), slug);
+        assert.equal(tag, wheelPlatformTag(WHEEL_PLATFORMS[slug as keyof typeof WHEEL_PLATFORMS]), slug);
+      }
+      for (const jobName of ["verify-wheel-candidate-native", "verify-wheel-candidate-musl"] as const) {
+        const commands = releaseWorkflow.jobs[jobName].steps.flatMap(({ run }) => run ?? []).join("\n");
+        assert.match(commands, /--no-index --find-links /u);
+        assert.ok(releaseWorkflow.jobs["draft-release"].needs.includes(jobName));
+        assert.match(releaseWorkflow.jobs["draft-release"].if, new RegExp(`${jobName}\\.result == 'success'`, "u"));
+      }
+    });
+
+    it("builds the wheels from the restored release binaries", () => {
+      const releaseWorkflow = parseWorkflow(RELEASE_WORKFLOW_URL, RELEASE_WORKFLOW_SCHEMA);
+      const steps = releaseWorkflow.jobs["package-assembly"].steps;
+
+      assert.match(
+        commandForStep(steps, "Build PyPI wheels"),
+        /^pnpm --dir npm run release:build-wheels \.\.\/release-artifacts \.\.\/pypi-publication-candidate "\$\{RELEASE_VERSION\}"$/u,
+      );
+      assert.match(commandForStep(steps, "Install Python release tools"), /--require-hashes/u);
+      assert.equal(stepWithName(steps, "Upload PyPI publication candidate").with?.name, "pypi-publication-candidate");
+    });
+  });
+
+  describe("when verifying wheels installed from PyPI", () => {
+    it("installs the release's PyPI version on every native target", () => {
+      const releaseWorkflow = parseWorkflow(RELEASE_WORKFLOW_URL, RELEASE_WORKFLOW_SCHEMA);
+
+      assert.equal(
+        releaseWorkflow.jobs["release-metadata"].outputs.python_version,
+        "${{ steps.resolve.outputs.python_version }}",
+      );
+      for (const jobName of ["verify-published-pypi-native", "verify-published-pypi-musl"] as const) {
+        const job = releaseWorkflow.jobs[jobName];
+        const commands = job.steps.flatMap(({ run }) => run ?? []).join("\n");
+        assert.match(commands, /"sprawl-guard==\$\{PYTHON_VERSION\}"/u);
+        assert.doesNotMatch(commands, /--find-links /u);
+        assert.match(job.if, /needs\.publish-pypi\.result == 'success'/u);
+      }
     });
   });
 

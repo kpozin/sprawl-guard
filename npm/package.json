@@ -14,6 +14,7 @@
     "check:source-wrapper-manifest": "node ./scripts/sync-source-wrapper-manifest.ts --check",
     "install:rendered-publish-workspace": "pnpm --dir ./.stage install --config.confirmModulesPurge=false",
     "render:publish-workspace": "node ./scripts/render-publish-workspace.ts",
+    "release:build-wheels": "node ./scripts/pypi/build-wheels.ts",
     "release:metadata": "node ./scripts/release-metadata.ts",
     "release:prepare-npm": "node ./scripts/publish-npm-packages.ts prepare",
     "release:publish-npm": "node ./scripts/publish-npm-channel.ts",
@@ -23,7 +24,7 @@
     "release:replace-assets": "node ./scripts/release-assets.ts replace",
     "stage:publish-payloads": "node ./scripts/stage-publish-payloads.ts",
     "sync:source-wrapper-manifest": "node ./scripts/sync-source-wrapper-manifest.ts",
-    "test": "pnpm run check:source-wrapper-manifest && node --test scripts/*.test.ts scripts/workflow-checks/*.test.ts scripts/pages/*.test.ts scripts/changelog/*.test.ts && pnpm run build && pnpm --filter @kpozin/sprawl-guard test",
+    "test": "pnpm run check:source-wrapper-manifest && node --test scripts/*.test.ts scripts/workflow-checks/*.test.ts scripts/pages/*.test.ts scripts/changelog/*.test.ts scripts/pypi/*.test.ts && pnpm run build && pnpm --filter @kpozin/sprawl-guard test",
     "typecheck:scripts": "pnpm exec tsc -p tsconfig.json",
     "verify:source-wrapper-pack": "node ./scripts/verify-packed-files.ts ./sprawl-guard --require dist/bin/sprawl-guard.js --require dist/lib/run-wasi.js --require dist/LICENSE-better-result --forbid-suffix .test.js",
     "verify:staged-payload-packs": "node ./scripts/verify-staged-payload-packs.ts"

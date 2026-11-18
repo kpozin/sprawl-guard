@@ -3,6 +3,9 @@ import type { MdastNode } from "satteri";
 
 import { INSTALLATIONS, type Installation, parseCodeBlock, PROGRAM_NAME } from "./cli-commands.ts";
 
+/** Joins alternatives as English prose does, as in "pnpm, npm, or uv". */
+const ALTERNATIVES = new Intl.ListFormat("en", { type: "disjunction" });
+
 /** Reports whether any code block in `nodes`, however deeply nested, is flagged as commands. */
 export function containsCliCommandBlock(nodes: readonly MdastNode[]): boolean {
   return nodes.some((node) => {
@@ -26,7 +29,14 @@ export function installationNote(): Paragraph {
     (installation) => installation.command !== PROGRAM_NAME,
   );
   const labelsOf = (installations: readonly Installation[]) =>
-    installations.map((installation) => installation.label).join(" or ");
+    ALTERNATIVES.format(installations.map((installation) => installation.label));
+  const commands = ALTERNATIVES.formatToParts(
+    packageManagers.map((installation) => installation.command),
+  ).map((part): PhrasingContent =>
+    part.type === "element"
+      ? { type: "inlineCode", value: part.value }
+      : { type: "text", value: part.value },
+  );
   return {
     type: "paragraph",
     children: [
@@ -38,10 +48,7 @@ export function installationNote(): Paragraph {
       },
       { type: "inlineCode", value: PROGRAM_NAME },
       { type: "text", value: " with " },
-      ...packageManagers.flatMap((installation, index): PhrasingContent[] => [
-        ...(index === 0 ? [] : [{ type: "text" as const, value: " or " }]),
-        { type: "inlineCode", value: installation.command },
-      ]),
+      ...commands,
       { type: "text", value: "." },
     ],
   };

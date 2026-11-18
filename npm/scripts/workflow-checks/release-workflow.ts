@@ -73,6 +73,10 @@ export const RELEASE_WORKFLOW_SCHEMA = z.object({
           default: z.literal(false),
           type: z.literal("boolean"),
         }),
+        verify_pypi: z.object({
+          default: z.literal(false),
+          type: z.literal("boolean"),
+        }),
         release_mode: z.object({
           default: z.literal("choose"),
           options: z.tuple([z.literal("choose"), z.literal("draft"), z.literal("publish")]),
@@ -87,6 +91,7 @@ export const RELEASE_WORKFLOW_SCHEMA = z.object({
       outputs: z.object({
         github_latest: z.string().min(1),
         github_prerelease: z.string().min(1),
+        python_version: z.string().min(1),
       }),
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
@@ -144,6 +149,26 @@ export const RELEASE_WORKFLOW_SCHEMA = z.object({
       }),
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
+    "verify-wheel-candidate-native": z.object({
+      strategy: z.object({
+        matrix: z.object({
+          include: z.array(
+            z.object({
+              container: z.string().min(1).optional(),
+              package_target: z.string().min(1),
+              wheel_tag: z.string().min(1),
+            }),
+          ),
+        }),
+      }),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
+    "verify-wheel-candidate-musl": z.object({
+      env: z.object({
+        WHEEL_TAG: z.string().min(1),
+      }),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
     "draft-release": z.object({
       if: z.string().min(1),
       needs: z.array(z.string().min(1)),
@@ -157,6 +182,13 @@ export const RELEASE_WORKFLOW_SCHEMA = z.object({
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
     "publish-npm": z.object({
+      environment: z.literal("release"),
+      if: z.string().min(1),
+      needs: z.array(z.string().min(1)),
+      permissions: z.record(z.string(), z.string()),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
+    "publish-pypi": z.object({
       environment: z.literal("release"),
       if: z.string().min(1),
       needs: z.array(z.string().min(1)),
@@ -192,6 +224,24 @@ export const RELEASE_WORKFLOW_SCHEMA = z.object({
       env: z.object({
         NPM_RUNTIME_PACKAGE_NAME: z.string().min(1),
       }),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
+    "verify-published-pypi-native": z.object({
+      if: z.string().includes("inputs.verify_pypi"),
+      strategy: z.object({
+        matrix: z.object({
+          include: z.array(
+            z.object({
+              container: z.string().min(1).optional(),
+              package_target: z.string().min(1),
+            }),
+          ),
+        }),
+      }),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
+    "verify-published-pypi-musl": z.object({
+      if: z.string().includes("inputs.verify_pypi"),
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
   }),

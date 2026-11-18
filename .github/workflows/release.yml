@@ -23,7 +23,7 @@ on:
       # The form starts on `choose`, which the first job rejects, so a run publishes or drafts only
       # when the person dispatching it picks that mode.
       release_mode:
-        description: Pick draft (draft GitHub Release only) or publish (also crates.io and npm); choose fails the run
+        description: Pick draft (draft GitHub Release only) or publish (also crates.io, npm, and PyPI); choose fails the run
         default: choose
         options:
           - choose
@@ -38,6 +38,11 @@ on:
         type: boolean
       verify_npm:
         description: Verify the locally published npm packages on every runtime target
+        default: false
+        required: false
+        type: boolean
+      verify_pypi:
+        description: Verify the published PyPI wheels on every native runtime target
         default: false
         required: false
         type: boolean
@@ -56,6 +61,7 @@ jobs:
       release_commit: ${{ steps.resolve.outputs.release_commit }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       release_version: ${{ steps.resolve.outputs.release_version }}
+      python_version: ${{ steps.resolve.outputs.python_version }}
       npm_dist_tag: ${{ steps.npm-channel.outputs.npm_dist_tag }}
       github_prerelease: ${{ steps.resolve.outputs.github_prerelease }}
       github_latest: ${{ steps.resolve.outputs.github_latest }}
@@ -389,6 +395,8 @@ jobs:
       - verify-npm-candidate-musl
       - verify-npm-candidate-native
       - verify-npm-candidate-wasi
+      - verify-wheel-candidate-musl
+      - verify-wheel-candidate-native
     runs-on: ubuntu-24.04
     permissions:
       artifact-metadata: write
@@ -414,6 +422,12 @@ jobs:
           name: npm-publication-candidate
           path: attestation-subjects/npm
 
+      - name: Download PyPI publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pypi-publication-candidate
+          path: attestation-subjects/pypi
+
       - name: Attest release artifact provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
@@ -421,6 +435,7 @@ jobs:
             attestation-subjects/github-release-assets/*
             attestation-subjects/cargo/*.crate
             attestation-subjects/npm/*.tgz
+            attestation-subjects/pypi/*.whl
 
   cargo-candidate:
     needs: release-metadata
@@ -583,6 +598,32 @@ jobs:
         env:
           ARTIFACT_DIGEST: ${{ steps.npm-publication-candidate.outputs.artifact-digest }}
 
+      - name: Install Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.15"
+
+      # The wheel builder runs `python -m wheel` and `auditwheel` from this environment.
+      - name: Install Python release tools
+        shell: bash
+        run: |
+          python -m venv "${RUNNER_TEMP}/release-tools"
+          "${RUNNER_TEMP}/release-tools/bin/pip" install --disable-pip-version-check --require-hashes \
+            --only-binary :all: --no-deps --requirement python/release-tools.txt
+          echo "${RUNNER_TEMP}/release-tools/bin" >> "${GITHUB_PATH}"
+
+      - name: Build PyPI wheels
+        run: pnpm --dir npm run release:build-wheels ../release-artifacts ../pypi-publication-candidate "${RELEASE_VERSION}"
+        env:
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+      - name: Upload PyPI publication candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          if-no-files-found: error
+          name: pypi-publication-candidate
+          path: pypi-publication-candidate
+
   verify-npm-candidate-native:
     # Installs local archives once; a hang means npm or the runner is stuck.
     timeout-minutes: 20
@@ -742,8 +783,114 @@ jobs:
             --report wasi-languages.json --language typescript
           cmp native-languages.json wasi-languages.json
 
+  verify-wheel-candidate-native:
+    # Installs local wheels once; a hang means uv or the runner is stuck.
+    timeout-minutes: 20
+    needs:
+      - package-assembly
+      - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            package_target: darwin-arm64
+            wheel_tag: macosx_11_0_arm64
+          - runner: macos-15-intel
+            package_target: darwin-x64
+            wheel_tag: macosx_10_12_x86_64
+          # The glibc wheels run in their binaries' build image, the oldest glibc they support.
+          - runner: ubuntu-24.04-arm
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
+            package_target: linux-arm64-gnu
+            wheel_tag: manylinux_2_35_aarch64
+          - runner: ubuntu-24.04
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
+            package_target: linux-x64-gnu
+            wheel_tag: manylinux_2_35_x86_64
+          - runner: windows-2025
+            package_target: win32-x64-msvc
+            wheel_tag: win_amd64
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    steps:
+      - name: Install container tools
+        if: ${{ matrix.container }}
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      - name: Download PyPI publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pypi-publication-candidate
+          path: pypi-publication-candidate
+
+      # The action also puts uv's tool directory on PATH, so the installed CLI runs as `sprawl-guard`.
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.13.7
+          enable-cache: false
+
+      # Offering uv only this target's wheel checks that uv accepts its tag on this platform.
+      - name: Install and run this target's candidate wheel
+        shell: bash
+        run: |
+          mkdir target-wheel
+          cp "pypi-publication-candidate/sprawl_guard-${PYTHON_VERSION}-py3-none-${WHEEL_TAG}.whl" target-wheel/
+          uv tool install --no-index --find-links target-wheel "sprawl-guard==${PYTHON_VERSION}"
+          test "$(sprawl-guard --version 2>&1)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          sprawl-guard --help
+        env:
+          PYTHON_VERSION: ${{ needs.release-metadata.outputs.python_version }}
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+          WHEEL_TAG: ${{ matrix.wheel_tag }}
+
+  verify-wheel-candidate-musl:
+    # Installs local wheels once; a hang means pip or the runner is stuck.
+    timeout-minutes: 20
+    needs:
+      - package-assembly
+      - release-metadata
+    runs-on: ubuntu-24.04
+    env:
+      WHEEL_TAG: musllinux_1_2_x86_64
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+          path: release-source
+          persist-credentials: false
+
+      - name: Download PyPI publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pypi-publication-candidate
+          path: pypi-publication-candidate
+
+      - name: Install and run the candidate wheel on Linux musl
+        shell: bash
+        run: |
+          mkdir target-wheel
+          cp "pypi-publication-candidate/sprawl_guard-${PYTHON_VERSION}-py3-none-${WHEEL_TAG}.whl" target-wheel/
+          docker run --rm \
+            --volume "${PWD}/release-source:/release-source:ro" \
+            --volume "${PWD}/target-wheel:/wheels:ro" \
+            --env INSTALL_ATTEMPTS=1 --env INSTALL_RETRY_SECONDS=0 \
+            --env SPRAWL_GUARD_VERSION \
+            python:3.15-alpine \
+            sh /release-source/python/check-wheel-install.sh \
+            --no-index --find-links /wheels "sprawl-guard==${PYTHON_VERSION}"
+        env:
+          PYTHON_VERSION: ${{ needs.release-metadata.outputs.python_version }}
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
   draft-release:
-    if: ${{ always() && needs.cargo-candidate.result == 'success' && needs.package-assembly.result == 'success' && needs.release-metadata.result == 'success' && needs.verify-npm-candidate-musl.result == 'success' && needs.verify-npm-candidate-native.result == 'success' && needs.verify-npm-candidate-wasi.result == 'success' && (needs.artifact-attestation.result == 'success' || needs.artifact-attestation.result == 'skipped') }}
+    if: ${{ always() && needs.cargo-candidate.result == 'success' && needs.package-assembly.result == 'success' && needs.release-metadata.result == 'success' && needs.verify-npm-candidate-musl.result == 'success' && needs.verify-npm-candidate-native.result == 'success' && needs.verify-npm-candidate-wasi.result == 'success' && needs.verify-wheel-candidate-musl.result == 'success' && needs.verify-wheel-candidate-native.result == 'success' && (needs.artifact-attestation.result == 'success' || needs.artifact-attestation.result == 'skipped') }}
     needs:
       - artifact-attestation
       - cargo-candidate
@@ -752,6 +899,8 @@ jobs:
       - verify-npm-candidate-musl
       - verify-npm-candidate-native
       - verify-npm-candidate-wasi
+      - verify-wheel-candidate-musl
+      - verify-wheel-candidate-native
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -953,6 +1102,29 @@ jobs:
           NPM_DIST_TAG: ${{ needs.release-metadata.outputs.npm_dist_tag }}
           RELEASE_COMMIT: ${{ needs.release-metadata.outputs.release_commit }}
           RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+
+  publish-pypi:
+    if: ${{ inputs.release_mode == 'publish' }}
+    needs:
+      - draft-release
+      - package-assembly
+      - release-metadata
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download PyPI publication candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: pypi-publication-candidate
+          path: pypi-publication-candidate
+
+      - name: Publish PyPI wheels
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: pypi-publication-candidate
 
   verify-published-cargo:
     if: ${{ always() && (inputs.verify_crates || inputs.release_mode == 'publish') && needs.draft-release.result == 'success' && (needs.publish-cargo.result == 'success' || needs.publish-cargo.result == 'skipped') }}
@@ -1157,3 +1329,102 @@ jobs:
           node release-source/npm/scripts/workflow-checks/check-languages-report.ts \
             --report wasi-languages.json --language typescript
           cmp native-languages.json wasi-languages.json
+
+  verify-published-pypi-native:
+    # Covers install retries while PyPI propagates the release, and stops the job if PyPI keeps
+    # stalling.
+    timeout-minutes: 60
+    if: ${{ always() && (inputs.verify_pypi || inputs.release_mode == 'publish') && needs.draft-release.result == 'success' && (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped') }}
+    needs:
+      - draft-release
+      - publish-pypi
+      - release-metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            package_target: darwin-arm64
+          - runner: macos-15-intel
+            package_target: darwin-x64
+          # The glibc wheels run in their binaries' build image, the oldest glibc they support.
+          - runner: ubuntu-24.04-arm
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
+            package_target: linux-arm64-gnu
+          - runner: ubuntu-24.04
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
+            package_target: linux-x64-gnu
+          - runner: windows-2025
+            package_target: win32-x64-msvc
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
+    steps:
+      - name: Install container tools
+        if: ${{ matrix.container }}
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      # The action also puts uv's tool directory on PATH, so the installed CLI runs as `sprawl-guard`.
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: 0.13.7
+          enable-cache: false
+
+      # PyPI can take a few minutes to serve a new release, so the install retries.
+      - name: Install and run the published wheel
+        shell: bash
+        run: |
+          for attempt in $(seq "${INSTALL_ATTEMPTS}"); do
+            if uv tool install --refresh "sprawl-guard==${PYTHON_VERSION}"; then
+              break
+            fi
+            if [[ "${attempt}" -eq "${INSTALL_ATTEMPTS}" ]]; then
+              exit 1
+            fi
+            sleep "${INSTALL_RETRY_SECONDS}"
+          done
+          test "$(sprawl-guard --version 2>&1)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          sprawl-guard --help
+        env:
+          INSTALL_ATTEMPTS: "10"
+          INSTALL_RETRY_SECONDS: "30"
+          PYTHON_VERSION: ${{ needs.release-metadata.outputs.python_version }}
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  verify-published-pypi-musl:
+    # Covers install retries while PyPI propagates the release, and stops the job if PyPI keeps
+    # stalling.
+    timeout-minutes: 60
+    if: ${{ always() && (inputs.verify_pypi || inputs.release_mode == 'publish') && needs.draft-release.result == 'success' && (needs.publish-pypi.result == 'success' || needs.publish-pypi.result == 'skipped') }}
+    needs:
+      - draft-release
+      - publish-pypi
+      - release-metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.release-metadata.outputs.release_commit }}
+          path: release-source
+          persist-credentials: false
+
+      # PyPI can take a few minutes to serve a new release, so the install retries.
+      - name: Install and run the published wheel on Linux musl
+        shell: bash
+        run: |
+          docker run --rm \
+            --volume "${PWD}/release-source:/release-source:ro" \
+            --env INSTALL_ATTEMPTS --env INSTALL_RETRY_SECONDS --env SPRAWL_GUARD_VERSION \
+            python:3.15-alpine \
+            sh /release-source/python/check-wheel-install.sh \
+            --only-binary :all: "sprawl-guard==${PYTHON_VERSION}"
+        env:
+          INSTALL_ATTEMPTS: "10"
+          INSTALL_RETRY_SECONDS: "30"
+          PYTHON_VERSION: ${{ needs.release-metadata.outputs.python_version }}
+          SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}

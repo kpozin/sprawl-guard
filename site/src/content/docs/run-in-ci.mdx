@@ -118,6 +118,33 @@ jobs:
 ```
 
   </TabItem>
+  <TabItem label="uv">
+
+Pin the version in `pyproject.toml` first, and commit the updated `uv.lock`:
+
+```sh
+uv add --dev sprawl-guard==<VERSION>
+```
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: astral-sh/setup-uv@v10
+      - run: uv run --locked sprawl-guard config upgrade --check
+      - run: uv run --locked sprawl-guard check --format github
+```
+
+  </TabItem>
 </Tabs>
 
 The workflow runs two commands:
@@ -207,6 +234,26 @@ repos:
         name: Sprawl Guard
         entry: npm run --silent sprawl-guard:check
         language: system
+        always_run: true
+        pass_filenames: false
+```
+
+  </TabItem>
+  <TabItem label="uv">
+
+pre-commit installs the version that `additional_dependencies` names into the hook's own
+environment, so every developer runs that version. Name the version that the CI workflow pins,
+and change both together.
+
+```yaml title=".pre-commit-config.yaml"
+repos:
+  - repo: local
+    hooks:
+      - id: sprawl-guard
+        name: Sprawl Guard
+        entry: sprawl-guard check
+        language: python
+        additional_dependencies: ["sprawl-guard==<VERSION>"]
         always_run: true
         pass_filenames: false
 ```

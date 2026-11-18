@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { PACKAGE_VERSION } from "./package-manifests.ts";
+import { pythonPackageVersion } from "./pypi/python-version.ts";
 import { resolveReleaseMetadata } from "./release-metadata.ts";
 import { RELEASE_COMMIT_SCHEMA } from "./release-source.ts";
 
@@ -11,6 +12,11 @@ const MATCHING_CARGO_METADATA = {
   ],
 };
 const RELEASE_TAG = `v${PACKAGE_VERSION}`;
+const PYTHON_VERSION = (() => {
+  const converted = pythonPackageVersion(PACKAGE_VERSION);
+  assert.ok(converted.kind === "ok");
+  return converted.version;
+})();
 const RELEASE_COMMIT = RELEASE_COMMIT_SCHEMA.parse(
   "0123456789abcdef0123456789abcdef01234567",
 );
@@ -35,6 +41,7 @@ describe("resolveReleaseMetadata", () => {
           releaseCommit: RELEASE_COMMIT,
           releaseTag: RELEASE_TAG,
           releaseVersion: PACKAGE_VERSION,
+          pythonVersion: PYTHON_VERSION,
         },
       );
     });
@@ -72,6 +79,22 @@ describe("resolveReleaseMetadata", () => {
           workingTreeCommit: RELEASE_COMMIT,
         }),
         { kind: "invalid_release_tag", releaseTag: "release" },
+      );
+    });
+  });
+
+  describe("when the tag's prerelease has no PyPI spelling", () => {
+    it("rejects it before inspecting package versions", () => {
+      assert.deepEqual(
+        resolveReleaseMetadata({
+          cargoMetadata: MATCHING_CARGO_METADATA,
+          githubEventCommit: RELEASE_COMMIT,
+          githubRefName: "v0.5.2-canary.1",
+          githubRefType: "tag",
+          tagCommit: RELEASE_COMMIT,
+          workingTreeCommit: RELEASE_COMMIT,
+        }),
+        { kind: "unsupported_prerelease", releaseVersion: "0.5.2-canary.1" },
       );
     });
   });

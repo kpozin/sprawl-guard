@@ -24,6 +24,7 @@ export const INSTALLATIONS = [
   { label: "Homebrew", command: "sprawl-guard" },
   { label: "pnpm", command: "pnpm exec sprawl-guard" },
   { label: "npm", command: "npm exec -- @kpozin/sprawl-guard" },
+  { label: "uv", command: "uv run sprawl-guard" },
 ] as const;
 
 /** One way to install Sprawl Guard. */

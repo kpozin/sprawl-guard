@@ -318,7 +318,7 @@ import { TabItem } from "@astrojs/starlight/components";
       test("explains once how to run the commands through a package manager", () => {
         assert.ok(result.ok);
         const note =
-          "Commands on this page run `sprawl-guard` as installed with Cargo or Homebrew. If you installed Sprawl Guard with pnpm or npm, replace `sprawl-guard` with `pnpm exec sprawl-guard` or `npm exec -- @kpozin/sprawl-guard`.";
+          "Commands on this page run `sprawl-guard` as installed with Cargo or Homebrew. If you installed Sprawl Guard with pnpm, npm, or uv, replace `sprawl-guard` with `pnpm exec sprawl-guard`, `npm exec -- @kpozin/sprawl-guard`, or `uv run sprawl-guard`.";
         assert.equal(result.value.split(note).length - 1, 1);
       });
     });

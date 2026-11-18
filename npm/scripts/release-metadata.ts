@@ -8,6 +8,11 @@ import { NPM_DIST_TAG_SCHEMA } from "./npm-dist-tag.ts";
 import { PACKAGE_VERSION } from "./package-manifests.ts";
 import { PUBLIC_PACKAGE_VERSION_SCHEMA } from "./package-version.ts";
 import {
+  pythonPackageVersion,
+  type PythonPackageVersion,
+  type PythonPackageVersionResult,
+} from "./pypi/python-version.ts";
+import {
   classifyGitHubRelease,
   parseReleaseTag,
   validateReleaseVersions,
@@ -40,6 +45,8 @@ interface ResolvedReleaseMetadata {
   readonly releaseCommit: ReleaseCommit;
   readonly releaseTag: ReleaseTag;
   readonly releaseVersion: ReleaseVersion;
+  /** The release version as PyPI spells it. */
+  readonly pythonVersion: PythonPackageVersion;
 }
 
 type ResolveReleaseMetadataResult =
@@ -49,6 +56,7 @@ type ResolveReleaseMetadataResult =
       readonly eventCommit: string;
     }
   | Extract<ParseReleaseTagResult, { readonly kind: "invalid_release_tag" }>
+  | Exclude<PythonPackageVersionResult, { readonly kind: "ok" }>
   | {
       readonly kind: "release_ref_not_tag";
       readonly actualRefName: string;
@@ -91,6 +99,10 @@ export function resolveReleaseMetadata(
   const parsedTag = parseReleaseTag(args.githubRefName);
   if (parsedTag.kind !== "ok") {
     return parsedTag;
+  }
+  const pythonVersion = pythonPackageVersion(parsedTag.releaseVersion);
+  if (pythonVersion.kind !== "ok") {
+    return pythonVersion;
   }
   if (args.tagCommit === null) {
     return {
@@ -142,6 +154,7 @@ export function resolveReleaseMetadata(
     releaseCommit: eventCommit.data,
     releaseTag: parsedTag.releaseTag,
     releaseVersion: parsedTag.releaseVersion,
+    pythonVersion: pythonVersion.version,
   };
 }
 
@@ -267,6 +280,7 @@ function main(): number {
       `release_commit=${result.releaseCommit}`,
       `release_tag=${result.releaseTag}`,
       `release_version=${result.releaseVersion}`,
+      `python_version=${result.pythonVersion}`,
       `github_prerelease=${githubPrerelease}`,
       `github_latest=${githubLatest}`,
       "",
@@ -297,6 +311,11 @@ function printFailure(
     case "invalid_release_tag":
       console.error(
         `release tag must contain a v-prefixed Cargo/npm version: ${failure.releaseTag}`,
+      );
+      return;
+    case "unsupported_prerelease":
+      console.error(
+        `PyPI has no spelling for the prerelease in ${failure.releaseVersion}; use alpha.N, beta.N, rc.N, or dev.N`,
       );
       return;
     case "release_tag_not_found":
