@@ -23,6 +23,10 @@ tempfile.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 
+# musl's own allocator is many times slower when several threads allocate at once.
+[target.'cfg(target_env = "musl")'.dependencies]
+mimalloc.workspace = true
+
 [dev-dependencies]
 assert_fs.workspace = true
 

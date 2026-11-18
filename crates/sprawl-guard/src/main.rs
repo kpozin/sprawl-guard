@@ -8,6 +8,13 @@ use crate::cli::{Cli, run};
 /// Binary name used in generated CLI help and diagnostics.
 pub(crate) const CLI_NAME: &str = "sprawl-guard";
 
+/// The memory allocator for musl builds, such as the one npm installs on Alpine. musl's own
+/// allocator makes threads wait on each other, so checking files on several threads was many times
+/// slower than on one.
+#[cfg(target_env = "musl")]
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn main() {
     // WASI starts every module in `/`. The npm wrapper mounts host paths unchanged and names the
     // real working directory, so relative and absolute paths mean what they do natively.

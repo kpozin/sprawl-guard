@@ -4,6 +4,11 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The Linux musl binary, which npm installs on Alpine, no longer slows down when it checks files on
+  several threads. Before, it could be many times slower than on one thread.
+
 ## [0.5.2] - 2026-11-18
 
 ### Fixed
