@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-18
+
 ### Fixed
 
 - The Linux musl binary, which npm installs on Alpine, no longer slows down when it checks files on

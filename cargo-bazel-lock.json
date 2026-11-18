@@ -1,5 +1,5 @@
 {
-  "checksum": "3717a95d2b33b88bb27242f349b9c6826032c93b45ae741c21b4072b37f1f297",
+  "checksum": "49734fb7f63fe92cabca4f4cdc30bd93c120d1299c60f1566334e6a2d57f5c34",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -6350,7 +6350,7 @@
       ],
       "version": "1.16.4"
     },
-    "sprawl-guard 0.5.2": {
+    "sprawl-guard 0.5.3": {
       "common_attrs": {
         "deps": {
           "common": [
@@ -6415,9 +6415,9 @@
       "package_url": "https://github.com/kpozin/sprawl-guard",
       "repository": null,
       "targets": [],
-      "version": "0.5.2"
+      "version": "0.5.3"
     },
-    "sprawl-guard-lib 0.5.2": {
+    "sprawl-guard-lib 0.5.3": {
       "common_attrs": {
         "deps": [
           {
@@ -6505,7 +6505,7 @@
           }
         }
       ],
-      "version": "0.5.2"
+      "version": "0.5.3"
     },
     "stacker 0.1.25": {
       "build_script_attrs": {
@@ -9268,7 +9268,7 @@
     "assert_fs 1.1.4"
   ],
   "workspace_members": {
-    "sprawl-guard 0.5.2": "crates/sprawl-guard",
-    "sprawl-guard-lib 0.5.2": "crates/sprawl-guard-lib"
+    "sprawl-guard 0.5.3": "crates/sprawl-guard",
+    "sprawl-guard-lib 0.5.3": "crates/sprawl-guard-lib"
   }
 }
