@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { parse } from "yaml";
 import { z } from "zod";
-import { RUNTIME_PACKAGE_DEFINITIONS } from "./package-manifests.ts";
+import { RUNTIME_PACKAGE_DEFINITIONS, type RuntimePackageDefinition } from "./package-manifests.ts";
 import { ciRuntimeTargets } from "./runtime-target-matrix.ts";
 
 const CI_WORKFLOW_URL = new URL("../../.github/workflows/ci.yml", import.meta.url);
@@ -91,6 +91,7 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
         matrix: z.object({
           include: z.array(
             z.object({
+              container: z.string().min(1).optional(),
               package_target: z.string().min(1),
               rust_target: z.string().min(1),
             }),
@@ -117,6 +118,7 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
         matrix: z.object({
           include: z.array(
             z.object({
+              container: z.string().min(1).optional(),
               package_name: z.string().min(1),
             }),
           ),
@@ -166,6 +168,7 @@ const RELEASE_WORKFLOW_SCHEMA = z.object({
         matrix: z.object({
           include: z.array(
             z.object({
+              container: z.string().min(1).optional(),
               package_name: z.string().min(1),
             }),
           ),
@@ -244,6 +247,11 @@ function stepWithName<TStep extends { readonly name: string }>(
   return step;
 }
 
+/** Returns the container image that builds and tests a runtime package, if it has one. */
+function packageContainer(definition: RuntimePackageDefinition): string | undefined {
+  return "container" in definition ? definition.container : undefined;
+}
+
 /** Release jobs that install the npm packages and check that the wrapper runs. */
 const NPM_INSTALL_CHECK_JOB_NAMES = [
   "verify-npm-candidate-native",
@@ -320,6 +328,34 @@ describe("native runtime workflow coverage", () => {
         sortedPackageTargetPairs(packageTargets),
       );
     });
+  });
+
+  describe("when choosing each job's container", () => {
+    const releaseWorkflow = (): z.infer<typeof RELEASE_WORKFLOW_SCHEMA> =>
+      parseWorkflow(RELEASE_WORKFLOW_URL, RELEASE_WORKFLOW_SCHEMA);
+
+    it("builds each runtime package in its container", () => {
+      const workflowContainers = releaseWorkflow().jobs["artifact-build"].strategy.matrix.include.map(
+        ({ container, package_target: packageTarget }) => [packageTarget, container] as const,
+      );
+
+      assert.deepEqual(
+        new Map(workflowContainers),
+        new Map(RUNTIME_PACKAGE_DEFINITIONS.map((definition) => [definition.slug, packageContainer(definition)])),
+      );
+    });
+
+    for (const jobName of ["verify-npm-candidate-native", "verify-published-npm-native"] as const) {
+      it(`runs ${jobName} for each package in its build container`, () => {
+        const containersByPackageName = new Map<string, string | undefined>(
+          RUNTIME_PACKAGE_DEFINITIONS.map((definition) => [definition.packageName, packageContainer(definition)]),
+        );
+
+        for (const { container, package_name: packageName } of releaseWorkflow().jobs[jobName].strategy.matrix.include) {
+          assert.equal(container, containersByPackageName.get(packageName), packageName);
+        }
+      });
+    }
   });
 
   describe("when forwarding arguments through pnpm scripts", () => {

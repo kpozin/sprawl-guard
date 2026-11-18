@@ -150,13 +150,19 @@ jobs:
             rust_target: x86_64-apple-darwin
             built_artifact_path: target/x86_64-apple-darwin/release/sprawl-guard
             artifact_file_name: sprawl-guard
+          # The glibc builds run in an Ubuntu 22.04 container so that the binaries need only glibc
+          # 2.35, not the runner's 2.39. GitHub retires its Ubuntu 22.04 runners on April 17, 2027,
+          # but the container keeps working on the 24.04 runners. The image must match
+          # GLIBC_FLOOR_IMAGE in npm/sprawl-guard/src/lib/runtime-packages.ts.
           - package_target: linux-arm64-gnu
             runner: ubuntu-24.04-arm
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
             rust_target: aarch64-unknown-linux-gnu
             built_artifact_path: target/aarch64-unknown-linux-gnu/release/sprawl-guard
             artifact_file_name: sprawl-guard
           - package_target: linux-x64-gnu
             runner: ubuntu-24.04
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
             rust_target: x86_64-unknown-linux-gnu
             built_artifact_path: target/x86_64-unknown-linux-gnu/release/sprawl-guard
             artifact_file_name: sprawl-guard
@@ -176,9 +182,18 @@ jobs:
             built_artifact_path: target/wasm32-wasip1/release/sprawl-guard.wasm
             artifact_file_name: sprawl-guard.wasm
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     permissions:
       contents: read
     steps:
+      - name: Install container build tools
+        if: ${{ matrix.container }}
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends curl ca-certificates gcc libc6-dev git
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -193,6 +208,10 @@ jobs:
 
       - name: Restore Rust build cache
         uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          # The cache key ignores the container, so a container build could otherwise restore build
+          # scripts linked against the runner's newer glibc, which fail to run in the container.
+          key: ${{ matrix.package_target }}
 
       - name: Install musl linker
         if: ${{ matrix.rust_target == 'x86_64-unknown-linux-musl' }}
@@ -236,8 +255,9 @@ jobs:
       - name: Check native binary version
         if: ${{ matrix.package_target != 'wasm32-wasip1' }}
         shell: bash
+        # Compare stderr too, so a loader warning, such as a missing glibc version, fails the check.
         run: |
-          test "$("${BUILT_ARTIFACT_PATH}" --version)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
+          test "$("${BUILT_ARTIFACT_PATH}" --version 2>&1)" = "sprawl-guard ${SPRAWL_GUARD_VERSION}"
         env:
           BUILT_ARTIFACT_PATH: ${{ matrix.built_artifact_path }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
@@ -577,14 +597,26 @@ jobs:
             package_name: "@kpozin/sprawl-guard-darwin-arm64"
           - runner: macos-15-intel
             package_name: "@kpozin/sprawl-guard-darwin-x64"
+          # The glibc packages run in their build image, the oldest glibc they support.
           - runner: ubuntu-24.04-arm
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
             package_name: "@kpozin/sprawl-guard-linux-arm64-gnu"
           - runner: ubuntu-24.04
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
             package_name: "@kpozin/sprawl-guard-linux-x64-gnu"
           - runner: windows-2025
             package_name: "@kpozin/sprawl-guard-win32-x64-msvc"
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     steps:
+      - name: Install container tools
+        if: ${{ matrix.container }}
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates git
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
       - name: Check out the release commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
@@ -988,14 +1020,26 @@ jobs:
             package_name: "@kpozin/sprawl-guard-darwin-arm64"
           - runner: macos-15-intel
             package_name: "@kpozin/sprawl-guard-darwin-x64"
+          # The glibc packages run in their build image, the oldest glibc they support.
           - runner: ubuntu-24.04-arm
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
             package_name: "@kpozin/sprawl-guard-linux-arm64-gnu"
           - runner: ubuntu-24.04
+            container: ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde
             package_name: "@kpozin/sprawl-guard-linux-x64-gnu"
           - runner: windows-2025
             package_name: "@kpozin/sprawl-guard-win32-x64-msvc"
     runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }}
     steps:
+      - name: Install container tools
+        if: ${{ matrix.container }}
+        run: |
+          apt-get update
+          apt-get install --yes --no-install-recommends ca-certificates git
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
       - name: Check out the release commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:

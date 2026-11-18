@@ -4,6 +4,17 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- The prebuilt Linux glibc binaries, in the npm packages and the release archives, now run on glibc
+  2.35 and newer, as in Ubuntu 22.04 and Debian 12. Before, the Arm binary needed glibc 2.39 and
+  didn't start on older systems, and the x64 binary printed a glibc warning on every run.
+
+### Known issues
+
+- The Linux musl binary, which npm installs on Alpine, is many times slower than the glibc binary
+  when it checks files on several threads.
+
 ## [0.5.1] - 2026-11-17
 
 ### Fixed

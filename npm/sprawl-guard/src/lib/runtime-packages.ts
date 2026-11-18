@@ -1,6 +1,15 @@
 /** Package name for the WASI fallback distribution. */
 export const WASM_PACKAGE_NAME = "@kpozin/sprawl-guard-wasm32-wasip1" as const;
 
+/**
+ * Container image that builds and tests the Linux glibc binaries. A binary needs at least the glibc
+ * version it was linked against, so this image's glibc 2.35 is the oldest that the binaries
+ * support. The digest pins a multi-architecture image, so one reference serves both Arm and Intel
+ * runners.
+ */
+export const GLIBC_FLOOR_IMAGE =
+  "ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde" as const;
+
 type RuntimeRunner = `${"macos" | "ubuntu" | "windows"}-${string}`;
 type NativeRustTarget =
   | `${string}-apple-darwin`
@@ -18,23 +27,36 @@ interface PosixNonLinuxRuntimePackageDefinitionInput
   extends CommonNativeRuntimePackageDefinitionInput {
   readonly platform: Exclude<NodeJS.Platform, "linux" | "win32">;
   readonly libcFamily?: never;
+  readonly container?: never;
 }
 
-interface LinuxNativeRuntimePackageDefinitionInput
+/** A Linux binary linked against glibc, built in the glibc floor image so older systems can run it. */
+interface LinuxGnuRuntimePackageDefinitionInput
   extends CommonNativeRuntimePackageDefinitionInput {
   readonly platform: "linux";
-  readonly libcFamily: "gnu" | "musl";
+  readonly libcFamily: "gnu";
+  readonly container: typeof GLIBC_FLOOR_IMAGE;
+}
+
+/** A statically linked musl binary, which runs on any Linux system and so builds on the runner. */
+interface LinuxMuslRuntimePackageDefinitionInput
+  extends CommonNativeRuntimePackageDefinitionInput {
+  readonly platform: "linux";
+  readonly libcFamily: "musl";
+  readonly container?: never;
 }
 
 interface WindowsRuntimePackageDefinitionInput
   extends CommonNativeRuntimePackageDefinitionInput {
   readonly platform: "win32";
   readonly libcFamily?: never;
+  readonly container?: never;
 }
 
 type PosixNativeRuntimePackageDefinitionInput =
   | PosixNonLinuxRuntimePackageDefinitionInput
-  | LinuxNativeRuntimePackageDefinitionInput;
+  | LinuxGnuRuntimePackageDefinitionInput
+  | LinuxMuslRuntimePackageDefinitionInput;
 type NativeRuntimePackageDefinitionInput =
   | PosixNativeRuntimePackageDefinitionInput
   | WindowsRuntimePackageDefinitionInput;
@@ -125,6 +147,7 @@ export const RUNTIME_PACKAGE_DEFINITIONS = [
     libcFamily: "gnu",
     rustTarget: "aarch64-unknown-linux-gnu",
     runner: "ubuntu-24.04-arm",
+    container: GLIBC_FLOOR_IMAGE,
   }),
   nativeRuntimePackage({
     slug: "linux-x64-gnu",
@@ -133,6 +156,7 @@ export const RUNTIME_PACKAGE_DEFINITIONS = [
     libcFamily: "gnu",
     rustTarget: "x86_64-unknown-linux-gnu",
     runner: "ubuntu-24.04",
+    container: GLIBC_FLOOR_IMAGE,
   }),
   nativeRuntimePackage({
     slug: "linux-x64-musl",
