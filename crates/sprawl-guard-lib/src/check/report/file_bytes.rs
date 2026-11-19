@@ -27,17 +27,17 @@ pub struct FileBytesViolation {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileBytesViolationKind {
-    /// A file that Git stores is larger than `max_bytes_per_file`.
+    /// A file that is not in Git LFS is larger than `max_bytes_per_file`.
     FileBytes,
     /// A file that Git LFS stores is larger than `max_bytes_per_lfs_object`.
     LfsObjectBytes,
 }
 
 impl FileBytesViolationKind {
-    /// Returns where Git stores a file with this kind of violation.
+    /// Returns how a file with this kind of violation is stored.
     pub const fn storage(self) -> FileStorage {
         match self {
-            Self::FileBytes => FileStorage::Git,
+            Self::FileBytes => FileStorage::Regular,
             Self::LfsObjectBytes => FileStorage::Lfs,
         }
     }
@@ -46,7 +46,7 @@ impl FileBytesViolationKind {
 impl From<FileStorage> for FileBytesViolationKind {
     fn from(storage: FileStorage) -> Self {
         match storage {
-            FileStorage::Git => Self::FileBytes,
+            FileStorage::Regular => Self::FileBytes,
             FileStorage::Lfs => Self::LfsObjectBytes,
         }
     }

@@ -8,6 +8,12 @@ use std::path::Path;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 
+mod file_sizes;
+
+pub use file_sizes::FileSizeRatchet;
+
+use file_sizes::{deserialize_file_sizes, file_sizes_schema, inline_file_sizes};
+
 use crate::classification::SourceKind;
 use crate::file_io::write_text_atomically;
 use crate::value::schema::{TomlSchemaDirective, TomlSchemaUrl, authored_toml_schema_generator};
@@ -32,19 +38,30 @@ pub struct RatchetFile {
     /// Directory direct-file count ceilings for both source roles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub directories: Vec<DirectoryRatchet>,
-    /// Byte ceilings for files that were already larger than their byte limit.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub file_sizes: Vec<FileSizeRatchet>,
+    /// Byte ceilings for files that were already larger than their byte limit, keyed by
+    /// repository-relative file path.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_file_sizes",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    #[schemars(schema_with = "file_sizes_schema")]
+    pub file_sizes: BTreeMap<RelativePath, FileSizeRatchet>,
 }
 
 impl RatchetFile {
     /// Reads and parses a ratchet file.
     pub fn read(path: &Path) -> Result<Self> {
+        Self::read_with_form(path).map(|(file, _)| file)
+    }
+
+    /// Reads and parses a ratchet file, and reports whether it uses the form Sprawl Guard writes.
+    pub fn read_with_form(path: &Path) -> Result<(Self, RatchetForm)> {
         let input = fs::read_to_string(path).map_err(|source| SprawlError::ReadRatchet {
             path: path.to_path_buf(),
             source,
         })?;
-        Self::parse(path, &input)
+        Self::parse_with_form(path, &input)
     }
 
     /// Parses ratchet TOML and validates the schema version.
@@ -52,12 +69,24 @@ impl RatchetFile {
     /// The `path` parameter is used only for diagnostics so parse errors can
     /// point at the file that produced them.
     pub fn parse(path: &Path, input: &str) -> Result<Self> {
+        Self::parse_with_form(path, input).map(|(file, _)| file)
+    }
+
+    fn parse_with_form(path: &Path, input: &str) -> Result<(Self, RatchetForm)> {
         let document =
             toml::from_str::<toml::Value>(input).map_err(|source| SprawlError::ParseRatchet {
                 path: path.to_path_buf(),
                 source,
             })?;
         validate_schema_version(&document)?;
+        let form = if document
+            .get("file_sizes")
+            .is_some_and(toml::Value::is_array)
+        {
+            RatchetForm::Outdated
+        } else {
+            RatchetForm::Current
+        };
         let file = document
             .try_into::<Self>()
             .map_err(|source| SprawlError::ParseRatchet {
@@ -65,7 +94,7 @@ impl RatchetFile {
                 source,
             })?;
         file.validate()?;
-        Ok(file)
+        Ok((file, form))
     }
 
     /// Writes this ratchet file in stable TOML form.
@@ -82,7 +111,9 @@ impl RatchetFile {
         self.validate()?;
         let mut stable = self.clone();
         stable.sort();
-        let toml = toml::to_string_pretty(&stable).expect("ratchet file must serialize");
+        let toml = inline_file_sizes(
+            &toml::to_string_pretty(&stable).expect("ratchet file must serialize"),
+        );
         Ok(format!(
             "{}\n{toml}",
             RatchetSchemaVersion::CURRENT.schema_directive()
@@ -93,7 +124,6 @@ impl RatchetFile {
     pub fn sort(&mut self) {
         self.files.sort_by_key(FileRatchet::key);
         self.directories.sort_by_key(DirectoryRatchet::key);
-        self.file_sizes.sort_by_key(FileSizeRatchet::key);
     }
 
     /// Returns true when the file contains no ratchet ceilings.
@@ -103,7 +133,7 @@ impl RatchetFile {
 
     fn validate(&self) -> Result<()> {
         reject_empty_file_paths(self.files.iter().map(|entry| &entry.path))?;
-        reject_empty_file_paths(self.file_sizes.iter().map(|entry| &entry.path))?;
+        reject_empty_file_paths(self.file_sizes.keys())?;
         if let Some(entry) = first_duplicate(&self.files, FileRatchet::key) {
             return Err(SprawlError::DuplicateFileRatchetEntry {
                 role: entry.role,
@@ -117,14 +147,18 @@ impl RatchetFile {
                 path: entry.path.clone(),
             });
         }
-        if let Some(entry) = first_duplicate(&self.file_sizes, FileSizeRatchet::key) {
-            return Err(SprawlError::DuplicateFileSizeRatchetEntry {
-                storage: entry.storage,
-                path: entry.path.clone(),
-            });
-        }
         Ok(())
     }
+}
+
+/// Whether a ratchet file on disk uses the form that Sprawl Guard writes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RatchetForm {
+    /// The form Sprawl Guard writes.
+    Current,
+    /// An older form that Sprawl Guard still reads, such as the `[[file_sizes]]` array of tables
+    /// that 0.6.0 wrote. The next write replaces it.
+    Outdated,
 }
 
 /// Supported ratchet file schema versions.
@@ -359,26 +393,6 @@ impl DirectoryRatchet {
     }
 }
 
-/// Byte ceiling for one file that was already larger than its byte limit.
-#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileSizeRatchet {
-    /// Repository-relative file path.
-    #[schemars(schema_with = "nonempty_relative_path_schema")]
-    pub path: RelativePath,
-    /// Where Git stored the file, which decides the byte limit it was over.
-    pub storage: FileStorage,
-    /// Largest size, in bytes, the file may grow back to.
-    pub max_bytes: FileByteLimit,
-}
-
-impl FileSizeRatchet {
-    /// Returns the path-and-storage identity of this ratchet entry.
-    pub fn key(&self) -> FileSizeRatchetKey {
-        FileSizeRatchetKey::new(self.path.clone(), self.storage)
-    }
-}
-
 /// Identity of one persisted file size measurement.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct FileSizeRatchetKey {
@@ -397,7 +411,7 @@ impl FileSizeRatchetKey {
         &self.path
     }
 
-    /// Returns where Git stored the file.
+    /// Returns how the file's content was stored.
     pub const fn storage(&self) -> FileStorage {
         self.storage
     }
@@ -462,7 +476,12 @@ impl TryFrom<RatchetFile> for RatchetLookup {
             file_sizes: file
                 .file_sizes
                 .into_iter()
-                .map(|entry| (entry.key(), entry.max_bytes))
+                .map(|(path, entry)| {
+                    (
+                        FileSizeRatchetKey::new(path, entry.storage),
+                        entry.max_bytes,
+                    )
+                })
                 .collect(),
         })
     }
@@ -513,7 +532,7 @@ mod tests {
             schema_version: RatchetSchemaVersion::CURRENT,
             files: vec![entry.clone(), entry],
             directories: Vec::new(),
-            file_sizes: Vec::new(),
+            file_sizes: BTreeMap::new(),
         }
     }
 
@@ -524,19 +543,19 @@ mod tests {
             use super::*;
 
             #[test]
-            fn it_round_trips_role_tagged_entries() {
+            fn it_round_trips_every_kind_of_entry() {
                 let input = indoc! {r#"
                     schema_version = 1
-
-                    [[files]]
-                    path = "src/client/api.ts"
-                    role = "production"
-                    max_lines = 731
 
                     [[files]]
                     path = "src/client/api.test.ts"
                     role = "test"
                     max_lines = 1200
+
+                    [[files]]
+                    path = "src/client/api.ts"
+                    role = "production"
+                    max_lines = 731
 
                     [[directories]]
                     path = "src/api"
@@ -550,16 +569,21 @@ mod tests {
                     group = "frontend"
                     max_direct_files = 31
 
-                    [[file_sizes]]
-                    path = "assets/logo.png"
-                    storage = "lfs"
-                    max_bytes = 40000
+                    [file_sizes]
+                    "assets/logo.png" = { max_bytes = 40000, storage = "lfs" }
+                    "assets/photo.jpg" = 30000
                 "#};
 
                 let file =
                     RatchetFile::parse(Path::new("sprawl-guard.ratchet.toml"), input).unwrap();
 
-                assert_eq!(toml::to_string_pretty(&file).unwrap(), input);
+                assert_eq!(
+                    file.to_toml().unwrap(),
+                    format!(
+                        "{}\n{input}",
+                        RatchetSchemaVersion::CURRENT.schema_directive()
+                    )
+                );
             }
         }
 
@@ -685,56 +709,131 @@ mod tests {
             }
         }
 
-        mod when_file_size_entries_share_a_path {
+        mod when_file_size_entries_are_parsed {
             use super::*;
 
+            fn parse_file_sizes(entries: &str) -> Result<RatchetFile> {
+                RatchetFile::parse(
+                    Path::new("sprawl-guard.ratchet.toml"),
+                    &format!("schema_version = 1\n\n[file_sizes]\n{entries}"),
+                )
+            }
+
+            fn only_ceiling(file: &RatchetFile) -> FileSizeRatchet {
+                *file.file_sizes.values().next().unwrap()
+            }
+
             #[test]
-            fn it_accepts_distinct_storages() {
+            fn it_reads_a_bare_byte_count_as_a_regular_file() {
+                let file = parse_file_sizes("\"a.png\" = 2\n").unwrap();
+
+                assert_eq!(only_ceiling(&file).storage, FileStorage::Regular);
+            }
+
+            #[test]
+            fn it_reads_the_storage_a_table_names() {
+                let file =
+                    parse_file_sizes("\"a.bin\" = { max_bytes = 2, storage = \"lfs\" }\n").unwrap();
+
+                assert_eq!(only_ceiling(&file).storage, FileStorage::Lfs);
+            }
+
+            #[test]
+            fn it_writes_a_regular_table_as_a_bare_byte_count() {
+                let file =
+                    parse_file_sizes("\"a.png\" = { max_bytes = 2, storage = \"regular\" }\n")
+                        .unwrap();
+
+                assert!(
+                    file.to_toml()
+                        .unwrap()
+                        .ends_with("[file_sizes]\n\"a.png\" = 2\n")
+                );
+            }
+
+            #[test]
+            fn it_rejects_a_table_without_its_storage() {
+                let error = parse_file_sizes("\"a.bin\" = { max_bytes = 2 }\n").unwrap_err();
+
+                assert!(error.to_string().contains("missing field `storage`"));
+            }
+
+            #[test]
+            fn it_rejects_two_keys_for_one_path() {
+                let error = parse_file_sizes("\"a.png\" = 2\n\"./a.png\" = 3\n").unwrap_err();
+
+                assert!(error.to_string().contains("lists `a.png` more than once"));
+            }
+
+            #[test]
+            fn it_rejects_a_zero_ceiling() {
+                let error = parse_file_sizes("\"a.png\" = 0\n").unwrap_err();
+
+                assert!(
+                    error
+                        .to_string()
+                        .contains("must be greater than zero\nin `file_sizes.a.png`")
+                );
+            }
+
+            #[test]
+            fn it_reads_the_array_of_tables_from_0_6_0() {
                 let file = RatchetFile::parse(
                     Path::new("sprawl-guard.ratchet.toml"),
                     indoc! {r#"
                         schema_version = 1
 
                         [[file_sizes]]
-                        path = "assets/logo.png"
+                        path = "a.png"
                         storage = "git"
                         max_bytes = 2
 
                         [[file_sizes]]
-                        path = "assets/logo.png"
+                        path = "b.bin"
                         storage = "lfs"
                         max_bytes = 3
                     "#},
                 )
                 .unwrap();
 
-                assert!(!file.is_empty());
+                assert!(file.to_toml().unwrap().ends_with(indoc! {r#"
+                    [file_sizes]
+                    "a.png" = 2
+                    "b.bin" = { max_bytes = 3, storage = "lfs" }
+                "#}));
             }
 
             #[test]
-            fn it_rejects_a_duplicate_storage() {
+            fn it_rejects_two_0_6_0_ceilings_for_one_path() {
                 let error = RatchetFile::parse(
                     Path::new("sprawl-guard.ratchet.toml"),
                     indoc! {r#"
                         schema_version = 1
 
                         [[file_sizes]]
-                        path = "assets/logo.png"
-                        storage = "lfs"
+                        path = "a.bin"
+                        storage = "git"
                         max_bytes = 2
 
                         [[file_sizes]]
-                        path = "assets/logo.png"
+                        path = "a.bin"
                         storage = "lfs"
                         max_bytes = 3
                     "#},
                 )
                 .unwrap_err();
 
-                assert_eq!(
-                    error.to_string(),
-                    "duplicate file size ratchet entry for storage lfs and path assets/logo.png"
-                );
+                assert!(error.to_string().contains("lists `a.bin` more than once"));
+            }
+
+            #[test]
+            fn it_rejects_an_unknown_table_field() {
+                let error = parse_file_sizes(
+                    "\"a.bin\" = { max_bytes = 2, storage = \"lfs\", role = \"test\" }\n",
+                )
+                .unwrap_err();
+
+                assert!(error.to_string().contains("unknown field `role`"));
             }
         }
 
@@ -826,7 +925,6 @@ mod tests {
             #[test]
             fn it_rejects_every_kind_of_entry() {
                 for input in [
-                    "schema_version = 1\n[[file_sizes]]\npath = \"a.png\"\nstorage = \"git\"\nmax_bytes = 0",
                     "schema_version = 1\n[[files]]\npath = \"a.rs\"\nrole = \"production\"\nmax_lines = 0",
                     "schema_version = 1\n[[directories]]\npath = \"src\"\nrole = \"production\"\ngroup = \"source\"\nmax_direct_files = 0",
                 ] {
@@ -932,7 +1030,7 @@ mod tests {
             fn it_rejects_an_empty_file_size_path() {
                 let error = RatchetFile::parse(
                     Path::new("sprawl-guard.ratchet.toml"),
-                    "schema_version = 1\n[[file_sizes]]\npath = \"\"\nstorage = \"git\"\nmax_bytes = 2",
+                    "schema_version = 1\n[file_sizes]\n\"\" = 2",
                 )
                 .unwrap_err();
 

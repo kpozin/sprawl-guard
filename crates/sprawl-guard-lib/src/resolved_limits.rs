@@ -171,7 +171,7 @@ impl<'config> LimitResolver<'config> {
 
     /// Returns whether any file can have a finite byte limit, so that file sizes need measuring.
     pub(crate) fn limits_file_bytes(&self) -> bool {
-        [FileStorage::Git, FileStorage::Lfs]
+        [FileStorage::Regular, FileStorage::Lfs]
             .into_iter()
             .any(|storage| {
                 self.config

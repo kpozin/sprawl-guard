@@ -27,21 +27,21 @@ role = "production"
 group = "source"
 max_direct_files = 14
 
-[[file_sizes]]
-path = "assets/hero.png"
-storage = "git"
-max_bytes = 2000000
+[file_sizes]
+"assets/hero.png" = 2000000
+"models/weights.bin" = { max_bytes = 50000000, storage = "lfs" }
 ```
 
 Each entry's `role` says whether the production or the test limit applies. A directory entry's
 `group` names the [language group](/sprawl-guard/reference/configuration/#language_groupsname) whose
 files it counts. Languages outside custom groups use `source`, except literate languages such as
-Markdown, which use `documentation`. A `file_sizes` entry records the size in bytes of any file,
-source or not, and its `storage`: `git` for a limit from `max_bytes_per_file`, `lfs` for one from
-`max_bytes_per_lfs_object`. For a file in Git LFS, it records the content size, so the entry doesn't
-change when Git LFS downloads the file. When a file moves into or out of Git LFS, its old entry
-becomes stale. Sprawl Guard versions without byte limits reject a ratchet file that has `file_sizes`
-entries. The commands below write the file. Edit it by hand only to resolve a merge conflict.
+Markdown, which use `documentation`. Each `file_sizes` entry maps a path to the size in bytes of any
+file, source or not, under the limit from `max_bytes_per_file`. A file in Git LFS has a table with
+`storage = "lfs"` instead, under the limit from `max_bytes_per_lfs_object`. It records the content
+size, so the entry doesn't change when Git LFS downloads the file. When a file moves into or out of
+Git LFS, its old entry becomes stale. Sprawl Guard versions without byte limits reject a ratchet
+file that has `file_sizes` entries. The commands below write the file. Edit it by hand only to
+resolve a merge conflict.
 
 ## Record an improvement
 

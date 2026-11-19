@@ -18,7 +18,7 @@ pub struct Limits {
     pub max_lines_per_file: MaxLinesPerFileLimits,
     /// Maximum direct source files per directory.
     pub max_direct_files_per_directory: MaxDirectFilesPerDirectoryLimits,
-    /// Repository-wide maximum size of any file that Git stores, source or not, before path
+    /// Repository-wide maximum size of any file that is not in Git LFS, source or not, before path
     /// overrides.
     pub max_bytes_per_file: MaxBytesPerFile,
     /// Repository-wide maximum size of the content of any file that Git LFS stores, before path
@@ -30,7 +30,7 @@ impl Limits {
     /// Returns the repository-wide byte limit for files stored in `storage`.
     pub const fn max_file_bytes(&self, storage: FileStorage) -> MaxBytesPerFile {
         match storage {
-            FileStorage::Git => self.max_bytes_per_file,
+            FileStorage::Regular => self.max_bytes_per_file,
             FileStorage::Lfs => self.max_bytes_per_lfs_object,
         }
     }

@@ -34,8 +34,8 @@ pub use config::{
 pub use error::{ConfigUpgradeCommand, Result, SprawlError};
 pub use ratchet::{
     DirectoryRatchet, DirectoryRatchetKey, FileRatchet, FileRatchetKey, FileSizeRatchet,
-    FileSizeRatchetKey, RatchetCount, RatchetFile, RatchetLookup, RatchetSchemaVersion,
-    authored_ratchet_json_schema,
+    FileSizeRatchetKey, RatchetCount, RatchetFile, RatchetForm, RatchetLookup,
+    RatchetSchemaVersion, authored_ratchet_json_schema,
 };
 pub use resolved_limits::{
     MatchedOverride, OverrideOrdinal, ResolvedDirectFileLimit, ResolvedFileBytesLimit,

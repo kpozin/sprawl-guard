@@ -567,15 +567,9 @@ mod when_recoverable_traversal_errors_occur {
                     role = "production"
                     max_lines = 5
 
-                    [[file_sizes]]
-                    path = "assets/large.bin"
-                    storage = "git"
-                    max_bytes = 20
-
-                    [[file_sizes]]
-                    path = "gone.bin"
-                    storage = "git"
-                    max_bytes = 20
+                    [file_sizes]
+                    "assets/large.bin" = 20
+                    "gone.bin" = 20
                 "#},
             );
             fs::set_permissions(root.join("assets"), fs::Permissions::from_mode(0o000)).unwrap();

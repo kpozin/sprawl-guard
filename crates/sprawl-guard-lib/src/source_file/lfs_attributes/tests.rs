@@ -28,7 +28,7 @@ impl WorkTree {
         fs::write(path, contents).unwrap();
     }
 
-    /// Returns where Git stores `path`, relative to `root`, which is relative to the top.
+    /// Returns how `path` is stored, relative to `root`, which is relative to the top.
     fn storage_under(&self, root: &str, path: &str) -> FileStorage {
         let root = self.top.join(root);
         fs::create_dir_all(&root).unwrap();
@@ -42,7 +42,7 @@ impl WorkTree {
     }
 }
 
-/// Returns where Git stores `path` when the top `.gitattributes` holds `attributes`.
+/// Returns how `path` is stored when the top `.gitattributes` holds `attributes`.
 fn storage_with(attributes: &str, path: &str) -> FileStorage {
     let tree = WorkTree::new();
     tree.write(ATTRIBUTES_FILE, attributes);
@@ -53,8 +53,8 @@ mod when_no_gitattributes_exists {
     use super::*;
 
     #[test]
-    fn it_returns_git() {
-        assert_eq!(WorkTree::new().storage("big.bin"), FileStorage::Git);
+    fn it_returns_regular() {
+        assert_eq!(WorkTree::new().storage("big.bin"), FileStorage::Regular);
     }
 }
 
@@ -73,10 +73,10 @@ mod when_a_line_sets_filter_lfs {
     }
 
     #[test]
-    fn it_returns_git_for_a_path_that_does_not_match() {
+    fn it_returns_regular_for_a_path_that_does_not_match() {
         assert_eq!(
             storage_with("*.bin filter=lfs\n", "big.png"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
@@ -92,7 +92,7 @@ mod when_a_line_sets_filter_lfs {
     fn it_does_not_apply_a_directory_pattern_to_files_under_it() {
         assert_eq!(
             storage_with("assets filter=lfs\nassets/ filter=lfs\n", "assets/big.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
@@ -124,14 +124,14 @@ mod when_a_pattern_has_braces {
     fn it_matches_them_literally_like_git() {
         let attributes = "{a,b}.bin filter=lfs\n";
         assert_eq!(storage_with(attributes, "{a,b}.bin"), FileStorage::Lfs);
-        assert_eq!(storage_with(attributes, "a.bin"), FileStorage::Git);
+        assert_eq!(storage_with(attributes, "a.bin"), FileStorage::Regular);
     }
 
     #[test]
     fn it_matches_them_inside_a_character_class() {
         let attributes = "[{]a.bin filter=lfs\n";
         assert_eq!(storage_with(attributes, "{a.bin"), FileStorage::Lfs);
-        assert_eq!(storage_with(attributes, "\\a.bin"), FileStorage::Git);
+        assert_eq!(storage_with(attributes, "\\a.bin"), FileStorage::Regular);
     }
 
     #[test]
@@ -147,7 +147,7 @@ mod when_a_pattern_has_braces {
     fn it_reads_a_leading_closing_bracket_as_part_of_the_class() {
         let attributes = "[!]{]a.bin filter=lfs\n";
         assert_eq!(storage_with(attributes, "xa.bin"), FileStorage::Lfs);
-        assert_eq!(storage_with(attributes, "{a.bin"), FileStorage::Git);
+        assert_eq!(storage_with(attributes, "{a.bin"), FileStorage::Regular);
     }
 
     #[test]
@@ -166,7 +166,7 @@ mod when_a_character_class_is_never_closed {
     fn it_matches_nothing_like_git() {
         assert_eq!(
             storage_with("file[.bin filter=lfs\n", "file[.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
@@ -183,26 +183,26 @@ mod when_a_later_line_changes_the_filter {
     use super::*;
 
     #[test]
-    fn it_returns_git_when_the_filter_is_unset() {
+    fn it_returns_regular_when_the_filter_is_unset() {
         assert_eq!(
             storage_with("*.bin filter=lfs\nsmall.bin -filter\n", "small.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
     #[test]
-    fn it_returns_git_when_the_filter_is_unspecified() {
+    fn it_returns_regular_when_the_filter_is_unspecified() {
         assert_eq!(
             storage_with("*.bin filter=lfs\nsmall.bin !filter\n", "small.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
     #[test]
-    fn it_returns_git_when_the_filter_is_another_one() {
+    fn it_returns_regular_when_the_filter_is_another_one() {
         assert_eq!(
             storage_with("*.bin filter=lfs\nsmall.bin filter=crypt\n", "small.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
@@ -242,7 +242,7 @@ mod when_a_line_is_skipped {
     fn it_skips_comments() {
         assert_eq!(
             storage_with("# *.bin filter=lfs\n", "big.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
@@ -250,7 +250,7 @@ mod when_a_line_is_skipped {
     fn it_skips_macro_definitions() {
         assert_eq!(
             storage_with("[attr]binary filter=lfs\n", "binary"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
@@ -258,7 +258,7 @@ mod when_a_line_is_skipped {
     fn it_skips_quoted_patterns() {
         assert_eq!(
             storage_with("\"big.bin\" filter=lfs\n", "big.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 
@@ -266,7 +266,7 @@ mod when_a_line_is_skipped {
     fn it_skips_negated_patterns() {
         assert_eq!(
             storage_with("!big.bin filter=lfs\n", "big.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 }
@@ -279,7 +279,7 @@ mod when_a_nested_gitattributes_mentions_the_filter {
         let tree = WorkTree::new();
         tree.write(ATTRIBUTES_FILE, "*.bin filter=lfs\n");
         tree.write("vendor/.gitattributes", "*.bin -filter\n");
-        assert_eq!(tree.storage("vendor/big.bin"), FileStorage::Git);
+        assert_eq!(tree.storage("vendor/big.bin"), FileStorage::Regular);
     }
 
     #[test]
@@ -322,7 +322,7 @@ mod when_the_root_is_below_the_top_of_the_work_tree {
         tree.write("packages/app/.gitattributes", "*.bin -filter\n");
         assert_eq!(
             tree.storage_under("packages/app", "big.bin"),
-            FileStorage::Git
+            FileStorage::Regular
         );
     }
 }
@@ -340,7 +340,7 @@ mod when_no_directory_above_the_root_holds_git {
         let mut attributes = LfsAttributes::new(&root);
         assert_eq!(
             attributes.storage(&RelativePath::new(Path::new("big.bin")).unwrap()),
-            Some(FileStorage::Git)
+            Some(FileStorage::Regular)
         );
     }
 }
@@ -406,7 +406,7 @@ mod when_a_gitattributes_file_is_a_symbolic_link {
         .unwrap();
         let mut attributes = LfsAttributes::new(&tree.top);
         let path = RelativePath::new(Path::new("big.bin")).unwrap();
-        assert_eq!(attributes.storage(&path), Some(FileStorage::Git));
+        assert_eq!(attributes.storage(&path), Some(FileStorage::Regular));
         assert!(attributes.take_failures().is_empty());
     }
 }

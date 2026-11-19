@@ -6,13 +6,14 @@ mod scope;
 
 pub(super) use refusal::render_refusal;
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use sprawl_guard_lib::check::check_without_ratchet;
 use sprawl_guard_lib::config::load_resolved_config;
 use sprawl_guard_lib::{
     CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileRatchet, FileSizeRatchet,
-    LineLimit, RatchetFile, RatchetSchemaVersion, SprawlError, UnreadablePathPolicy,
+    LineLimit, RatchetFile, RatchetForm, RatchetSchemaVersion, SprawlError, UnreadablePathPolicy,
 };
 
 use super::{ProjectArgs, RatchetFormat, TightenArgs, UpdateArgs};
@@ -39,14 +40,15 @@ pub(super) fn execute_update(default_root: PathBuf, args: UpdateArgs) -> Result<
     })?;
     let new_entries = ratchet_from_report(&report, import.as_ref());
     let previous = if ratchet_exists {
-        let mut previous = RatchetFile::read(&context.ratchet_path)?;
-        previous.sort();
-        Some(previous)
+        Some(StoredRatchet::read(&context.ratchet_path)?)
     } else {
         None
     };
     let next = update_ratchet(
-        previous.clone().unwrap_or_default(),
+        previous
+            .as_ref()
+            .map(|previous| previous.file.clone())
+            .unwrap_or_default(),
         new_entries,
         ceiling_update_policy,
     );
@@ -85,18 +87,17 @@ pub(super) fn execute_tighten(default_root: PathBuf, args: TightenArgs) -> Resul
         });
     }
 
-    let mut previous = RatchetFile::read(&context.ratchet_path)?;
-    previous.sort();
-    let (scope, measured_paths) = tighten_scope(&context.root, &args.paths, &previous)?;
+    let previous = StoredRatchet::read(&context.ratchet_path)?;
+    let (scope, measured_paths) = tighten_scope(&context.root, &args.paths, &previous.file)?;
     let current = if args.paths.is_empty() || !measured_paths.is_empty() {
         let report = current_violation_report(&context, measured_paths)?;
         let mut current = ratchet_from_report(&report, None);
-        keep_uncounted_ceilings(&mut current, &previous, &report);
+        keep_uncounted_ceilings(&mut current, &previous.file, &report);
         current
     } else {
         RatchetFile::default()
     };
-    let next = lower_ratchet_scope(previous.clone(), current, &scope)?;
+    let next = lower_ratchet_scope(previous.file.clone(), current, &scope)?;
 
     finish_ratchet_command(
         &context,
@@ -105,6 +106,20 @@ pub(super) fn execute_tighten(default_root: PathBuf, args: TightenArgs) -> Resul
         args.write,
         args.format.into(),
     )
+}
+
+/// A ratchet file read from disk, with whether its text uses the form Sprawl Guard writes.
+struct StoredRatchet {
+    file: RatchetFile,
+    form: RatchetForm,
+}
+
+impl StoredRatchet {
+    fn read(path: &Path) -> Result<Self> {
+        let (mut file, form) = RatchetFile::read_with_form(path)?;
+        file.sort();
+        Ok(Self { file, form })
+    }
 }
 
 struct RatchetCommandContext {
@@ -173,7 +188,7 @@ fn ratchet_from_report(report: &CheckReport, import: Option<&import::Suppression
         schema_version: RatchetSchemaVersion::CURRENT,
         files: Vec::new(),
         directories: Vec::new(),
-        file_sizes: Vec::new(),
+        file_sizes: BTreeMap::new(),
     };
     for violation in report.violations() {
         match violation {
@@ -199,11 +214,13 @@ fn ratchet_from_report(report: &CheckReport, import: Option<&import::Suppression
             CheckViolation::FileBytes(violation) if import.is_none() => {
                 // A file over a positive limit is never empty, so it always has a ceiling.
                 if let Some(max_bytes) = violation.actual.as_limit() {
-                    ratchet.file_sizes.push(FileSizeRatchet {
-                        path: violation.path.clone(),
-                        storage: violation.kind.storage(),
-                        max_bytes,
-                    });
+                    ratchet.file_sizes.insert(
+                        violation.path.clone(),
+                        FileSizeRatchet {
+                            storage: violation.kind.storage(),
+                            max_bytes,
+                        },
+                    );
                 }
             }
             CheckViolation::Ratchet(_)
@@ -217,7 +234,7 @@ fn ratchet_from_report(report: &CheckReport, import: Option<&import::Suppression
 
 fn finish_ratchet_command(
     context: &RatchetCommandContext,
-    previous: Option<&RatchetFile>,
+    previous: Option<&StoredRatchet>,
     ratchet: &RatchetFile,
     write: bool,
     format: RatchetFormat,
@@ -227,17 +244,25 @@ fn finish_ratchet_command(
     let stdout = match format {
         RatchetFormat::Toml => ratchet.to_toml()?,
         RatchetFormat::Human => {
-            let changes =
-                preview::render_changes(previous.unwrap_or(&RatchetFile::default()), ratchet)?;
+            let changes = preview::render_changes(
+                previous.map_or(&RatchetFile::default(), |previous| &previous.file),
+                ratchet,
+            )?;
             if changes.is_empty() {
-                match (previous, write) {
+                match (previous.map(|previous| previous.form), write) {
                     (None, true) => format!("Created empty ratchet file {shown_path}\n"),
                     (None, false) => {
                         format!(
                             "No ratchet changes; --write will create an empty ratchet file {shown_path}\n"
                         )
                     }
-                    (Some(_), _) => "No ratchet changes.\n".to_owned(),
+                    (Some(RatchetForm::Outdated), true) => {
+                        format!("No ratchet changes; rewrote {shown_path} in the current form\n")
+                    }
+                    (Some(RatchetForm::Outdated), false) => format!(
+                        "No ratchet changes; --write will rewrite {shown_path} in the current form\n"
+                    ),
+                    (Some(RatchetForm::Current), _) => "No ratchet changes.\n".to_owned(),
                 }
             } else {
                 let action = if write {
@@ -249,7 +274,9 @@ fn finish_ratchet_command(
             }
         }
     };
-    if write && previous != Some(ratchet) {
+    let unchanged = previous
+        .is_some_and(|previous| previous.form == RatchetForm::Current && previous.file == *ratchet);
+    if write && !unchanged {
         ratchet.write(path)?;
     }
     Ok(stdout)

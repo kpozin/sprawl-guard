@@ -425,7 +425,7 @@ mod when_explaining_a_file_with_a_byte_limit {
                         },
                     ],
                 },
-                "storage": "git",
+                "storage": "regular",
                 "size": { "state": "measured", "bytes": 1500 },
             })
         );

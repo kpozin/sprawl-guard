@@ -106,7 +106,7 @@ impl RatchetPaths {
             .iter()
             .map(|entry| entry.path.clone())
             .chain(file.directories.iter().map(|entry| entry.path.clone()))
-            .chain(file.file_sizes.iter().map(|entry| entry.path.clone()))
+            .chain(file.file_sizes.keys().cloned())
             .collect();
         Self { paths }
     }

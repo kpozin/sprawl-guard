@@ -151,9 +151,7 @@ mod when_importing_oxlint_suppressions {
                 .write_str("0123456789ab")
                 .unwrap();
             root.child("sprawl-guard.ratchet.toml")
-                .write_str(
-                    "schema_version = 1\n[[file_sizes]]\npath = \"assets/logo.png\"\nstorage = \"git\"\nmax_bytes = 12\n",
-                )
+                .write_str("schema_version = 1\n[file_sizes]\n\"assets/logo.png\" = 12\n")
                 .unwrap();
 
             let ratchet = import(&root);
@@ -162,7 +160,7 @@ mod when_importing_oxlint_suppressions {
             let sizes = ratchet
                 .file_sizes
                 .iter()
-                .map(|entry| (entry.path.as_str(), entry.max_bytes.into_inner()))
+                .map(|(path, entry)| (path.as_str(), entry.max_bytes.into_inner()))
                 .collect::<Vec<_>>();
             assert_eq!(sizes, vec![("assets/logo.png", 12)]);
         }

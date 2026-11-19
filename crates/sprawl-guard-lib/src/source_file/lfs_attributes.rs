@@ -60,7 +60,7 @@ const CLASS_END: char = ']';
 /// Characters that negate a character class when they follow its opening bracket.
 const CLASS_NEGATIONS: [char; 2] = ['!', '^'];
 
-/// Finds where Git stores each file, reading every `.gitattributes` file at most once.
+/// Finds how each file is stored, reading every `.gitattributes` file at most once.
 pub(crate) struct LfsAttributes {
     /// Absolute check root.
     root: PathBuf,
@@ -111,7 +111,7 @@ impl LfsAttributes {
         }
     }
 
-    /// Returns where Git stores the file at `path`, or `None` when it can't be known.
+    /// Returns how the file at `path` is stored, or `None` when it can't be known.
     ///
     /// The deepest `.gitattributes` file that sets or unsets the filter attribute for the path
     /// decides. When a `.gitattributes` file that can't be read comes before the one that decides,
@@ -132,12 +132,12 @@ impl LfsAttributes {
                 AttributesFile::Unreadable => return None,
                 AttributesFile::Read(matcher) => match matcher.matched(&file, false) {
                     Match::Ignore(_) => return Some(FileStorage::Lfs),
-                    Match::Whitelist(_) => return Some(FileStorage::Git),
+                    Match::Whitelist(_) => return Some(FileStorage::Regular),
                     Match::None => {}
                 },
             }
         }
-        Some(FileStorage::Git)
+        Some(FileStorage::Regular)
     }
 
     /// Returns the `.gitattributes` files that couldn't be read since the last call.
@@ -210,7 +210,7 @@ fn filter_matcher(directory: &Path, text: &str) -> Gitignore {
         };
         let line = match storage {
             FileStorage::Lfs => pattern,
-            FileStorage::Git => format!("!{pattern}"),
+            FileStorage::Regular => format!("!{pattern}"),
         };
         // Git skips a pattern it can't parse too, so the rest of the file still applies.
         let _ = builder.add_line(None, &line);
@@ -259,7 +259,7 @@ fn matcher_pattern(pattern: &str) -> Option<String> {
     (!in_class).then_some(escaped)
 }
 
-/// Parses one `.gitattributes` line into its pattern and where it says Git stores matching files.
+/// Parses one `.gitattributes` line into its pattern and how it says matching files are stored.
 ///
 /// Returns `None` for blank lines, comments, macro definitions, quoted or negated patterns, and
 /// lines that don't mention the filter attribute. When a line mentions the filter more than once,
@@ -279,13 +279,12 @@ fn filter_line(line: &str) -> Option<(&str, FileStorage)> {
 fn filter_storage(token: &str) -> Option<FileStorage> {
     match token.split_once('=') {
         Some((FILTER_ATTRIBUTE, LFS_FILTER)) => Some(FileStorage::Lfs),
-        Some((FILTER_ATTRIBUTE, _)) => Some(FileStorage::Git),
+        Some((FILTER_ATTRIBUTE, _)) => Some(FileStorage::Regular),
         Some(_) => None,
         // `filter`, `-filter` and `!filter` set the filter to true, unset it, or leave it
         // unspecified, and none of those stores the file in Git LFS.
-        None => {
-            (token.trim_start_matches(['-', '!']) == FILTER_ATTRIBUTE).then_some(FileStorage::Git)
-        }
+        None => (token.trim_start_matches(['-', '!']) == FILTER_ATTRIBUTE)
+            .then_some(FileStorage::Regular),
     }
 }
 

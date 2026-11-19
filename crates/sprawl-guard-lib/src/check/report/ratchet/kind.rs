@@ -33,7 +33,7 @@ impl RatchetViolationKind {
 
     pub(super) const fn stale_file_bytes(storage: FileStorage) -> Self {
         match storage {
-            FileStorage::Git => Self::FileBytesStale,
+            FileStorage::Regular => Self::FileBytesStale,
             FileStorage::Lfs => Self::LfsObjectBytesStale,
         }
     }

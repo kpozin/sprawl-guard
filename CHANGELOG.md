@@ -4,6 +4,17 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- `file_sizes` in the ratchet file is now a table keyed by path, such as
+  `"assets/hero.png" = 2000000`. A file in Git LFS has `{ max_bytes = 50000000, storage = "lfs" }`.
+  Ratchet files from 0.6.0 still work, and the next `update --write` or `tighten --write` rewrites
+  them. Sprawl Guard 0.6.0 can't read a rewritten file, so upgrade every copy that checks the
+  repository, including CI, before you commit it. If a file moved into or out of Git LFS, 0.6.0 may
+  have recorded two ceilings for it, which this release rejects: delete the entry whose `storage`
+  the file no longer uses.
+- JSON output reports a file that isn't in Git LFS with `"storage": "regular"` instead of `"git"`.
+
 ## [0.6.0] - 2026-11-19
 
 This release adds byte limits on file sizes and publishes Sprawl Guard on PyPI. Before upgrading,

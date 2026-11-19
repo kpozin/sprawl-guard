@@ -53,9 +53,9 @@ fn byte_ceilings(root: &TempDir) -> Vec<(String, FileStorage, u64)> {
     read_ratchet_file(root)
         .file_sizes
         .iter()
-        .map(|entry| {
+        .map(|(path, entry)| {
             (
-                entry.path.as_str().to_owned(),
+                path.as_str().to_owned(),
                 entry.storage,
                 entry.max_bytes.into_inner(),
             )
@@ -353,7 +353,7 @@ mod when_a_nested_gitattributes_cannot_be_read {
         write_ratchet(
             root,
             &format!(
-                "schema_version = 1\n\n[[file_sizes]]\npath = \"{NESTED_ASSET}\"\nstorage = \"lfs\"\nmax_bytes = {DECLARED}\n"
+                "schema_version = 1\n\n[file_sizes]\n\"{NESTED_ASSET}\" = {{ max_bytes = {DECLARED}, storage = \"lfs\" }}\n"
             ),
         );
         write_file(
@@ -449,7 +449,7 @@ mod when_a_nested_gitattributes_cannot_be_read {
     fn check_still_reports_a_stale_ceiling_for_a_file_whose_storage_is_known() {
         let root = TempDir::new().unwrap();
         write_fixture(&root);
-        // A deeper `.gitattributes` that can be read moves this asset to Git LFS, so its old Git
+        // A deeper `.gitattributes` that can be read moves this asset to Git LFS, so its regular
         // ceiling is stale even though the parent's `.gitattributes` can't be read.
         write_file(&root, "vendor/moved/.gitattributes", ATTRIBUTES);
         write_file(&root, "vendor/moved/model.bin", "x");
@@ -457,9 +457,8 @@ mod when_a_nested_gitattributes_cannot_be_read {
         assert_eq!(
             stale_violations_with(
                 &root,
-                &format!(
-                    "[[file_sizes]]\npath = \"vendor/moved/model.bin\"\nstorage = \"git\"\nmax_bytes = {DECLARED}\n"
-                ),
+                // The fixture's ratchet ends with its `[file_sizes]` table, so this line joins it.
+                &format!("\"vendor/moved/model.bin\" = {DECLARED}\n"),
             ),
             [(json!("file_bytes_stale"), json!("vendor/moved/model.bin"))]
         );
@@ -483,13 +482,13 @@ mod when_a_nested_gitattributes_cannot_be_read {
 
 // Unreadable files are created with Unix permissions, which WASI lacks.
 #[cfg(unix)]
-mod when_an_lfs_file_moved_from_git_cannot_be_read {
+mod when_a_file_moved_into_lfs_cannot_be_read {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
 
     #[test]
-    fn check_reports_the_old_git_ceiling_stale_and_keeps_the_lfs_one() {
+    fn check_reports_its_regular_ceiling_stale() {
         let root = TempDir::new().unwrap();
         write_config(
             &root,
@@ -500,9 +499,7 @@ mod when_an_lfs_file_moved_from_git_cannot_be_read {
         write_lfs_asset(&root, Checkout::Unsmudged);
         write_ratchet(
             &root,
-            &format!(
-                "schema_version = 1\n\n[[file_sizes]]\npath = \"{ASSET}\"\nstorage = \"git\"\nmax_bytes = {DECLARED}\n\n[[file_sizes]]\npath = \"{ASSET}\"\nstorage = \"lfs\"\nmax_bytes = {DECLARED}\n"
-            ),
+            &format!("schema_version = 1\n\n[file_sizes]\n\"{ASSET}\" = {DECLARED}\n"),
         );
         // The pointer is small enough to be read, and reading it fails.
         std::fs::set_permissions(

@@ -118,7 +118,7 @@ pub struct OverrideLimits {
     /// Optional directory direct-file limits.
     #[serde(skip_serializing_if = "OverrideMaxDirectFilesPerDirectoryLimits::is_empty")]
     max_direct_files_per_directory: OverrideMaxDirectFilesPerDirectoryLimits,
-    /// Optional byte limit for files that Git stores.
+    /// Optional byte limit for files that are not in Git LFS.
     #[serde(skip_serializing_if = "Option::is_none")]
     max_bytes_per_file: Option<MaxBytesPerFile>,
     /// Optional byte limit for files that Git LFS stores.
@@ -187,7 +187,7 @@ impl OverrideLimits {
     /// Returns the byte limit override for files stored in `storage`, when present.
     pub fn max_file_bytes(&self, storage: FileStorage) -> Option<MaxBytesPerFile> {
         match storage {
-            FileStorage::Git => self.max_bytes_per_file,
+            FileStorage::Regular => self.max_bytes_per_file,
             FileStorage::Lfs => self.max_bytes_per_lfs_object,
         }
     }

@@ -21,7 +21,7 @@ pub(super) fn update_ratchet(
         schema_version: RatchetSchemaVersion::CURRENT,
         files: merge_entries(previous.files, current.files, ceiling_policy),
         directories: merge_entries(previous.directories, current.directories, ceiling_policy),
-        file_sizes: merge_entries(previous.file_sizes, current.file_sizes, ceiling_policy),
+        file_sizes: merge_file_sizes(previous.file_sizes, current.file_sizes, ceiling_policy),
     };
     next.sort();
     next
@@ -41,7 +41,7 @@ pub(super) fn lower_ratchet_scope(
         schema_version: RatchetSchemaVersion::CURRENT,
         files: lower_entries(previous.files, current.files(), scope),
         directories: lower_entries(previous.directories, current.directories(), scope),
-        file_sizes: lower_entries(previous.file_sizes, current.file_sizes(), scope),
+        file_sizes: lower_file_sizes(previous.file_sizes, current.file_sizes(), scope),
     };
     next.sort();
     Ok(next)
@@ -91,23 +91,6 @@ impl CeilingEntry for DirectoryRatchet {
     }
 }
 
-impl CeilingEntry for FileSizeRatchet {
-    type Key = FileSizeRatchetKey;
-    type Ceiling = FileByteLimit;
-
-    fn key(&self) -> Self::Key {
-        Self::key(self)
-    }
-
-    fn path(&self) -> &RelativePath {
-        &self.path
-    }
-
-    fn ceiling_mut(&mut self) -> &mut Self::Ceiling {
-        &mut self.max_bytes
-    }
-}
-
 /// Adds current entries that `previous` lacks, raising existing ceilings only when allowed.
 fn merge_entries<Entry: CeilingEntry>(
     previous: Vec<Entry>,
@@ -152,13 +135,56 @@ fn lower_entries<Entry: CeilingEntry>(
         .collect()
 }
 
+/// Adds byte ceilings for newly measured files, raising existing ceilings only when allowed.
+///
+/// A file whose storage changed is now held to a different limit, so its measurement replaces
+/// the ceiling recorded for the old storage.
+fn merge_file_sizes(
+    mut previous: BTreeMap<RelativePath, FileSizeRatchet>,
+    current: BTreeMap<RelativePath, FileSizeRatchet>,
+    ceiling_policy: CeilingUpdatePolicy,
+) -> BTreeMap<RelativePath, FileSizeRatchet> {
+    for (path, current) in current {
+        previous
+            .entry(path)
+            .and_modify(|previous| {
+                if previous.storage != current.storage {
+                    *previous = current;
+                } else if ceiling_policy.allows_increases() {
+                    previous.max_bytes = std::cmp::max(previous.max_bytes, current.max_bytes);
+                }
+            })
+            .or_insert(current);
+    }
+    previous
+}
+
+/// Lowers each in-scope byte ceiling to its current measurement and drops in-scope ceilings with
+/// none.
+fn lower_file_sizes(
+    previous: BTreeMap<RelativePath, FileSizeRatchet>,
+    current: &BTreeMap<FileSizeRatchetKey, FileByteLimit>,
+    scope: &RatchetScope,
+) -> BTreeMap<RelativePath, FileSizeRatchet> {
+    previous
+        .into_iter()
+        .filter_map(|(path, mut entry)| {
+            if scope.contains(&path) {
+                let key = FileSizeRatchetKey::new(path.clone(), entry.storage);
+                entry.max_bytes = std::cmp::min(entry.max_bytes, *current.get(&key)?);
+            }
+            Some((path, entry))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
     use indoc::indoc;
-    use sprawl_guard_lib::LanguageGroupId;
     use sprawl_guard_lib::classification::SourceKind;
+    use sprawl_guard_lib::{FileStorage, LanguageGroupId};
 
     use super::*;
 
@@ -172,46 +198,28 @@ mod tests {
         const PREVIOUS: &str = indoc! {r#"
             schema_version = 1
 
-            [[file_sizes]]
-            path = "assets/kept.png"
-            storage = "git"
-            max_bytes = 50
-
-            [[file_sizes]]
-            path = "assets/logo.png"
-            storage = "git"
-            max_bytes = 100
-
-            [[file_sizes]]
-            path = "assets/removed.png"
-            storage = "git"
-            max_bytes = 70
+            [file_sizes]
+            "assets/kept.png" = 50
+            "assets/logo.png" = 100
+            "assets/moved.bin" = 60
+            "assets/removed.png" = 70
         "#};
 
         const CURRENT: &str = indoc! {r#"
             schema_version = 1
 
-            [[file_sizes]]
-            path = "assets/kept.png"
-            storage = "git"
-            max_bytes = 40
-
-            [[file_sizes]]
-            path = "assets/logo.png"
-            storage = "git"
-            max_bytes = 120
-
-            [[file_sizes]]
-            path = "assets/new.png"
-            storage = "git"
-            max_bytes = 30
+            [file_sizes]
+            "assets/kept.png" = 40
+            "assets/logo.png" = 120
+            "assets/moved.bin" = { max_bytes = 20, storage = "lfs" }
+            "assets/new.png" = 30
         "#};
 
         fn sizes(ratchet: &RatchetFile) -> Vec<(&str, u64)> {
             ratchet
                 .file_sizes
                 .iter()
-                .map(|entry| (entry.path.as_str(), entry.max_bytes.into_inner()))
+                .map(|(path, entry)| (path.as_str(), entry.max_bytes.into_inner()))
                 .collect()
         }
 
@@ -228,9 +236,27 @@ mod tests {
                 vec![
                     ("assets/kept.png", 50),
                     ("assets/logo.png", 100),
+                    ("assets/moved.bin", 20),
                     ("assets/new.png", 30),
                     ("assets/removed.png", 70),
                 ]
+            );
+        }
+
+        #[test]
+        fn updating_replaces_the_ceiling_of_a_file_whose_storage_changed() {
+            let next = update_ratchet(
+                parse_ratchet(PREVIOUS),
+                parse_ratchet(CURRENT),
+                CeilingUpdatePolicy::Preserve,
+            );
+
+            assert_eq!(
+                next.file_sizes[&RelativePath::new("assets/moved.bin").unwrap()],
+                FileSizeRatchet {
+                    storage: FileStorage::Lfs,
+                    max_bytes: FileByteLimit::try_new(20).unwrap(),
+                }
             );
         }
 
@@ -260,6 +286,7 @@ mod tests {
                 vec![
                     ("assets/kept.png", 40),
                     ("assets/logo.png", 100),
+                    ("assets/moved.bin", 60),
                     ("assets/removed.png", 70),
                 ]
             );

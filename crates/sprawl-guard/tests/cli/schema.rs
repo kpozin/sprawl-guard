@@ -115,6 +115,36 @@ mod when_a_schema_is_requested {
     }
 }
 
+mod when_a_draft_4_validator_checks_ratchet_byte_ceilings {
+    use serde_json::json;
+    use sprawl_guard_lib::authored_ratchet_json_schema;
+
+    fn is_valid(file_sizes: serde_json::Value) -> bool {
+        let schema = serde_json::to_value(authored_ratchet_json_schema()).unwrap();
+        let validator = jsonschema::options()
+            .with_draft(jsonschema::Draft::Draft4)
+            .build(&schema)
+            .unwrap();
+        validator.is_valid(&json!({ "schema_version": 1, "file_sizes": file_sizes }))
+    }
+
+    #[test]
+    fn it_accepts_a_byte_count_and_an_lfs_table() {
+        assert!(is_valid(json!({
+            "assets/a.png": 2,
+            "./models/b.bin": { "max_bytes": 3, "storage": "lfs" },
+            "...": 4,
+        })));
+    }
+
+    #[test]
+    fn it_rejects_paths_the_cli_rejects() {
+        for path in ["", ".", "./", "././", "../a.png", "/a.png"] {
+            assert!(!is_valid(json!({ path: 2 })), "{path:?}");
+        }
+    }
+}
+
 mod when_project_options_are_passed {
     use super::*;
 

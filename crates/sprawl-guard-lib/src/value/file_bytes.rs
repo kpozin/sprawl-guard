@@ -23,28 +23,28 @@ impl FileBytes {
     }
 }
 
-/// Where Git stores a file, which decides the byte limit that applies to it.
+/// How a file's content is stored, which decides the byte limit that applies to it.
 #[derive(
     Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum FileStorage {
-    /// Git stores the file's content, so `max_bytes_per_file` limits its size on disk.
-    Git,
-    /// Git LFS stores the file's content and Git stores only a small pointer to it, so
+    /// The file's content is stored as is, so `max_bytes_per_file` limits its size on disk.
+    Regular,
+    /// Git LFS stores the file's content and the repository holds only a small pointer to it, so
     /// `max_bytes_per_lfs_object` limits the size of the content.
     Lfs,
 }
 
 impl FileStorage {
     /// Every way a file can be stored.
-    pub(crate) const ALL: [Self; 2] = [Self::Git, Self::Lfs];
+    pub(crate) const ALL: [Self; 2] = [Self::Regular, Self::Lfs];
 }
 
 impl fmt::Display for FileStorage {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Git => "git",
+            Self::Regular => "regular",
             Self::Lfs => "lfs",
         })
     }

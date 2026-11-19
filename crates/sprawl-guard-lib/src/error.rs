@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::classification::{SourceKind, UnreadablePath};
 use crate::config::{ConfigSchemaVersion, LanguageGroupsError};
-use crate::{FileStorage, LanguageGroupId, LanguageId, RelativePath};
+use crate::{LanguageGroupId, LanguageId, RelativePath};
 
 /// Error type for recoverable `sprawl-guard` library failures.
 #[derive(Debug, thiserror::Error)]
@@ -80,7 +80,7 @@ pub enum SprawlError {
         /// Underlying I/O error.
         source: std::io::Error,
     },
-    /// A `.gitattributes` file exists but could not be read, so where Git stores a file is unknown.
+    /// A `.gitattributes` file exists but could not be read, so whether Git LFS stores a file is unknown.
     #[error("failed to read Git attributes file {path}: {source}")]
     ReadGitAttributes {
         /// Path of the `.gitattributes` file.
@@ -179,14 +179,6 @@ pub enum SprawlError {
     DuplicateFileRatchetEntry {
         /// Duplicate source role.
         role: SourceKind,
-        /// Duplicate ratchet path.
-        path: RelativePath,
-    },
-    /// A ratchet file contained two byte ceilings for the same file.
-    #[error("duplicate file size ratchet entry for storage {storage} and path {path}")]
-    DuplicateFileSizeRatchetEntry {
-        /// Duplicate ratchet storage.
-        storage: FileStorage,
         /// Duplicate ratchet path.
         path: RelativePath,
     },

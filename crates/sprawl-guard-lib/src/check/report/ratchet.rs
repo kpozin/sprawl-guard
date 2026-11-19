@@ -253,7 +253,7 @@ pub struct DirectoryRatchetStaleMissingViolation {
 pub struct FileBytesRatchetStaleMeasuredViolation {
     /// Repository-relative file path.
     pub path: RelativePath,
-    /// Where Git stores the file, which decides its byte limit.
+    /// How the file is stored, which decides its byte limit.
     pub storage: FileStorage,
     /// Current size of the file.
     pub actual: FileBytes,
@@ -269,7 +269,7 @@ pub struct FileBytesRatchetStaleMeasuredViolation {
 pub struct FileBytesRatchetStaleMissingViolation {
     /// Repository-relative file path.
     pub path: RelativePath,
-    /// Where Git stored the file when its ceiling was recorded.
+    /// How the file was stored when its ceiling was recorded.
     pub storage: FileStorage,
     /// Stored ratchet ceiling.
     pub ratchet: FileByteLimit,

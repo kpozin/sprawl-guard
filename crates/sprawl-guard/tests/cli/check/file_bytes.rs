@@ -219,9 +219,7 @@ mod when_the_ratchet_has_a_byte_entry {
         write_config(root, &format!("[limits]\nmax_bytes_per_file = {LIMIT}\n"));
         write_ratchet(
             root,
-            &format!(
-                "schema_version = 1\n\n[[file_sizes]]\npath = \"{path}\"\nstorage = \"git\"\nmax_bytes = {max_bytes}\n"
-            ),
+            &format!("schema_version = 1\n\n[file_sizes]\n\"{path}\" = {max_bytes}\n"),
         );
     }
 
@@ -338,7 +336,7 @@ mod when_a_source_is_over_both_its_line_and_byte_limits {
         let sizes = ratchet
             .file_sizes
             .iter()
-            .map(|entry| (entry.path.as_str(), entry.max_bytes.into_inner()))
+            .map(|(path, entry)| (path.as_str(), entry.max_bytes.into_inner()))
             .collect::<Vec<_>>();
         assert_eq!(sizes, vec![("src/lib.rs", size)]);
         let (output, _) = run_check_json(&root);
@@ -363,7 +361,16 @@ mod when_a_source_is_over_both_its_line_and_byte_limits {
         let size = std::fs::metadata(root.path().join("src/lib.rs"))
             .unwrap()
             .len();
-        assert_eq!(ratchet.file_sizes[0].max_bytes.into_inner(), size);
+        assert_eq!(
+            ratchet
+                .file_sizes
+                .values()
+                .next()
+                .unwrap()
+                .max_bytes
+                .into_inner(),
+            size
+        );
         let (output, _) = run_check_json(&root);
         assert_exit_code(&output, exit_codes::SUCCESS);
     }
@@ -435,7 +442,7 @@ mod when_an_uncounted_source_is_over_its_byte_limit_and_has_a_line_ceiling {
             ratchet
                 .file_sizes
                 .iter()
-                .map(|entry| (entry.path.as_str().to_owned(), entry.max_bytes.into_inner()))
+                .map(|(path, entry)| (path.as_str().to_owned(), entry.max_bytes.into_inner()))
                 .collect(),
             production_directory_ratchet_entries(&ratchet)
                 .into_iter()
@@ -511,6 +518,45 @@ mod when_an_uncounted_source_is_over_its_byte_limit_and_has_a_line_ceiling {
                 let (output, _) = run_check_json(&root);
                 assert_exit_code(&output, exit_codes::SUCCESS);
             }
+        }
+    }
+}
+
+mod when_the_ratchet_file_uses_the_0_6_0_array_of_tables {
+    use super::*;
+
+    #[test]
+    fn each_ratchet_command_rewrites_it_as_a_table_keyed_by_path() {
+        for command in ["update", "tighten"] {
+            let root = TempDir::new().unwrap();
+            write_config(&root, &format!("[limits]\nmax_bytes_per_file = {LIMIT}\n"));
+            write_file_of_size(&root, "assets/a.bin", 20);
+            write_ratchet(
+                &root,
+                indoc! {r#"
+                    schema_version = 1
+
+                    [[file_sizes]]
+                    path = "assets/a.bin"
+                    storage = "git"
+                    max_bytes = 20
+                "#},
+            );
+
+            let output = sprawl_guard(&root)
+                .args([command, "--write"])
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::SUCCESS);
+            assert_eq!(
+                stdout(&output),
+                "No ratchet changes; rewrote sprawl-guard.ratchet.toml in the current form\n"
+            );
+            assert!(
+                read_ratchet(&root).ends_with("[file_sizes]\n\"assets/a.bin\" = 20\n"),
+                "{command}"
+            );
         }
     }
 }

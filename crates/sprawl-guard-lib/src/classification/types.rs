@@ -105,7 +105,7 @@ pub(crate) struct SourceDiscoveryReport {
 pub(crate) struct ByteLimitedFile {
     /// Repository-relative file path.
     pub(crate) path: RelativePath,
-    /// Where Git stores the file, which decides the byte limit that applies.
+    /// How the file is stored, which decides the byte limit that applies.
     pub(crate) storage: FileStorage,
     /// Resolved byte limit.
     pub(crate) limit: FileByteLimit,

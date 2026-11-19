@@ -185,7 +185,7 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
 - **A file's size** is shown next to its byte limit and the overrides that set that limit, as in
   `size: 1500 bytes (1.5 kB), limit 1000 bytes (1.0 kB)`. For a file in Git LFS, the size is
   followed by `stored in Git LFS`. JSON reports them as `file_bytes`, with the file's `storage`
-  (`git` or `lfs`), the `limit` that applies to that storage, and a `size` whose `state` is
+  (`regular` or `lfs`), the `limit` that applies to that storage, and a `size` whose `state` is
   `measured` or `not_found`.
 - **A source file too large to count** is reported as not counted, with its size and
   `[traversal].max_parsed_code_file_bytes`, instead of failing.

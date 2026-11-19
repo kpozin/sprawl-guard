@@ -47,7 +47,7 @@ fn file_bytes_message(file_bytes: &FileBytesExplanation) -> String {
         FileSize::Measured { bytes } => byte_size(bytes.into_inner()),
     };
     let storage = match file_bytes.storage {
-        FileStorage::Git => "",
+        FileStorage::Regular => "",
         FileStorage::Lfs => ", stored in Git LFS",
     };
     format!(

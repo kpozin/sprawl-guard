@@ -22,7 +22,7 @@ pub(crate) fn measure_file_size(path: &Path, storage: FileStorage) -> io::Result
     let metadata = fs::metadata(path)?;
     let on_disk = FileBytes::new(metadata.len());
     Ok(match storage {
-        FileStorage::Git => on_disk,
+        FileStorage::Regular => on_disk,
         FileStorage::Lfs => declared_lfs_size(path, &metadata)?.unwrap_or(on_disk),
     })
 }

@@ -6,10 +6,18 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{Result, SprawlError};
 
+/// JSON Schema pattern for a relative path: not absolute, and with no `..` component.
+pub(crate) const RELATIVE_PATH_PATTERN: &str = r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$)).*$";
+
+/// JSON Schema pattern for a relative path that names a file below the root: it has at least one
+/// component other than `.`, which normalization removes.
+pub(crate) const NONEMPTY_RELATIVE_PATH_PATTERN: &str =
+    r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$))(?=(?:.*/)?(?!\.(?:/|$))[^/]).*$";
+
 /// Normalized repository-relative path using forward slash separators.
 #[derive(Clone, Debug, Eq, JsonSchema, Ord, PartialEq, PartialOrd, Hash, Serialize)]
 #[serde(transparent)]
-pub struct RelativePath(#[schemars(pattern(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|$)).*$"))] String);
+pub struct RelativePath(#[schemars(pattern(RELATIVE_PATH_PATTERN))] String);
 
 impl RelativePath {
     /// Normalizes a UTF-8 path that must be relative and must not traverse upward.

@@ -17,7 +17,7 @@ use crate::source_file::LfsAttributes;
 /// How `check` applies its byte limit to one file.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FileBytesExplanation {
-    /// Where Git stores the file, which decides the byte limit that applies.
+    /// How the file is stored, which decides the byte limit that applies.
     pub storage: FileStorage,
     /// Byte limit for the file, with the overrides that matched it.
     pub limit: ResolvedFileBytesLimit,
