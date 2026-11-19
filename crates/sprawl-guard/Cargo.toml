@@ -29,6 +29,7 @@ mimalloc.workspace = true
 
 [dev-dependencies]
 assert_fs.workspace = true
+jsonschema.workspace = true
 
 [[test]]
 name = "cli"

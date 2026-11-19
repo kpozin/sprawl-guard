@@ -9,6 +9,7 @@ mod github;
 mod ignore;
 mod lfs_files;
 mod max_findings;
+mod sarif;
 
 mod when_a_check_succeeds {
     use super::*;

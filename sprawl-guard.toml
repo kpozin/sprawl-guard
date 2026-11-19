@@ -19,5 +19,6 @@ languages = ["bazel", "python", "shell"]
 extend_exclude = [
   "third_party/**",
   "cargo-bazel-lock.json",
+  "crates/sprawl-guard/tests/cli/fixtures/sarif-schema-2.1.0.json",
   "site/src/generated/cli-reference.json",
 ]

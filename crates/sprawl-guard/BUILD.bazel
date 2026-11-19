@@ -43,6 +43,7 @@ rust_test(
 rust_test(
     name = "cli_tests",
     srcs = glob(["tests/**/*.rs"]),
+    compile_data = glob(["tests/cli/fixtures/*.json"]),
     crate_root = "tests/cli/mod.rs",
     data = [":sprawl-guard"],
     edition = "2024",
