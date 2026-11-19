@@ -28,7 +28,7 @@ main :target {
 }
 
 main :is(h1, h2, h3, h4, h5, h6):target code {
-  background-color: transparent;
+  animation: code-highlight 3s ease-out;
 }
 
 @keyframes paragraph-highlight {
@@ -40,9 +40,22 @@ main :is(h1, h2, h3, h4, h5, h6):target code {
   }
 }
 
+@keyframes code-highlight {
+  from {
+    background-color: var(--sl-color-accent-low);
+  }
+  to {
+    background-color: var(--sl-color-bg-inline-code);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   main :target {
     animation: none;
     background-color: var(--sl-color-accent-low);
+  }
+  main :is(h1, h2, h3, h4, h5, h6):target code {
+    animation: none;
+    background-color: transparent;
   }
 }
