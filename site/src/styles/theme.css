@@ -27,6 +27,10 @@ main :target {
   animation: paragraph-highlight 3s ease-out;
 }
 
+main :is(h1, h2, h3, h4, h5, h6):target code {
+  background-color: transparent;
+}
+
 @keyframes paragraph-highlight {
   from {
     background-color: var(--sl-color-accent-low);
