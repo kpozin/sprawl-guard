@@ -37,18 +37,26 @@ import organizedTree from "../assets/directory-tree-organized.svg";
 </div>
 
 <style define:vars={{ organizedAspectRatio: `${organizedTree.width} / ${organizedTree.height}` }}>
-  /* Narrow screens: the text, then the explorers stacked under it. */
+  /* Narrow screens: a compact comparison below the text. */
   .beside-directory-trees {
     display: flex;
     flex-direction: column;
   }
   .directory-trees {
     order: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1.5rem;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 340px));
+    justify-content: center;
+    align-items: start;
+    gap: 1rem;
     margin-top: 1.5rem;
+  }
+  .beside-directory-trees > :global(p),
+  .beside-directory-trees > :global(div[id]) {
+    order: 2;
+  }
+  .beside-directory-trees > :global(p:first-of-type) {
+    order: 0;
   }
   figure {
     width: min(100%, 340px);
@@ -73,18 +81,9 @@ import organizedTree from "../assets/directory-tree-organized.svg";
     font-size: var(--sl-text-sm);
     color: var(--sl-color-gray-3);
   }
-  @media (max-width: 50rem) {
-    /* Stacked, the flat explorer is cut shorter so the organized one stays close. */
-    .flat .window {
-      aspect-ratio: 340 / 440;
-    }
-  }
-  /* Medium screens: the explorers side by side under the text. */
+  /* Medium screens: more space between the explorers. */
   @media (min-width: 50rem) {
     .directory-trees {
-      flex-direction: row;
-      justify-content: center;
-      align-items: flex-start;
       gap: 2rem;
     }
   }
