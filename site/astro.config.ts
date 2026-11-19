@@ -42,6 +42,7 @@ export default defineConfig({
       components: {
         Footer: "./src/components/Footer.astro",
         SiteTitle: "./src/components/SiteTitle.astro",
+        SocialIcons: "./src/components/SocialIcons.astro",
         TableOfContents: "./src/components/TableOfContents.astro",
       },
       social: [
@@ -59,6 +60,11 @@ export default defineConfig({
           icon: "seti:rust",
           label: "crates.io",
           href: "https://crates.io/crates/sprawl-guard",
+        },
+        {
+          icon: "seti:python",
+          label: "PyPI",
+          href: "https://pypi.org/project/sprawl-guard/",
         },
       ],
       sidebar: [
