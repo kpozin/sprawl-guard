@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-19
+
 This release adds byte limits on file sizes and publishes Sprawl Guard on PyPI. Before upgrading,
 check your configuration globs: `*` no longer crosses directories.
 
