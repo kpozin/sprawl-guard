@@ -1,11 +1,14 @@
 name: Homebrew
 
 # Publishing a release starts the Bump workflow in the kpozin/homebrew-tap repository, which opens a
-# pull request there that moves the formula to the release's prebuilt archives.
+# pull request there that moves the formula to the release's prebuilt archives. The Release workflow
+# runs this workflow at the release tag after publishing a stable release, because a release that a
+# workflow publishes triggers no `release` event.
 on:
   release:
     types:
       - published
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -14,7 +17,7 @@ jobs:
   bump-formula:
     # A prerelease is never GitHub's latest release, so it skips the approval. The tap's workflow
     # checks that the release is the latest one, which also covers stable releases on other channels.
-    if: ${{ !github.event.release.prerelease }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref_type == 'tag' || github.event_name == 'release' && !github.event.release.prerelease }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     # The tap token lives in the release environment, so the job waits for the same approval as the
@@ -25,4 +28,4 @@ jobs:
         run: gh workflow run bump.yml --repo kpozin/homebrew-tap --field tag="${RELEASE_TAG}"
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}

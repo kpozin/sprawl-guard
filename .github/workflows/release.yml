@@ -1420,3 +1420,39 @@ jobs:
           INSTALL_RETRY_SECONDS: "30"
           PYTHON_VERSION: ${{ needs.release-metadata.outputs.python_version }}
           SPRAWL_GUARD_VERSION: ${{ needs.release-metadata.outputs.release_version }}
+
+  # Publishes the GitHub Release once every registry serves the version, so the release page never
+  # points at a version that some registry lacks. Events from this job's token start no workflows,
+  # so it starts the Homebrew and documentation workflows that a published release would have.
+  finalize-release:
+    if: ${{ always() && inputs.release_mode == 'publish' && needs.verify-published-cargo.result == 'success' && needs.verify-published-npm-musl.result == 'success' && needs.verify-published-npm-native.result == 'success' && needs.verify-published-npm-wasi.result == 'success' && needs.verify-published-pypi-musl.result == 'success' && needs.verify-published-pypi-native.result == 'success' }}
+    needs:
+      - release-metadata
+      - verify-published-cargo
+      - verify-published-npm-musl
+      - verify-published-npm-native
+      - verify-published-npm-wasi
+      - verify-published-pypi-musl
+      - verify-published-pypi-native
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: write
+    steps:
+      - name: Publish the GitHub Release
+        run: gh release edit "${RELEASE_TAG}" --draft=false --latest="${GITHUB_LATEST}"
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_LATEST: ${{ needs.release-metadata.outputs.github_latest }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}
+
+      - name: Start the Homebrew and documentation workflows
+        if: ${{ needs.release-metadata.outputs.github_prerelease != 'true' }}
+        run: |
+          gh workflow run homebrew.yml --ref "${RELEASE_TAG}"
+          gh workflow run pages.yml --ref "${RELEASE_TAG}"
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release-metadata.outputs.release_tag }}

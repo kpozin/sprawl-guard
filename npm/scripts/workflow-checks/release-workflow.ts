@@ -245,7 +245,13 @@ export const RELEASE_WORKFLOW_SCHEMA = z.object({
       if: z.string().includes("inputs.verify_pypi"),
       steps: z.array(WORKFLOW_STEP_SCHEMA),
     }),
-  }),
+    "finalize-release": z.object({
+      if: z.string().min(1),
+      needs: z.array(z.string().min(1)),
+      steps: z.array(WORKFLOW_STEP_SCHEMA),
+    }),
+    // Keeps jobs this schema doesn't name, so tests can check rules that cover every job.
+  }).loose(),
 });
 
 /** Reads a workflow file and parses it with the given schema, failing the test on a mismatch. */

@@ -103,17 +103,19 @@ The workflow picks the npm channel from the version: `latest` for a stable versi
 `rc` for those prereleases. Choose `npm_channel` yourself for other prereleases. The `draft` mode
 builds and checks everything and creates a draft GitHub Release without publishing to any registry,
 which is useful after changing the workflow. In `publish` mode, the publish jobs wait for approval
-in the `release` environment, and one approval covers crates.io, npm and PyPI. When the registry
-checks pass, publish the draft GitHub Release. If a publish job fails, fix the cause and re-run the
-failed jobs: the crates.io and npm jobs skip versions they already published.
+in the `release` environment, and one approval covers crates.io, npm and PyPI. When every registry
+serves the new version, the workflow publishes the GitHub Release and, for a stable release, starts
+the `Homebrew` and `Deploy documentation` workflows. If a publish job fails, fix the cause and
+re-run the failed jobs: a re-run uploads the same files, which crates.io, npm and PyPI accept for
+packages they already have, and the GitHub Release stays a draft until every registry check passes.
 
 The Homebrew formula lives in the [kpozin/homebrew-tap](https://github.com/kpozin/homebrew-tap)
-repository and installs the release's prebuilt binary on macOS and Linux. When you publish a stable
-GitHub Release, the `Homebrew` workflow waits for approval in the `release` environment, then starts
-the tap's `Bump` workflow. If the release is GitHub's latest release, `Bump` opens a pull request in
-the tap that moves the formula to the new version; a stable release on another npm channel leaves
-the formula alone. The tap has no CI, so install and test the pull request locally before you merge
-it, replacing `NUMBER` with its number:
+repository and installs the release's prebuilt binary on macOS and Linux. When a stable GitHub
+Release is published, the `Homebrew` workflow waits for approval in the `release` environment, then
+starts the tap's `Bump` workflow. If the release is GitHub's latest release, `Bump` opens a pull
+request in the tap that moves the formula to the new version; a stable release on another npm
+channel leaves the formula alone. The tap has no CI, so install and test the pull request locally
+before you merge it, replacing `NUMBER` with its number:
 
 ```sh
 cd "$(brew --repository kpozin/tap)"

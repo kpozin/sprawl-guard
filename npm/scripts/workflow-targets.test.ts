@@ -279,6 +279,29 @@ describe("native runtime workflow coverage", () => {
     });
   });
 
+  describe("when publishing the GitHub Release", () => {
+    it("waits for every published-package check to succeed in publish mode", () => {
+      const releaseWorkflow = parseWorkflow(
+        RELEASE_WORKFLOW_URL,
+        RELEASE_WORKFLOW_SCHEMA,
+      );
+      const finalize = releaseWorkflow.jobs["finalize-release"];
+      const publishedChecks = Object.keys(releaseWorkflow.jobs).filter((job) =>
+        job.startsWith("verify-published-"),
+      );
+
+      assert.ok(publishedChecks.length > 0);
+      assert.match(finalize.if, /inputs\.release_mode == 'publish'/u);
+      for (const job of publishedChecks) {
+        assert.ok(finalize.needs.includes(job), `finalize-release must need ${job}`);
+        assert.ok(
+          finalize.if.includes(`needs.${job}.result == 'success'`),
+          `finalize-release must require ${job} to succeed`,
+        );
+      }
+    });
+  });
+
   describe("when preparing the local npm bootstrap publication", () => {
     it("uploads the complete packed candidate without compiling another binary", () => {
       const releaseWorkflow = parseWorkflow(
