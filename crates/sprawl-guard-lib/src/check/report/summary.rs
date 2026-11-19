@@ -62,7 +62,8 @@ impl RatchetEntryCount {
 pub struct ScanSummary {
     /// Source files measured.
     pub files_checked: CheckedFileCount,
-    /// Distinct parent directories represented by measured files.
+    /// Distinct directories whose direct files were checked. A directory with only some of its
+    /// files selected is not one of them.
     pub directories_checked: CheckedDirectoryCount,
     /// Languages represented by measured files.
     pub languages_detected: DetectedLanguageCount,

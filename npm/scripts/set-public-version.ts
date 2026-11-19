@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import {
   parse as parseToml,
   patch as patchToml,
@@ -662,7 +663,10 @@ function printFailure(
 }
 
 function main(): number {
-  const arguments_ = process.argv.slice(2);
+  const { values, positionals } = parseArgs({
+    options: { check: { type: "boolean" } },
+    allowPositionals: true,
+  });
   const resolvedLayout = resolvePublicPackageVersionLayout(
     fileURLToPath(import.meta.url),
   );
@@ -670,7 +674,7 @@ function main(): number {
     console.error(JSON.stringify(resolvedLayout));
     return 1;
   }
-  if (arguments_.length === 1 && arguments_[0] === "--check") {
+  if (values.check && positionals.length === 0) {
     const result = checkPublicPackageVersionConsistency(resolvedLayout.layout);
     if (result.kind === "ok") {
       return 0;
@@ -678,12 +682,8 @@ function main(): number {
     printFailure(result);
     return 1;
   }
-  const [newVersion, ...extraArguments] = arguments_;
-  if (
-    newVersion === undefined ||
-    extraArguments.length > 0 ||
-    newVersion === "--check"
-  ) {
+  const [newVersion, ...extraArguments] = positionals;
+  if (newVersion === undefined || extraArguments.length > 0 || values.check) {
     console.error("usage: set-public-version.ts <semver> | --check");
     return 1;
   }

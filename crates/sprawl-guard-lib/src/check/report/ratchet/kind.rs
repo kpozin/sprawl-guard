@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use crate::FileStorage;
 use crate::check::report::{DirectoryViolationKind, FileViolationKind};
 
 /// Stable categories of stale ratchet entries.
@@ -16,8 +17,10 @@ pub enum RatchetViolationKind {
     DirectoryDirectFilesStale,
     /// Test direct-file count improved or no longer exceeds its limit.
     TestDirectoryDirectFilesStale,
-    /// File size shrank or no longer exceeds its byte limit.
+    /// File size shrank or no longer exceeds `max_bytes_per_file`.
     FileBytesStale,
+    /// Git LFS object size shrank or no longer exceeds `max_bytes_per_lfs_object`.
+    LfsObjectBytesStale,
 }
 
 impl RatchetViolationKind {
@@ -25,6 +28,13 @@ impl RatchetViolationKind {
         match kind {
             FileViolationKind::FileLines => Self::FileLinesStale,
             FileViolationKind::TestFileLines => Self::TestFileLinesStale,
+        }
+    }
+
+    pub(super) const fn stale_file_bytes(storage: FileStorage) -> Self {
+        match storage {
+            FileStorage::Git => Self::FileBytesStale,
+            FileStorage::Lfs => Self::LfsObjectBytesStale,
         }
     }
 

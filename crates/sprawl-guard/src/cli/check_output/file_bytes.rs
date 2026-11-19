@@ -1,6 +1,5 @@
 //! Human-readable descriptions of file sizes.
 
-use sprawl_guard_lib::FileSizeSource;
 use sprawl_guard_lib::check::FileBytesViolation;
 
 use super::display_relative;
@@ -31,16 +30,6 @@ pub(in crate::cli) fn byte_size(bytes: u64) -> String {
     }
 }
 
-/// Says where a measured size came from, when it isn't the file's own size on disk.
-pub(in crate::cli) fn size_source_note(source: FileSizeSource) -> String {
-    match source {
-        FileSizeSource::OnDisk => String::new(),
-        FileSizeSource::LfsPointer { pointer_bytes } => {
-            format!(", declared by a {pointer_bytes}-byte Git LFS pointer")
-        }
-    }
-}
-
 /// Describes a file over its byte limit, as the human report lists it.
 pub(super) fn file_bytes_entry(violation: &FileBytesViolation) -> String {
     let ceiling = violation
@@ -48,10 +37,9 @@ pub(super) fn file_bytes_entry(violation: &FileBytesViolation) -> String {
         .map(|ceiling| format!(", ceiling {}", byte_size(ceiling.into_inner())))
         .unwrap_or_default();
     format!(
-        "  {}: {}{}\n    limit {}{ceiling}\n\n",
+        "  {}: {}\n    limit {}{ceiling}\n\n",
         display_relative(violation.path.as_str()),
         byte_size(violation.actual.into_inner()),
-        size_source_note(violation.measured_from),
         byte_size(violation.limit.into_inner()),
     )
 }

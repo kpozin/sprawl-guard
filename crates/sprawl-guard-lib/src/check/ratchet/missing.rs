@@ -8,8 +8,8 @@ use crate::check::report::{
     RatchetStaleMissingViolation, RatchetViolation,
 };
 use crate::check::runner::SelectedPaths;
-use crate::classification::{SourceKind, UnreadablePath};
-use crate::ratchet::{DirectoryRatchetKey, FileRatchetKey, RatchetCount};
+use crate::classification::{SourceKind, UnreadablePath, UnreadablePathKind};
+use crate::ratchet::{DirectoryRatchetKey, FileRatchetKey, FileSizeRatchetKey, RatchetCount};
 use crate::{DirectFiles, FileByteLimit, LineLimit, RelativePath};
 
 pub(super) fn file_ratchets(
@@ -50,15 +50,16 @@ pub(super) fn directory_ratchets(
 }
 
 pub(super) fn file_size_ratchets(
-    ratchets: &BTreeMap<RelativePath, FileByteLimit>,
-    measured: &BTreeSet<RelativePath>,
+    ratchets: &BTreeMap<FileSizeRatchetKey, FileByteLimit>,
+    measured: &BTreeSet<FileSizeRatchetKey>,
     scope: &JudgedScope<'_>,
 ) -> Vec<RatchetViolation> {
-    missing_entries(ratchets, measured, scope, |path| path)
-        .map(|(path, ceiling)| {
+    missing_entries(ratchets, measured, scope, FileSizeRatchetKey::path)
+        .map(|(key, ceiling)| {
             RatchetViolation::Missing(RatchetStaleMissingViolation::FileBytes(
                 FileBytesRatchetStaleMissingViolation {
-                    path: path.clone(),
+                    path: key.path().clone(),
+                    storage: key.storage(),
                     ratchet: *ceiling,
                 },
             ))
@@ -77,12 +78,28 @@ fn missing_entries<'a, Key: Ord, Ceiling>(
         .filter(move |(key, _)| scope.contains(path(key)) && !measured.contains(*key))
 }
 
-/// The paths where a missing measurement means the entry is stale: selected for the check and
-/// outside every gap in the analysis.
+/// Whether a gap can hide a measurement of the paths it covers.
 ///
-/// A path inside an unreadable directory, or one whose own read failed, may still exist and
-/// still exceed its limit, so its ratchet entry is kept. An unreadable path the traversal could
-/// not place covers the whole tree.
+/// An unreadable `.gitattributes` leaves only the storage of files below it unknown, and a file
+/// that fails to read leaves only its own measurement unknown. The check records the exact
+/// entries each one leaves in doubt as measured, so neither gap hides anything else, such as the
+/// ceiling for a storage the file has left.
+const fn hides_measurements(gap: UnreadablePathKind) -> bool {
+    match gap {
+        UnreadablePathKind::ReadGitAttributesFailed | UnreadablePathKind::ReadFileFailed => false,
+        UnreadablePathKind::ReadDirFailed
+        | UnreadablePathKind::FileTypeFailed
+        | UnreadablePathKind::SymlinkLoop
+        | UnreadablePathKind::BrokenSymlink
+        | UnreadablePathKind::IgnoreParseFailed => true,
+    }
+}
+
+/// The paths where a missing measurement means the entry is stale: selected for the check and
+/// outside every gap in the analysis that can hide a measurement.
+///
+/// A path inside an unreadable directory may still exist and still exceed its limit, so its
+/// ratchet entry is kept. An unreadable path the traversal could not place covers the whole tree.
 pub(in crate::check) struct JudgedScope<'a> {
     selected_paths: &'a SelectedPaths,
     gaps: &'a [UnreadablePath],
@@ -102,9 +119,11 @@ impl<'a> JudgedScope<'a> {
     fn contains(&self, path: &RelativePath) -> bool {
         self.selected_paths.contains(path)
             && !self.gaps.iter().any(|gap| {
-                gap.path
-                    .as_ref()
-                    .is_none_or(|gap_path| path.is_at_or_under(gap_path))
+                hides_measurements(gap.kind)
+                    && gap
+                        .path
+                        .as_ref()
+                        .is_none_or(|gap_path| path.is_at_or_under(gap_path))
             })
     }
 }

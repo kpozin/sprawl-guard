@@ -1,9 +1,11 @@
 use std::borrow::Cow;
 use std::fmt;
+use std::marker::PhantomData;
 use std::num::{NonZeroU32, ParseIntError};
 use std::str::FromStr;
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use serde::de::{self, IntoDeserializer, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Finite or unlimited limit value.
@@ -65,7 +67,7 @@ where
     type Err = Value::Err;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        if text == "unlimited" {
+        if text == UNLIMITED {
             Ok(Self::Unlimited)
         } else {
             text.parse().map(Self::Finite)
@@ -80,7 +82,7 @@ where
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Finite(value) => value.fmt(formatter),
-            Self::Unlimited => formatter.write_str("unlimited"),
+            Self::Unlimited => formatter.write_str(UNLIMITED),
         }
     }
 }
@@ -95,11 +97,13 @@ where
     {
         match self {
             Self::Finite(value) => value.serialize(serializer),
-            Self::Unlimited => serializer.serialize_str("unlimited"),
+            Self::Unlimited => serializer.serialize_str(UNLIMITED),
         }
     }
 }
 
+/// Reads an integer through the finite value's own deserializer, so that value's error message
+/// reaches the user, and reads the text `unlimited` as no limit.
 impl<'de, Value> Deserialize<'de> for FiniteOrUnlimited<Value>
 where
     Value: Deserialize<'de>,
@@ -108,22 +112,47 @@ where
     where
         D: Deserializer<'de>,
     {
-        match RawFiniteOrUnlimited::deserialize(deserializer)? {
-            RawFiniteOrUnlimited::Finite(value) => Ok(Self::Finite(value)),
-            RawFiniteOrUnlimited::Keyword(value) if value == "unlimited" => Ok(Self::Unlimited),
-            RawFiniteOrUnlimited::Keyword(value) => Err(serde::de::Error::custom(format!(
-                "unsupported limit {value:?}; expected a positive integer or \"unlimited\"",
-            ))),
-        }
+        deserializer.deserialize_any(FiniteOrUnlimitedVisitor(PhantomData))
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum RawFiniteOrUnlimited<Value> {
-    Finite(Value),
-    Keyword(String),
+struct FiniteOrUnlimitedVisitor<Value>(PhantomData<Value>);
+
+impl<'de, Value> Visitor<'de> for FiniteOrUnlimitedVisitor<Value>
+where
+    Value: Deserialize<'de>,
+{
+    type Value = FiniteOrUnlimited<Value>;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a positive integer or \"unlimited\"")
+    }
+
+    fn visit_str<E: de::Error>(self, text: &str) -> Result<Self::Value, E> {
+        if text == UNLIMITED {
+            Ok(FiniteOrUnlimited::Unlimited)
+        } else {
+            Err(E::custom(format!(
+                "unsupported limit {text:?}; expected {}",
+                &self as &dyn de::Expected
+            )))
+        }
+    }
+
+    fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+        match u64::try_from(value) {
+            Ok(value) => self.visit_u64(value),
+            Err(_) => Err(E::invalid_value(de::Unexpected::Signed(value), &self)),
+        }
+    }
+
+    fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+        Value::deserialize(value.into_deserializer()).map(FiniteOrUnlimited::Finite)
+    }
 }
+
+/// Text that stands for [`FiniteOrUnlimited::Unlimited`] in configuration and on the command line.
+const UNLIMITED: &str = "unlimited";
 
 /// Error returned when a configured limit value is invalid.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -151,7 +180,7 @@ impl fmt::Display for LimitValueKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Lines => formatter.write_str("line limit"),
-            Self::DirectFiles => formatter.write_str("leaf-file count"),
+            Self::DirectFiles => formatter.write_str("direct-file count"),
             Self::Findings => formatter.write_str("finding cap"),
         }
     }
@@ -212,7 +241,7 @@ impl DirectFiles {
     /// Creates a direct-file count from a trusted built-in value.
     pub(crate) const fn trusted(value: u32) -> Self {
         let Some(value) = NonZeroU32::new(value) else {
-            panic!("trusted leaf-file count must be greater than zero");
+            panic!("trusted direct-file count must be greater than zero");
         };
         Self(value)
     }

@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { z } from "zod";
 import { absoluteDirectoryPath } from "./path-values.ts";
 import {
@@ -294,7 +295,7 @@ function runGhCommand(args: readonly string[]): GhCommandResult {
 }
 
 function main(): number {
-  const [command, firstArgument, secondArgument] = process.argv.slice(2);
+  const [command, firstArgument, secondArgument] = parseArgs({ allowPositionals: true }).positionals;
   const result =
     command === "prepare" && firstArgument !== undefined && secondArgument !== undefined
       ? prepareReleaseAssets(firstArgument, secondArgument)

@@ -2,7 +2,6 @@
 
 use std::borrow::Cow;
 
-use proc_macro2::LineColumn;
 use serde::Serialize;
 use syn::parse::Parser;
 use syn::punctuated::Punctuated;
@@ -92,7 +91,12 @@ impl ExcludedItemCount {
 ///
 /// Parse failures keep the original source, so unsupported syntax never hides lines from the
 /// check.
+///
+/// A leading byte order mark is dropped from the result. `syn` reports byte ranges relative to
+/// the text after the mark, and the line counter would otherwise read the mark as code on the
+/// first line.
 pub(crate) fn preprocess_rust_cfg_test(source: &str) -> RustCfgTestPreprocessResult<'_> {
+    let source = source.strip_prefix(BYTE_ORDER_MARK).unwrap_or(source);
     if !looks_like_cfg_test(source) {
         return RustCfgTestPreprocessResult {
             source: Cow::Borrowed(source),
@@ -159,6 +163,9 @@ pub(crate) fn rust_cfg_test_policy_info(
     }
 }
 
+/// U+FEFF, which some editors write at the start of a UTF-8 file.
+const BYTE_ORDER_MARK: char = '\u{feff}';
+
 fn looks_like_cfg_test(source: &str) -> bool {
     source.contains("cfg") && source.contains("test")
 }
@@ -173,7 +180,9 @@ fn excluded_ranges(syntax: &syn::File, source: &str) -> ExcludedRanges {
             excluded_items: ExcludedItemCount::from_len(syntax.items.len()),
         };
     }
-    let ranges = excluded_item_ranges(&syntax.items, source);
+    // `syn` takes a shebang line off before it parses, so spans start after that line.
+    let parsed_from = syntax.shebang.as_ref().map_or(0, String::len);
+    let ranges = excluded_item_ranges(&syntax.items, parsed_from);
     let excluded_items = ExcludedItemCount::from_len(ranges.len());
     ExcludedRanges {
         ranges,
@@ -181,12 +190,11 @@ fn excluded_ranges(syntax: &syn::File, source: &str) -> ExcludedRanges {
     }
 }
 
-fn excluded_item_ranges(items: &[Item], source: &str) -> Vec<SourceRange> {
-    let source_index = SourceIndex::new(source);
+fn excluded_item_ranges(items: &[Item], parsed_from: usize) -> Vec<SourceRange> {
     items
         .iter()
         .filter(|item| item_requires_test(item))
-        .filter_map(|item| item_range(item, &source_index))
+        .map(|item| item_range(item, parsed_from))
         .collect()
 }
 
@@ -244,17 +252,20 @@ fn nested_metas(list: &syn::MetaList) -> Option<Vec<Meta>> {
         .map(|metas| metas.into_iter().collect())
 }
 
-fn item_range(item: &Item, source_index: &SourceIndex<'_>) -> Option<SourceRange> {
+/// Returns the bytes an item covers, from its first outer attribute to its last token.
+///
+/// `parsed_from` is where the text that `syn` parsed starts in the source; spans count from there.
+fn item_range(item: &Item, parsed_from: usize) -> SourceRange {
+    let item_bytes = item.span().byte_range();
     let start = item_attrs(item)
         .iter()
-        .map(|attr| attr.span().start())
+        .map(|attr| attr.span().byte_range().start)
         .min()
-        .unwrap_or_else(|| item.span().start());
-    let end = item.span().end();
-    Some(SourceRange {
-        start: source_index.offset(start)?,
-        end: source_index.offset(end)?,
-    })
+        .unwrap_or(item_bytes.start);
+    SourceRange {
+        start: parsed_from + start,
+        end: parsed_from + item_bytes.end,
+    }
 }
 
 fn remove_ranges(source: &str, ranges: &[SourceRange]) -> String {
@@ -296,46 +307,6 @@ struct ExcludedRanges {
     excluded_items: ExcludedItemCount,
 }
 
-struct SourceIndex<'source> {
-    source: &'source str,
-    line_offsets: Vec<usize>,
-}
-
-impl<'source> SourceIndex<'source> {
-    fn new(source: &'source str) -> Self {
-        let mut line_offsets = vec![0];
-        for (index, character) in source.char_indices() {
-            if character == '\n' {
-                line_offsets.push(index + 1);
-            }
-        }
-        Self {
-            source,
-            line_offsets,
-        }
-    }
-
-    fn offset(&self, location: LineColumn) -> Option<usize> {
-        if location.line == 0 {
-            return None;
-        }
-        let line_start = *self.line_offsets.get(location.line - 1)?;
-        let line_end = self
-            .line_offsets
-            .get(location.line)
-            .copied()
-            .unwrap_or(self.source.len());
-        let line = &self.source[line_start..line_end];
-        // Span columns are offsets into the original source line; keep them as
-        // byte offsets because removal operates on byte ranges.
-        let column_offset = location.column.min(line.len());
-        if !line.is_char_boundary(column_offset) {
-            return None;
-        }
-        Some(line_start + column_offset)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use indoc::indoc;
@@ -356,6 +327,13 @@ mod tests {
             assert_eq!(result.source, "fn production() {}\n");
             assert_eq!(result.info.status, RustCfgTestStatus::PrefilterSkipped);
             assert_eq!(result.info.excluded_items.get(), 0);
+        }
+
+        #[test]
+        fn it_drops_a_leading_byte_order_mark() {
+            let result = preprocess("\u{feff}// comment\n");
+
+            assert_eq!(result.source, "// comment\n");
         }
     }
 
@@ -393,14 +371,41 @@ mod tests {
         }
 
         #[test]
-        fn it_preserves_following_code_after_multibyte_text_on_the_same_line() {
-            let result = preprocess(
-                r#"#[cfg(test)] fn fixture() { let value = "éééééé"; } fn production() {}"#,
+        fn it_removes_exactly_the_item_after_multibyte_text_on_the_same_line() {
+            let result = preprocess(indoc! {r#"
+                fn production() {}
+                #[cfg(test)] const NAME: &str = "héllo wörld"; fn more() {}
+                #[cfg(test)] fn fixture() { let value = "éééééé"; }
+                // comment
+            "#});
+
+            assert_eq!(result.info.excluded_items.get(), 2);
+            assert_eq!(
+                result.source,
+                indoc! {r#"
+                    fn production() {}
+                     fn more() {}
+                    // comment
+                "#}
             );
+        }
+
+        #[test]
+        fn it_removes_exactly_the_item_after_a_shebang_line() {
+            let result =
+                preprocess("#!/usr/bin/env cargo\n#[cfg(test)] fn fixture() {}\nfn a() {}\n");
 
             assert_eq!(result.info.excluded_items.get(), 1);
-            assert!(!result.source.contains("fixture"));
-            assert!(result.source.contains("fn production() {}"));
+            assert_eq!(result.source, "#!/usr/bin/env cargo\nfn a() {}\n");
+        }
+
+        #[test]
+        fn it_removes_exactly_the_item_after_a_byte_order_mark() {
+            let result =
+                preprocess("\u{feff}// comment\n#[cfg(test)] fn fixture() {}\nfn a() {}\n");
+
+            assert_eq!(result.info.excluded_items.get(), 1);
+            assert_eq!(result.source, "// comment\nfn a() {}\n");
         }
 
         #[test]

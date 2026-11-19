@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { gt as semverGt } from "semver";
 import { z } from "zod";
 import {
@@ -69,14 +70,20 @@ export function dateChangelog(args: {
 }
 
 /** Writes the dated changelog, or only reports whether it could be dated. */
-const MODE_SCHEMA = z.enum(["--check", "--write"]);
-
 function main(): number {
-  const [modeArgument, versionArgument, dateArgument, ...extraArguments] = process.argv.slice(2);
-  const mode = MODE_SCHEMA.safeParse(modeArgument);
+  const { values, positionals } = parseArgs({
+    options: { check: { type: "boolean" }, write: { type: "boolean" } },
+    allowPositionals: true,
+  });
+  const [versionArgument, dateArgument, ...extraArguments] = positionals;
   const version = PUBLIC_PACKAGE_VERSION_SCHEMA.safeParse(versionArgument);
   const date = RELEASE_DATE_SCHEMA.safeParse(dateArgument);
-  if (!mode.success || !version.success || !date.success || extraArguments.length > 0) {
+  if (
+    values.check === values.write ||
+    !version.success ||
+    !date.success ||
+    extraArguments.length > 0
+  ) {
     console.error("usage: date-changelog.ts --check|--write <semver> <YYYY-MM-DD>");
     return 1;
   }
@@ -89,7 +96,7 @@ function main(): number {
     console.error(JSON.stringify(result));
     return 1;
   }
-  if (mode.data === "--write") {
+  if (values.write) {
     fs.writeFileSync(CHANGELOG_URL, result.changelog);
   }
   return 0;

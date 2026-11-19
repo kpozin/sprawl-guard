@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { z } from "zod";
 import {
   PACKAGE_VERSION,
@@ -15,7 +16,11 @@ import {
   WRAPPER_PACKAGE_NAME,
   publishWorkspaceTextFiles,
 } from "./package-manifests.ts";
-import { NPM_DIST_TAG_SCHEMA, type NpmDistTag } from "./npm-dist-tag.ts";
+import {
+  NPM_DIST_TAG_SCHEMA,
+  npmDistTagAcceptsVersion,
+  type NpmDistTag,
+} from "./npm-dist-tag.ts";
 import { PUBLIC_PACKAGE_VERSION_SCHEMA } from "./package-version.ts";
 import { PAYLOAD_CHECK_KIND } from "./payload-check.ts";
 import {
@@ -741,25 +746,27 @@ function productionOperations(
 }
 
 async function main(): Promise<number> {
-  const mode = process.argv[2];
-  const candidateDirectoryArgument = process.argv[3];
+  const { positionals } = parseArgs({ allowPositionals: true });
+  const [mode, candidateDirectoryArgument, , , npmDistTag] = positionals;
   if (
     (mode !== "prepare" && mode !== "verify" && mode !== "publish")
     || candidateDirectoryArgument === undefined
   ) {
-    console.error(
-      "usage: publish-npm-packages.ts <prepare|verify|publish> <candidate-directory> <full-commit> <v-tag> <npm-dist-tag>",
-    );
+    console.error("usage: publish-npm-packages.ts <prepare|verify|publish> <candidate-directory> <full-commit> <v-tag> <npm-dist-tag>");
     return 1;
   }
-  const parsedSource = parseReleaseSourceExpectation(process.argv.slice(4, 6), PACKAGE_VERSION);
+  const parsedSource = parseReleaseSourceExpectation(positionals.slice(2, 4), PACKAGE_VERSION);
   if (parsedSource.kind !== "ok") {
     console.error("release source requires a full commit and matching v-prefixed tag");
     return 1;
   }
-  const parsedNpmDistTag = NPM_DIST_TAG_SCHEMA.safeParse(process.argv[6]);
-  if (!parsedNpmDistTag.success || process.argv.length !== 7) {
+  const parsedNpmDistTag = NPM_DIST_TAG_SCHEMA.safeParse(npmDistTag);
+  if (!parsedNpmDistTag.success || positionals.length !== 5) {
     console.error("release source requires one validated npm dist-tag");
+    return 1;
+  }
+  if (!npmDistTagAcceptsVersion(parsedNpmDistTag.data, PACKAGE_VERSION)) {
+    console.error(`npm dist-tag ${parsedNpmDistTag.data} cannot name prerelease ${PACKAGE_VERSION}`);
     return 1;
   }
   const candidateDirectory = ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(

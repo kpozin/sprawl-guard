@@ -5,7 +5,7 @@ use serde::{Serialize, Serializer};
 
 use crate::code_line_counter::LineMeasurement;
 use crate::ratchet::RatchetCount;
-use crate::{FileByteLimit, FileBytes, LanguageGroupId, RelativePath};
+use crate::{FileByteLimit, FileBytes, FileStorage, LanguageGroupId, RelativePath};
 
 use super::{DirectoryViolationKind, FileViolationKind};
 
@@ -43,9 +43,11 @@ impl RatchetViolation {
             Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => {
                 RatchetViolationKind::stale_directory(violation.kind)
             }
-            Self::Measured(RatchetStaleMeasuredViolation::FileBytes(_))
-            | Self::Missing(RatchetStaleMissingViolation::FileBytes(_)) => {
-                RatchetViolationKind::FileBytesStale
+            Self::Measured(RatchetStaleMeasuredViolation::FileBytes(violation)) => {
+                RatchetViolationKind::stale_file_bytes(violation.storage)
+            }
+            Self::Missing(RatchetStaleMissingViolation::FileBytes(violation)) => {
+                RatchetViolationKind::stale_file_bytes(violation.storage)
             }
         }
     }
@@ -251,6 +253,8 @@ pub struct DirectoryRatchetStaleMissingViolation {
 pub struct FileBytesRatchetStaleMeasuredViolation {
     /// Repository-relative file path.
     pub path: RelativePath,
+    /// Where Git stores the file, which decides its byte limit.
+    pub storage: FileStorage,
     /// Current size of the file.
     pub actual: FileBytes,
     /// Byte limit that currently applies to the file.
@@ -265,6 +269,8 @@ pub struct FileBytesRatchetStaleMeasuredViolation {
 pub struct FileBytesRatchetStaleMissingViolation {
     /// Repository-relative file path.
     pub path: RelativePath,
+    /// Where Git stored the file when its ceiling was recorded.
+    pub storage: FileStorage,
     /// Stored ratchet ceiling.
     pub ratchet: FileByteLimit,
 }

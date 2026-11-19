@@ -100,7 +100,7 @@ function markdownAlternateHrefs(html: string): string[] {
     .filter((tag) => /\brel="alternate"/u.test(tag) && /\btype="text\/markdown"/u.test(tag))
     .flatMap((tag) => {
       const href = /\bhref="([^"]+)"/u.exec(tag);
-      return href === null ? [] : [href[1]];
+      return href?.[1] === undefined ? [] : [href[1]];
     });
 }
 
@@ -114,9 +114,8 @@ function verifyMarkdownLinks(
     ...markdown.matchAll(/\]\((\/sprawl-guard\/[^)\s]+)(?:\s+[^)]*)?\)/gu),
     ...markdown.matchAll(/^\[[^\]\n]+\]:\s+<?(\/sprawl-guard\/[^>\s]+)>?/gmu),
   ];
-  for (const match of links) {
-    const target = match[1];
-    const pathname = target.split(/[?#]/u, 1)[0];
+  for (const [, target = ""] of links) {
+    const [pathname = ""] = target.split(/[?#]/u, 1);
     if (pathname.endsWith(".md")) {
       const relativeTarget = pathname.slice(`${SITE_BASE_PATH}/`.length);
       assert.equal(

@@ -569,10 +569,12 @@ mod when_recoverable_traversal_errors_occur {
 
                     [[file_sizes]]
                     path = "assets/large.bin"
+                    storage = "git"
                     max_bytes = 20
 
                     [[file_sizes]]
                     path = "gone.bin"
+                    storage = "git"
                     max_bytes = 20
                 "#},
             );
@@ -1613,6 +1615,121 @@ mod when_sources_are_within_file_limits {
     }
 }
 
+mod when_a_glob_has_a_single_star {
+    use super::*;
+
+    #[test]
+    fn it_applies_an_override_only_to_files_directly_in_the_directory() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_config(
+            tempdir.path(),
+            indoc! {r#"
+                [languages.rust]
+                enabled = true
+
+                [[overrides]]
+                paths = ["src/*.rs"]
+                reason = "Keep top-level modules short."
+                max_lines_per_file = { production = 1 }
+            "#},
+        );
+        write_rust_source_with_function_count(tempdir.path(), "src/top.rs", 2);
+        write_rust_source_with_function_count(tempdir.path(), "src/nested/deep.rs", 2);
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        let violations = file_violations(&report);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].path.as_str(), "src/top.rs");
+    }
+
+    #[test]
+    fn it_excludes_only_files_directly_in_the_directory() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_config(
+            tempdir.path(),
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                production = 1
+
+                [files]
+                extend_exclude = ["vendor/*"]
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_rust_source_with_function_count(tempdir.path(), "vendor/top.rs", 2);
+        write_rust_source_with_function_count(tempdir.path(), "vendor/nested/deep.rs", 2);
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        let violations = file_violations(&report);
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].path.as_str(), "vendor/nested/deep.rs");
+    }
+}
+
+mod when_hidden_paths_are_checked {
+    use super::*;
+
+    fn write_fixture(root: &Path) {
+        write_config(
+            root,
+            indoc! {r#"
+                [limits]
+                max_bytes_per_file = 4
+
+                [ignore]
+                skip_hidden = false
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_file(root, ".github/big.txt", "too large\n");
+    }
+
+    fn byte_violation_paths(report: &CheckReport) -> Vec<&str> {
+        report
+            .violations()
+            .iter()
+            .filter_map(|violation| match violation {
+                CheckViolation::FileBytes(violation) => Some(violation.path.as_str()),
+                CheckViolation::FileLines(_)
+                | CheckViolation::DirectoryDirectFiles(_)
+                | CheckViolation::Ratchet(_) => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn it_leaves_out_the_git_directory() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_fixture(tempdir.path());
+        write_file(tempdir.path(), ".git/objects/pack/big.pack", "too large\n");
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        assert_eq!(byte_violation_paths(&report), [".github/big.txt"]);
+    }
+
+    #[test]
+    fn it_leaves_out_the_git_file_of_a_worktree() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_fixture(tempdir.path());
+        write_file(
+            tempdir.path(),
+            "nested/.git",
+            "gitdir: ../.git/worktrees/x\n",
+        );
+
+        let report = check_root(tempdir.path()).unwrap();
+
+        assert_eq!(byte_violation_paths(&report), [".github/big.txt"]);
+    }
+}
+
 mod when_check_is_path_scoped {
     use super::*;
 
@@ -1702,6 +1819,136 @@ mod when_check_is_path_scoped {
         let violations = file_violations(&report);
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].path.as_str(), "checked/lib.rs");
+    }
+
+    mod and_the_scan_skips_a_selected_path {
+        use super::*;
+
+        fn skipped_paths(report: &CheckReport) -> Vec<&str> {
+            report
+                .warnings()
+                .iter()
+                .filter_map(|warning| match warning {
+                    CheckWarning::SelectedPathSkipped { path } => Some(path.as_str()),
+                    CheckWarning::RustCfgTestParseFailed { .. }
+                    | CheckWarning::LfsPointerSource { .. } => None,
+                })
+                .collect()
+        }
+
+        #[test]
+        fn it_warns_about_a_hidden_file_and_a_file_under_a_hidden_directory() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_rust_file_limit_config(tempdir.path(), 1);
+            write_rust_source_with_function_count(tempdir.path(), ".hidden.rs", 2);
+            write_rust_source_with_function_count(tempdir.path(), ".github/scripts/big.rs", 2);
+            write_rust_source_with_function_count(tempdir.path(), "src/lib.rs", 1);
+
+            let report = check_selected_paths(
+                tempdir.path(),
+                vec![
+                    PathBuf::from(".github/scripts/big.rs"),
+                    PathBuf::from(".hidden.rs"),
+                    PathBuf::from("src/lib.rs"),
+                ],
+            )
+            .unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Passed);
+            assert_eq!(
+                skipped_paths(&report),
+                [".github/scripts/big.rs", ".hidden.rs"]
+            );
+        }
+
+        #[test]
+        fn it_warns_about_a_path_that_an_ignore_file_excludes() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_rust_file_limit_config(tempdir.path(), 1);
+            write_file(tempdir.path(), ".gitignore", "generated/\n");
+            write_rust_source_with_function_count(tempdir.path(), "generated/lib.rs", 2);
+
+            let report =
+                check_selected_paths(tempdir.path(), vec![PathBuf::from("generated")]).unwrap();
+
+            assert_eq!(skipped_paths(&report), ["generated"]);
+        }
+
+        #[test]
+        fn it_does_not_warn_about_a_selected_file_that_is_not_source() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_rust_enabled_config(tempdir.path());
+            write_file(tempdir.path(), "notes.unknown", "text\n");
+
+            let report =
+                check_selected_paths(tempdir.path(), vec![PathBuf::from("notes.unknown")]).unwrap();
+
+            assert!(report.warnings().is_empty());
+        }
+    }
+
+    mod and_a_directory_is_over_its_direct_file_limit {
+        use super::*;
+
+        mod and_only_one_of_its_files_is_selected {
+            use super::*;
+
+            fn check_one_file(root: &Path) -> CheckReport {
+                check_selected_paths(root, vec![PathBuf::from("src/a.rs")]).unwrap()
+            }
+
+            #[test]
+            fn it_leaves_the_directory_unjudged() {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_rust_directory_direct_files_fixture(tempdir.path());
+
+                let report = check_one_file(tempdir.path());
+
+                assert_eq!(report.status(), CheckStatus::Passed);
+                assert!(report.violations().is_empty());
+                assert_eq!(report.summary().files_checked.into_inner(), 1);
+                assert_eq!(report.summary().directories_checked.into_inner(), 0);
+            }
+
+            #[test]
+            fn it_keeps_the_directory_ratchet_entry_current() {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_rust_directory_direct_files_fixture(tempdir.path());
+                write_ratchet(
+                    tempdir.path(),
+                    indoc! {r#"
+                        schema_version = 1
+
+                        [[directories]]
+                        path = "src"
+                        role = "production"
+                        group = "source"
+                        max_direct_files = 2
+                    "#},
+                );
+
+                let report = check_one_file(tempdir.path());
+
+                assert_eq!(report.status(), CheckStatus::Passed);
+                assert!(report.violations().is_empty());
+            }
+        }
+
+        mod and_the_whole_directory_is_selected {
+            use super::*;
+
+            #[test]
+            fn it_reports_the_directory() {
+                let tempdir = tempfile::tempdir().unwrap();
+                write_rust_directory_direct_files_fixture(tempdir.path());
+
+                let report =
+                    check_selected_paths(tempdir.path(), vec![PathBuf::from("src")]).unwrap();
+
+                assert_eq!(single_directory_violation(&report).actual.get(), 2);
+                assert_eq!(report.summary().directories_checked.into_inner(), 1);
+            }
+        }
     }
 }
 

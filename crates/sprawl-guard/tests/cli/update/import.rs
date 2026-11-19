@@ -152,7 +152,7 @@ mod when_importing_oxlint_suppressions {
                 .unwrap();
             root.child("sprawl-guard.ratchet.toml")
                 .write_str(
-                    "schema_version = 1\n[[file_sizes]]\npath = \"assets/logo.png\"\nmax_bytes = 12\n",
+                    "schema_version = 1\n[[file_sizes]]\npath = \"assets/logo.png\"\nstorage = \"git\"\nmax_bytes = 12\n",
                 )
                 .unwrap();
 

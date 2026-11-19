@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use super::limits::ConfiguredMaxBytesPerFile;
-use crate::{DirectFileLimit, GlobPattern, LineLimit, MaxBytesPerFile};
+use crate::{DirectFileLimit, FileStorage, GlobPattern, LineLimit, MaxBytesPerFile};
 
 /// Error returned when an override reason is invalid.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -118,9 +118,12 @@ pub struct OverrideLimits {
     /// Optional directory direct-file limits.
     #[serde(skip_serializing_if = "OverrideMaxDirectFilesPerDirectoryLimits::is_empty")]
     max_direct_files_per_directory: OverrideMaxDirectFilesPerDirectoryLimits,
-    /// Optional file byte limit.
+    /// Optional byte limit for files that Git stores.
     #[serde(skip_serializing_if = "Option::is_none")]
     max_bytes_per_file: Option<MaxBytesPerFile>,
+    /// Optional byte limit for files that Git LFS stores.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_bytes_per_lfs_object: Option<MaxBytesPerFile>,
 }
 
 /// Optional file line-count limits supplied by a path override.
@@ -164,10 +167,12 @@ impl OverrideLimits {
         max_lines_per_file: OverrideMaxLinesPerFileLimits,
         max_direct_files_per_directory: OverrideMaxDirectFilesPerDirectoryLimits,
         max_bytes_per_file: Option<MaxBytesPerFile>,
+        max_bytes_per_lfs_object: Option<MaxBytesPerFile>,
     ) -> Result<Self, OverrideLimitsError> {
         if max_lines_per_file.is_empty()
             && max_direct_files_per_directory.is_empty()
             && max_bytes_per_file.is_none()
+            && max_bytes_per_lfs_object.is_none()
         {
             return Err(OverrideLimitsError::Empty);
         }
@@ -175,12 +180,16 @@ impl OverrideLimits {
             max_lines_per_file,
             max_direct_files_per_directory,
             max_bytes_per_file,
+            max_bytes_per_lfs_object,
         })
     }
 
-    /// Returns the file byte override, when present.
-    pub fn max_bytes_per_file(&self) -> Option<MaxBytesPerFile> {
-        self.max_bytes_per_file
+    /// Returns the byte limit override for files stored in `storage`, when present.
+    pub fn max_file_bytes(&self, storage: FileStorage) -> Option<MaxBytesPerFile> {
+        match storage {
+            FileStorage::Git => self.max_bytes_per_file,
+            FileStorage::Lfs => self.max_bytes_per_lfs_object,
+        }
     }
 
     /// Returns the production line override, when present.
@@ -219,6 +228,9 @@ impl<'de> Deserialize<'de> for OverrideLimits {
             partial
                 .max_bytes_per_file
                 .map(|ConfiguredMaxBytesPerFile(limit)| limit),
+            partial
+                .max_bytes_per_lfs_object
+                .map(|ConfiguredMaxBytesPerFile(limit)| limit),
         )
         .map_err(serde::de::Error::custom)
     }
@@ -230,6 +242,7 @@ struct PartialOverrideLimits {
     max_lines_per_file: Option<PartialOverrideMaxLinesPerFileLimits>,
     max_direct_files_per_directory: Option<PartialOverrideMaxDirectFilesPerDirectoryLimits>,
     max_bytes_per_file: Option<ConfiguredMaxBytesPerFile>,
+    max_bytes_per_lfs_object: Option<ConfiguredMaxBytesPerFile>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -281,7 +294,11 @@ impl From<PartialOverrideMaxDirectFilesPerDirectoryLimits>
             "properties": { "max_direct_files_per_directory": {} },
             "required": ["max_direct_files_per_directory"]
         },
-        { "properties": { "max_bytes_per_file": {} }, "required": ["max_bytes_per_file"] }
+        { "properties": { "max_bytes_per_file": {} }, "required": ["max_bytes_per_file"] },
+        {
+            "properties": { "max_bytes_per_lfs_object": {} },
+            "required": ["max_bytes_per_lfs_object"]
+        }
     ]
 ))]
 pub struct PathOverride {

@@ -7,7 +7,7 @@ use super::common::*;
 mod file_bytes;
 mod github;
 mod ignore;
-mod lfs_pointers;
+mod lfs_files;
 mod max_findings;
 
 mod when_a_check_succeeds {
@@ -442,6 +442,38 @@ mod when_rust_cfg_test_preprocessing_fails {
             })
         );
         assert_eq!(stderr(&output), "");
+    }
+}
+
+mod when_a_selected_path_is_hidden {
+    use super::*;
+
+    #[test]
+    fn it_warns_that_the_path_was_not_checked() {
+        let root = TempDir::new().unwrap();
+        write_rust_file_limit_config(&root, 1);
+        write_rust_source_with_function_count(&root, ".github/scripts/big.rs", 2);
+
+        let output = sprawl_guard(&root)
+            .args(["check", ".github/scripts/big.rs"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            stdout(&output),
+            format!(
+                "{AUTHORED_CONFIG_HEADER}{}",
+                indoc! {"
+                    Warnings (1):
+
+                      .github/scripts/big.rs: not checked, because the scan did not reach it; the scan skips hidden and ignored paths
+
+                    No sprawl-guard violations found in the selected paths.
+                    Checked 0 source files in 0 directories across 0 languages.
+                "}
+            )
+        );
     }
 }
 

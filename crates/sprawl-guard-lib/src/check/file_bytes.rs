@@ -7,8 +7,9 @@ use rayon::prelude::*;
 use crate::classification::{
     ByteLimitedFile, UnreadablePath, UnreadablePathKind, UnreadablePathSeverity,
 };
+use crate::ratchet::FileSizeRatchetKey;
 use crate::source_file::measure_file_size;
-use crate::{DiagnosticDetail, FileByteLimit, MeasuredFileSize};
+use crate::{DiagnosticDetail, FileByteLimit, FileBytes};
 
 use super::ratchet::{MeasuredRatchets, RatchetCurrentPolicy, RatchetState};
 use super::report::{
@@ -39,16 +40,17 @@ pub(super) fn check_file_bytes(
     let sizes = files
         .into_par_iter()
         .map(|file| {
-            let size = measure_file_size(&root.join(file.path.as_str()));
+            let size = measure_file_size(&root.join(file.path.as_str()), file.storage);
             (file, size)
         })
         .collect::<Vec<_>>();
     let mut findings = FileBytesFindings::default();
     for (file, size) in sizes {
-        measured.record_file_size(&file.path);
+        let key = FileSizeRatchetKey::new(file.path.clone(), file.storage);
+        let ceiling = ratchet.and_then(|ratchet| ratchet.file_size_ceiling(&key));
+        measured.record_file_size(key);
         match size {
             Ok(size) => {
-                let ceiling = ratchet.and_then(|ratchet| ratchet.file_size_ceiling(&file.path));
                 findings.violations.extend(file_bytes_violation(
                     file,
                     size,
@@ -74,18 +76,16 @@ pub(super) fn check_file_bytes(
 /// within its limit, is stale.
 fn file_bytes_violation(
     file: ByteLimitedFile,
-    size: MeasuredFileSize,
+    actual: FileBytes,
     ceiling: Option<FileByteLimit>,
     current_policy: RatchetCurrentPolicy,
 ) -> Option<CheckViolation> {
-    let actual = size.bytes;
     let exceeded = file.limit.is_exceeded_by(actual);
     let violation = |ratchet| {
         CheckViolation::FileBytes(FileBytesViolation {
-            kind: FileBytesViolationKind::FileBytes,
+            kind: FileBytesViolationKind::from(file.storage),
             path: file.path.clone(),
             actual,
-            measured_from: size.source,
             limit: file.limit,
             ratchet,
         })
@@ -101,6 +101,7 @@ fn file_bytes_violation(
             Some(CheckViolation::Ratchet(RatchetViolation::Measured(
                 RatchetStaleMeasuredViolation::FileBytes(FileBytesRatchetStaleMeasuredViolation {
                     path: file.path.clone(),
+                    storage: file.storage,
                     actual,
                     limit: file.limit,
                     ratchet: ceiling,

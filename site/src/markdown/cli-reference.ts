@@ -78,22 +78,22 @@ export function findCliReferenceCommand(
     };
   }
 
-  const matches = parsedCliReference.data.commands.filter(
+  const [match, ...others] = parsedCliReference.data.commands.filter(
     (command) => command.path.join(" ") === parsedPath.data,
   );
-  if (matches.length === 0) {
+  if (match === undefined) {
     return {
       ok: false,
       error: { kind: "unknown_cli_command_path", path: parsedPath.data },
     };
   }
-  if (matches.length > 1) {
+  if (others.length > 0) {
     return {
       ok: false,
       error: { kind: "ambiguous_cli_command_path", path: parsedPath.data },
     };
   }
-  return { ok: true, value: matches[0] };
+  return { ok: true, value: match };
 }
 
 /** Splits backtick-delimited inline code from generated help text. */
@@ -107,7 +107,7 @@ export function inlineCodeSegments(value: string): InlineSegment[] {
     if (plainTextStart < matchStart) {
       segments.push({ kind: "text", value: value.slice(plainTextStart, matchStart) });
     }
-    segments.push({ kind: "code", value: match[1] });
+    segments.push({ kind: "code", value: match[1] ?? "" });
     plainTextStart = matchStart + match[0].length;
   }
 

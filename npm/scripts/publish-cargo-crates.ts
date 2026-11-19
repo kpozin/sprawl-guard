@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { z } from "zod";
 import { PACKAGE_VERSION } from "./package-manifests.ts";
 import {
@@ -965,15 +966,13 @@ function productionOperations(
 }
 
 async function main(): Promise<number> {
-  const mode = process.argv[2];
+  const [mode, ...sourceArguments] = parseArgs({ allowPositionals: true }).positionals;
   if (mode !== "prepare" && mode !== "publish") {
-    console.error(
-      "usage: publish-cargo-crates.ts <prepare|publish> <full-commit> <v-tag>",
-    );
+    console.error("usage: publish-cargo-crates.ts <prepare|publish> <full-commit> <v-tag>");
     return 1;
   }
   const parsedSource = parseReleaseSourceExpectation(
-    process.argv.slice(3),
+    sourceArguments,
     PACKAGE_VERSION,
   );
   if (parsedSource.kind !== "ok") {

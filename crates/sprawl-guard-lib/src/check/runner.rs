@@ -131,7 +131,10 @@ fn check_with_counter_mode(
         Some(gap_policy),
         Some(&limit_resolver),
     )?;
-    let directory_checks = directory_direct_files_checks(&limit_resolver, &discovery.sources)?;
+    // A directory with only some of its files selected has a partial count, which says nothing
+    // about its limit or its ratchet ceiling, so it is not checked at all.
+    let mut directory_checks = directory_direct_files_checks(&limit_resolver, &discovery.sources)?;
+    directory_checks.retain(|check| selected_paths.contains(check.path()));
     let summary = summarize_scan(
         &discovery.sources,
         &directory_checks,
@@ -159,7 +162,10 @@ fn check_with_counter_mode(
         &mut measured_ratchets,
     );
     unreadable_paths.extend(discovery.unreadable_paths);
-    let mut warnings = Vec::new();
+    for path in &discovery.unknown_storage_files {
+        measured_ratchets.record_unknown_storage_file(path);
+    }
+    let mut warnings = CheckWarning::selected_paths_skipped(discovery.skipped_scopes);
     let mut uncounted_files = Vec::new();
 
     for source_outcome in source_outcomes {

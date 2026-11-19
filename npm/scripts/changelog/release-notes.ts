@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import {
   PUBLIC_PACKAGE_VERSION_SCHEMA,
   type PublicPackageVersion,
@@ -81,7 +82,7 @@ function continues(args: { readonly previous: string; readonly line: string }): 
 }
 
 function main(): number {
-  const [versionArgument, ...extraArguments] = process.argv.slice(2);
+  const [versionArgument, ...extraArguments] = parseArgs({ allowPositionals: true }).positionals;
   const version = PUBLIC_PACKAGE_VERSION_SCHEMA.safeParse(versionArgument);
   if (!version.success || extraArguments.length > 0) {
     console.error("usage: release-notes.ts <semver>");

@@ -326,6 +326,12 @@ pub enum CheckWarning {
         /// Size of the object that the pointer declares.
         declared_bytes: FileBytes,
     },
+    /// The scan never reached a selected path, so nothing at or under the path was checked.
+    /// The usual cause is a hidden-path or ignore rule.
+    SelectedPathSkipped {
+        /// Repository-relative selected path.
+        path: RelativePath,
+    },
 }
 
 impl CheckWarning {
@@ -339,10 +345,20 @@ impl CheckWarning {
         }
     }
 
+    /// Warns about each selected path that the scan never reached.
+    pub(crate) fn selected_paths_skipped(paths: Vec<RelativePath>) -> Vec<Self> {
+        paths
+            .into_iter()
+            .map(|path| Self::SelectedPathSkipped { path })
+            .collect()
+    }
+
     /// Returns the repository-relative path that the warning is about.
     pub fn path(&self) -> &RelativePath {
         match self {
-            Self::RustCfgTestParseFailed { path, .. } | Self::LfsPointerSource { path, .. } => path,
+            Self::RustCfgTestParseFailed { path, .. }
+            | Self::LfsPointerSource { path, .. }
+            | Self::SelectedPathSkipped { path } => path,
         }
     }
 }

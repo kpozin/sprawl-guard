@@ -201,6 +201,7 @@ fn ratchet_from_report(report: &CheckReport, import: Option<&import::Suppression
                 if let Some(max_bytes) = violation.actual.as_limit() {
                     ratchet.file_sizes.push(FileSizeRatchet {
                         path: violation.path.clone(),
+                        storage: violation.kind.storage(),
                         max_bytes,
                     });
                 }

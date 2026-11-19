@@ -9,6 +9,7 @@ describe("buildWasiInvocation", () => {
       ["check", "--root", "/work/repo", "--config=../custom.toml", "src\\odd name.ts"],
       "linux",
       absolute("/work/repo/src"),
+      {},
     );
 
     test("it mounts the host root at its own path", () => {
@@ -31,12 +32,66 @@ describe("buildWasiInvocation", () => {
     });
   });
 
+  describe("when the host is POSIX and GitHub Actions declares a workspace", () => {
+    test("it forwards the workspace unchanged", () => {
+      const plan = buildWasiInvocation(["check"], "linux", absolute("/work/repo"), {
+        GITHUB_WORKSPACE: "/work",
+      });
+
+      assert.deepEqual(plan.env, { PWD: "/work/repo", GITHUB_WORKSPACE: "/work" });
+    });
+  });
+
+  describe("when no workspace is declared", () => {
+    test("it sets only the working directory", () => {
+      const plan = buildWasiInvocation(["check"], "linux", absolute("/work/repo"), {});
+
+      assert.deepEqual(plan.env, { PWD: "/work/repo" });
+    });
+  });
+
   describe("when the host is Windows", () => {
+    describe("and GitHub Actions declares a workspace on a mounted drive", () => {
+      test("it spells the workspace under its drive's module path", () => {
+        const plan = buildWasiInvocation(["check"], "win32", absolute("D:\\a\\repo\\repo\\app"), {
+          GITHUB_WORKSPACE: "D:\\a\\repo\\repo",
+        });
+
+        assert.equal(plan.env.GITHUB_WORKSPACE, "/d/a/repo/repo");
+      });
+    });
+
+    describe("and the declared workspace is on a drive the run does not use", () => {
+      const plan = buildWasiInvocation(["--version"], "win32", absolute("C:\\work"), {
+        GITHUB_WORKSPACE: "Z:\\gone",
+      });
+
+      test("it mounts only the drives the run uses", () => {
+        assert.deepEqual([...plan.fileSystem.preopens], [["/c", "C:\\"]]);
+      });
+
+      test("it forwards the workspace under a module path that no mount covers", () => {
+        assert.deepEqual(plan.env, { PWD: "/c/work", GITHUB_WORKSPACE: "/z/gone" });
+        assert.equal(plan.fileSystem.toHost(unsafeGuestPath("/z/gone")), undefined);
+      });
+    });
+
+    describe("and the declared workspace is not an absolute path", () => {
+      test("it leaves the workspace out", () => {
+        const plan = buildWasiInvocation(["check"], "win32", absolute("C:\\work"), {
+          GITHUB_WORKSPACE: "repo",
+        });
+
+        assert.deepEqual(plan.env, { PWD: "/c/work" });
+      });
+    });
+
     describe("and every path is on the working directory's drive", () => {
       const plan = buildWasiInvocation(
         ["check", "--root", "C:\\work\\repo", "--config=..\\custom.toml", "src\\lib.ts", "\\x.ts"],
         "win32",
         absolute("C:\\work\\repo\\src"),
+        {},
       );
 
       test("it mounts only that drive", () => {
@@ -65,6 +120,7 @@ describe("buildWasiInvocation", () => {
         ["check", "--root=d:\\repo", "\\\\server\\share\\a.ts"],
         "win32",
         absolute("C:\\work"),
+        {},
       );
 
       test("it mounts every named volume", () => {
@@ -88,6 +144,7 @@ describe("buildWasiInvocation", () => {
         ["check", "--root=\\\\?\\UNC\\server\\share\\repo", "\\\\?\\D:\\a.ts"],
         "win32",
         absolute("C:\\work"),
+        {},
       );
 
       test("it mounts the volume that the path names", () => {
@@ -100,7 +157,7 @@ describe("buildWasiInvocation", () => {
     });
 
     describe("and a path is relative to a drive", () => {
-      const plan = buildWasiInvocation(["explain", "C:src\\a.ts"], "win32", absolute("C:\\work"));
+      const plan = buildWasiInvocation(["explain", "C:src\\a.ts"], "win32", absolute("C:\\work"), {});
 
       test("it resolves the path under the working directory", () => {
         assert.deepEqual(plan.args, ["sprawl-guard", "explain", "/c/work/src/a.ts"]);
@@ -108,7 +165,7 @@ describe("buildWasiInvocation", () => {
     });
 
     describe("and two paths spell one share in different cases", () => {
-      const plan = buildWasiInvocation(["check", "\\\\server\\share\\w\\a.ts"], "win32", absolute("\\\\Server\\Share\\w"));
+      const plan = buildWasiInvocation(["check", "\\\\server\\share\\w\\a.ts"], "win32", absolute("\\\\Server\\Share\\w"), {});
 
       test("it mounts the share once and starts under that mount", () => {
         assert.deepEqual([...plan.fileSystem.preopens.keys()], ["/unc/server/share"]);

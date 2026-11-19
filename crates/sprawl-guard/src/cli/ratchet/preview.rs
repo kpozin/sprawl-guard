@@ -32,7 +32,13 @@ pub(super) fn render_changes(previous: &RatchetFile, next: &RatchetFile) -> Resu
     output.push_str(&render_map_changes(
         previous.file_sizes(),
         next.file_sizes(),
-        |path| format!("{} (bytes)", display_relative(path.as_str())),
+        |key| {
+            format!(
+                "{} (bytes, storage: {})",
+                display_relative(key.path().as_str()),
+                key.storage()
+            )
+        },
     ));
     Ok(output)
 }

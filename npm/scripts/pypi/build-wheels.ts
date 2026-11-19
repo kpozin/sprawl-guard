@@ -246,7 +246,7 @@ function runTool(command: string, args: readonly string[], input?: string): Tool
 function main(): number {
   let positionals: string[];
   try {
-    ({ positionals } = parseArgs({ args: process.argv.slice(2), options: {}, allowPositionals: true, strict: true }));
+    ({ positionals } = parseArgs({ options: {}, allowPositionals: true, strict: true }));
   } catch (error) {
     console.error(`${String(error)}\n${USAGE}`);
     return 2;

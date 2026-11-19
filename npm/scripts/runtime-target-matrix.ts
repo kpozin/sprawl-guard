@@ -1,5 +1,6 @@
 import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import {
   NATIVE_RUNTIME_PACKAGE_DEFINITIONS,
   RUNTIME_PACKAGE_DEFINITIONS,
@@ -73,5 +74,5 @@ function main(mode: string | undefined): void {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  main(process.argv[2]);
+  main(parseArgs({ allowPositionals: true }).positionals[0]);
 }

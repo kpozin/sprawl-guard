@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobSet, GlobSetBuilder};
 
 use crate::config::Config;
 use crate::{GlobPattern, LanguageId, RelativePath, Result, SprawlError};
@@ -240,12 +240,7 @@ fn optional_glob_set<'pattern>(
     let mut has_patterns = false;
     for pattern in patterns {
         has_patterns = true;
-        builder.add(
-            Glob::new(pattern.as_str()).map_err(|source| SprawlError::InvalidGlob {
-                pattern: pattern.to_string(),
-                source,
-            })?,
-        );
+        builder.add(pattern.compile());
     }
     if !has_patterns {
         return Ok(None);
@@ -253,32 +248,22 @@ fn optional_glob_set<'pattern>(
     builder
         .build()
         .map(Some)
-        .map_err(|source| SprawlError::InvalidGlob {
-            pattern: "<glob set>".to_owned(),
-            source,
-        })
+        .map_err(|source| SprawlError::InvalidGlobSet { source })
 }
 
 /// Compiles zero or more config globs into one matcher set.
 ///
-/// An empty input produces a matcher that never matches. Invalid input produces
-/// `SprawlError::InvalidGlob` with the failing pattern when available.
+/// An empty input produces a matcher that never matches.
 fn glob_set<'pattern>(
     patterns: impl IntoIterator<Item = &'pattern GlobPattern>,
 ) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
-        builder.add(
-            Glob::new(pattern.as_str()).map_err(|source| SprawlError::InvalidGlob {
-                pattern: pattern.to_string(),
-                source,
-            })?,
-        );
+        builder.add(pattern.compile());
     }
-    builder.build().map_err(|source| SprawlError::InvalidGlob {
-        pattern: "<glob set>".to_owned(),
-        source,
-    })
+    builder
+        .build()
+        .map_err(|source| SprawlError::InvalidGlobSet { source })
 }
 
 /// Converts an ambiguous diagnostic result into the public discovery error.

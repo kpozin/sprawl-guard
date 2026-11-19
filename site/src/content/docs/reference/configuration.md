@@ -55,14 +55,15 @@ after the upgrade, so error messages name the v2 keys.
 
 ### `[limits]`
 
-| Field                | Type and default                   | Meaning                       |
-| -------------------- | ---------------------------------- | ----------------------------- |
-| `max_bytes_per_file` | size or `"unlimited"`, `unlimited` | Largest size of any one file. |
+| Field                      | Type and default                   | Meaning                                           |
+| -------------------------- | ---------------------------------- | ------------------------------------------------- |
+| `max_bytes_per_file`       | size or `"unlimited"`, `unlimited` | Largest size of any one file that Git stores.     |
+| `max_bytes_per_lfs_object` | size or `"unlimited"`, `unlimited` | Largest size of any one file that Git LFS stores. |
 
-`max_bytes_per_file` applies to every file that `check` visits, not only source files: images,
-archives, generated data, and files of disabled or excluded languages count too. Files skipped by
-ignore files, by `[files].extend_exclude`, and the configuration and ratchet files are not checked.
-Set a default here and use `[[overrides]]` to raise or lower it for particular paths.
+The byte limits apply to every file that `check` visits, not only source files: images, archives,
+generated data, and files of disabled or excluded languages count too. Files skipped by ignore
+files, by `[files].extend_exclude`, and the configuration and ratchet files are not checked. Set
+defaults here and use `[[overrides]]` to raise or lower them for particular paths.
 
 A size is a positive number of bytes, such as `500000`, or a string with a unit, such as `"500 kB"`
 or `"1.5 GiB"`. The units `B`, `kB`, `MB`, `GB`, and `TB` are powers of 1000, and `KiB`, `MiB`,
@@ -70,9 +71,31 @@ or `"1.5 GiB"`. The units `B`, `kB`, `MB`, `GB`, and `TB` are powers of 1000, an
 of bytes, have at most 12 digits after the decimal point, and be at most 9223372036854775807 bytes,
 the largest TOML integer. Output and the ratchet file give sizes in bytes.
 
-A file that Git LFS stores is measured by the size its pointer declares, so `check` gives the same
-result whether or not Git LFS has downloaded the file. Sprawl Guard doesn't count the lines of a
-source file that is still a pointer, and reports it as a warning instead.
+A file is stored in Git LFS when `.gitattributes` gives it `filter=lfs`, as `git lfs track` does.
+Such a file counts against `max_bytes_per_lfs_object` instead of `max_bytes_per_file`, so a small
+`max_bytes_per_file` catches large files committed to Git by mistake without flagging the files
+you moved to Git LFS on purpose. `max_bytes_per_lfs_object` measures the file's content: the size
+its pointer declares when Git LFS hasn't downloaded it, and its size on disk when it has, so
+`check` gives the same result either way. The exception is a file that a Git LFS extension
+transforms before storing it: its pointer declares the size of the stored object, which can differ
+from the size of the downloaded file.
+
+`check` decides storage from the current `.gitattributes` rules, not from what was committed. A file
+that was committed to Git before a rule assigned its path to Git LFS still counts against
+`max_bytes_per_lfs_object`, so `max_bytes_per_file` doesn't catch it. Run `git lfs migrate import`
+to move such files into Git LFS.
+
+`check` reads `.gitattributes` in the root, in its subdirectories, and in the directories above it
+up to the top of the Git work tree. It matches patterns case-sensitively, as Git does unless
+`core.ignoreCase` is set. It doesn't read Git configuration, so it ignores `core.ignoreCase` and
+`core.attributesFile`, and it doesn't read `.git/info/attributes`, a `.gitattributes` that is a
+symbolic link, attribute macros, quoted patterns, backslash escapes inside a character class such as
+`[\]]`, or POSIX character classes other than `[:space:]`. A nested repository or submodule inside
+the root is read as part of the outer work tree. `check` reads only the `.gitattributes` files
+present in the work tree. Git also applies ones that a sparse checkout leaves out, so include every
+`.gitattributes` in a sparse checkout. A Git LFS pointer that `.gitattributes` doesn't assign to Git
+LFS counts against `max_bytes_per_file` at its size on disk. Sprawl Guard doesn't count the lines of
+a source file that is a pointer, and reports it as a warning instead.
 
 ### `[limits.max_lines_per_file]`
 
@@ -110,6 +133,8 @@ instead of reading rules from the link's target.
 | `respect_rgignore`  | Respect `.rgignore` files.                                                                     |
 | `respect_fdignore`  | Respect `.fdignore` files.                                                                     |
 | `skip_hidden`       | Skip dot-prefixed file and directory names; Windows hidden attributes do not affect selection. |
+
+The scan always leaves out `.git`, whatever `skip_hidden` says.
 
 ### `[traversal]`
 
@@ -233,7 +258,8 @@ production = 20
 | `max_lines_per_file.test`                   | optional positive integer                  | Test file limit.                                   |
 | `max_direct_files_per_directory.production` | optional positive integer or `"unlimited"` | Production direct-file limit.                      |
 | `max_direct_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test direct-file limit.                            |
-| `max_bytes_per_file`                        | optional [size](#limits) or `"unlimited"`  | Byte limit for any matching file.                  |
+| `max_bytes_per_file`                        | optional [size](#limits) or `"unlimited"`  | Byte limit for matching files that Git stores.     |
+| `max_bytes_per_lfs_object`                  | optional [size](#limits) or `"unlimited"`  | Byte limit for matching files that Git LFS stores. |
 
 Each override must set at least one limit. Matching entries apply in order, and later entries
 replace only the fields they set.
@@ -278,6 +304,23 @@ many paths the report lists when unreadable paths stop the check. Findings past 
 toward their group's total, a footer gives how many findings were shown out of the total, and the
 exit status still reflects every violation. Recorded violations within their ratchet ceilings are
 not findings, so they never count. JSON and SARIF output always list every finding.
+
+## Glob patterns
+
+Every glob in the configuration is matched against a file's whole path, relative to the repository
+root and written with `/`.
+
+| Pattern  | Matches                                                                |
+| -------- | ---------------------------------------------------------------------- |
+| `*`      | Any text within one path component. `src/*.rs` skips `src/a/b.rs`.     |
+| `?`      | One byte within one path component, so one ASCII character.            |
+| `**`     | Any number of path components, when it is a whole component: `src/**`. |
+| `[ab]`   | One of the listed characters.                                          |
+| `{a,b}`  | Either alternative.                                                    |
+| `foo.rs` | Only `foo.rs` in the root. Write `**/foo.rs` to match it anywhere.     |
+
+Unlike a `.gitignore` line, a pattern is never matched against a file's name alone, and a trailing
+`/` does not select a directory's contents. Write `generated/**`.
 
 ## Precedence
 

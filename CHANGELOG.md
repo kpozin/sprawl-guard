@@ -4,6 +4,81 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0-beta.3] - 2026-11-19
+
+### Added
+
+- `[limits].max_bytes_per_lfs_object` limits the content size of files that `.gitattributes`
+  assigns to Git LFS with `filter=lfs`: the size a pointer declares when Git LFS hasn't downloaded
+  the file, and the size on disk when it has, so results match either way unless a Git LFS
+  extension transforms the file. It is unlimited by default, accepts a size with a unit, and is
+  available in `[[overrides]]`. Human output lists these files under
+  `Git LFS objects over the byte limit`. JSON output reports them as `lfs_object_bytes` violations,
+  SARIF output under the `sprawl-guard/lfs-object-bytes` rule, and GitHub output as annotations on
+  the file. `explain` reports the file's `storage`, and fails when a `.gitattributes` that decides
+  it can't be read.
+- `check` reads `.gitattributes` in the root, its subdirectories, and the directories above it up
+  to the top of the Git work tree, and reports one it can't read as a `read_git_attributes_failed`
+  gap covering its directory.
+
+### Changed
+
+- `[limits].max_bytes_per_file` limits only files that Git stores. Files that `.gitattributes`
+  assigns to Git LFS are exempt from it, so assets moved to Git LFS on purpose are no longer
+  flagged.
+- `[[file_sizes]]` ratchet entries require the file's `storage`: `git` or `lfs`. Stale Git LFS
+  entries are reported as `lfs_object_bytes_stale`. A ratchet file from 0.6.0-beta.2 with
+  `[[file_sizes]]` entries no longer loads. Back it up, delete those entries, and run `update`.
+  `update` records current sizes rather than the old ceilings, so review the new byte ceilings
+  before committing them.
+- `check` finds Git LFS files through `.gitattributes` instead of by reading every small file, so
+  a small file that Git stores and that can't be opened is no longer reported as an unreadable
+  path. A Git LFS pointer that `.gitattributes` doesn't assign to Git LFS is measured at its size
+  on disk.
+- In configuration globs, `*` and `?` no longer match `/`. `src/*.rs` matched `src/a/b.rs` before
+  and now matches only files directly in `src`. Use `**` to cross directories: write `vendor/**`
+  where `vendor/*` was meant to cover a whole tree, and `**/*.generated.ts` where
+  `*.generated.ts` was meant to match at any depth. `**` crosses directories only as a whole path
+  component, so write `src/**/*.rs` where `src/**.rs` was used. The bundled patterns already use
+  `**`.
+
+### Removed
+
+- JSON output no longer reports `measured_from` and `pointer_bytes` for file sizes.
+
+### Fixed
+
+- `check` with a file path no longer judges that file's directory by a count of the selected files
+  alone. Before, a directory over its direct-file limit passed, and a directory with a ratchet
+  entry was reported stale. A directory's direct files are now checked only when the directory
+  itself is selected.
+- Rust `cfg(test)` exclusion removes exactly the excluded item when non-ASCII text precedes the
+  item's end on the same line. Before, leftover bytes could turn the rest of the file into one
+  string literal and miscount it.
+- A production Rust file that starts with a UTF-8 byte order mark counts the same as one without
+  it.
+- A zero or negative `max_direct_files_per_directory` or `[output].max_findings` is rejected with
+  the rule it breaks, such as `direct-file count must be greater than zero`. Before, the error
+  named an internal type.
+- A configuration that sets one language under two spellings, such as `[languages.rust]` and
+  `[languages.Rust]`, is rejected. Before, one of the two tables was dropped without a message.
+- `check` warns when the scan skips a path given on the command line because the path is hidden
+  or an ignore file excludes it. Before, `check .github/script.py` passed without checking the
+  file and without saying so. JSON output reports a `selected_path_skipped` warning, and SARIF
+  output a warning notification.
+- With `[ignore].skip_hidden = false`, the scan leaves out `.git`. Before, it checked Git's own
+  objects against byte limits and counted them toward `traversal.max_entries`.
+- SARIF output percent-encodes file paths, so a path with a space, `#` or `%` is a valid URI. When
+  `GITHUB_WORKSPACE` is set and the root is inside it, each path starts with the root's place in
+  the workspace, as `--format github` paths do, so code scanning finds files checked with
+  `--root`. When the root is outside the workspace, or the workspace does not exist, results
+  carry no file location, as GitHub annotations already did. A result
+  about a directory no longer names line 1.
+- The npm package runs its WebAssembly build on Linux with glibc older than 2.35. Before, it
+  started the native binary, which failed to load with `version 'GLIBC_2.35' not found`.
+- The npm package's WebAssembly build reads `GITHUB_WORKSPACE`, so `--format github` annotations
+  and SARIF paths include the root's place in the workspace, as the native builds do.
+
 ## [0.6.0-beta.2] - 2026-11-19
 
 ### Added

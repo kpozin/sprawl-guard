@@ -5,18 +5,36 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 
-assert(process.argv[2], "Pass the path to a Sprawl Guard executable or npm wrapper");
-const target = resolve(process.argv[2]);
+const [executable] = parseArgs({ allowPositionals: true }).positionals;
+assert(executable, "Pass the path to a Sprawl Guard executable or npm wrapper");
+const target = resolve(executable);
 // Windows cannot start a JavaScript file directly, so the npm wrapper runs through Node.js.
-const sprawlGuard = target.endsWith(".js") ? [process.execPath, target] : [target];
+const sprawlGuard: readonly [string, ...string[]] = target.endsWith(".js")
+  ? [process.execPath, target]
+  : [target];
 const dependencies = fileURLToPath(new URL("./node_modules/", import.meta.url));
 const source = "var a = 1;\n\nvar b = 2;\nvar c = 3;\n";
 const env = { ...process.env };
 delete env.ESLINT_USE_FLAT_CONFIG;
 delete env.SPRAWL_GUARD_BINARY;
 
-const cases = [
+/** One linter whose limits and suppressions Sprawl Guard imports. */
+interface LinterCase {
+  readonly name: string;
+  readonly linter: "eslint" | "oxlint";
+  /** The package in this directory's `node_modules` that provides the linter. */
+  readonly dependency: string;
+  readonly config: string;
+  readonly configText: string;
+  /** Arguments that make the linter record bulk suppressions, if it supports them. */
+  readonly bulkArgs?: readonly string[];
+  /** Whether Oxlint reads `eslint-disable` directives as its own. */
+  readonly importsEslintAlias?: boolean;
+}
+
+const cases: readonly LinterCase[] = [
   {
     name: "ESLint 8",
     linter: "eslint",
@@ -116,22 +134,22 @@ for (const fixture of cases) {
 }
 
 /** Links a file, and reports whether it could; Windows refuses without Developer Mode or administrator rights. */
-function fileLink(target, path) {
+function fileLink(target: string, path: string): Promise<boolean> {
   return symlink(target, path, "file").then(
     () => true,
-    (error) => {
+    (error: NodeJS.ErrnoException) => {
       if (process.platform === "win32" && error.code === "EPERM") return false;
       throw error;
     },
   );
 }
 
-function runSprawlGuard(cwd, args, expectedStatus = 0) {
+function runSprawlGuard(cwd: string, args: readonly string[], expectedStatus = 0): string {
   const [command, ...prefix] = sprawlGuard;
   return run(cwd, command, [...prefix, ...args], expectedStatus);
 }
 
-function run(cwd, command, args, expectedStatus = 0) {
+function run(cwd: string, command: string, args: readonly string[], expectedStatus = 0): string {
   const { error, status, stdout, stderr } = spawnSync(command, args, {
     cwd,
     encoding: "utf8",

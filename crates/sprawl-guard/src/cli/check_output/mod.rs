@@ -1,9 +1,10 @@
+mod artifact_uris;
 mod file_bytes;
 mod github;
 mod listing;
 mod sarif;
 
-pub(super) use file_bytes::{byte_size, size_source_note};
+pub(super) use file_bytes::byte_size;
 use std::path::Path;
 
 use sprawl_guard_lib::check::{
@@ -44,11 +45,24 @@ fn missing_directory_ratchet(
 /// Tells the reader how to see what the finding cap left out.
 const SEE_ALL_HINT: &str = "Use --max-findings unlimited to see all.";
 
+/// Renders a report, naming files for the workspace that GitHub Actions declares.
 pub(super) fn render_check_report(
     report: &CheckReport,
     format: CheckFormat,
     quiet: bool,
     max_findings: FiniteOrUnlimited<MaxFindings>,
+) -> Result<String> {
+    let file_paths = github::workspace_file_paths(Path::new(report.root()));
+    render(report, format, quiet, max_findings, &file_paths)
+}
+
+/// Renders a report whose GitHub and SARIF output names files through `file_paths`.
+fn render(
+    report: &CheckReport,
+    format: CheckFormat,
+    quiet: bool,
+    max_findings: FiniteOrUnlimited<MaxFindings>,
+    file_paths: &github::FilePaths,
 ) -> Result<String> {
     let listing = FindingListing::new(report, quiet, max_findings);
     match format {
@@ -57,13 +71,16 @@ pub(super) fn render_check_report(
             &human_check_report(report, quiet, listing),
             report,
             listing,
+            file_paths,
         )),
         CheckFormat::Json => serde_json::to_string_pretty(report)
             .map(|output| format!("{output}\n"))
             .map_err(|source| CliError::RenderJson { source }),
-        CheckFormat::Sarif => serde_json::to_string_pretty(&sarif::sarif_check_report(report))
-            .map(|output| format!("{output}\n"))
-            .map_err(|source| CliError::RenderJson { source }),
+        CheckFormat::Sarif => {
+            serde_json::to_string_pretty(&sarif::sarif_check_report(report, file_paths))
+                .map(|output| format!("{output}\n"))
+                .map_err(|source| CliError::RenderJson { source })
+        }
     }
 }
 
@@ -207,6 +224,10 @@ fn warning_message(warning: &CheckWarning) -> String {
         CheckWarning::LfsPointerSource { declared_bytes, .. } => format!(
             "{path}: Git LFS pointer to a {declared_bytes}-byte object, so its lines were not counted"
         ),
+        CheckWarning::SelectedPathSkipped { .. } => format!(
+            "{path}: not checked, because the scan did not reach it; \
+             the scan skips hidden and ignored paths"
+        ),
     }
 }
 
@@ -310,6 +331,7 @@ fn unreadable_path_kind_message(kind: UnreadablePathKind) -> &'static str {
         UnreadablePathKind::BrokenSymlink => "broken symlink",
         UnreadablePathKind::IgnoreParseFailed => "failed to parse ignore rule",
         UnreadablePathKind::ReadFileFailed => "failed to read file",
+        UnreadablePathKind::ReadGitAttributesFailed => "failed to read .gitattributes in directory",
     }
 }
 
@@ -398,6 +420,7 @@ fn ratchet_kind_message(kind: RatchetViolationKind) -> (&'static str, &'static s
         RatchetViolationKind::DirectoryDirectFilesStale => ("directory", "direct files"),
         RatchetViolationKind::TestDirectoryDirectFilesStale => ("test directory", "direct files"),
         RatchetViolationKind::FileBytesStale => ("file", "bytes"),
+        RatchetViolationKind::LfsObjectBytesStale => ("Git LFS object", "bytes"),
     }
 }
 
@@ -442,7 +465,24 @@ mod tests {
         RelativePath, ScanSummary, UnreadablePathSeverity,
     };
 
+    use super::github::FilePaths;
     use super::*;
+
+    /// Renders a report rooted at the checkout, whatever workspace the test process runs in.
+    fn render_at_the_root(
+        report: &CheckReport,
+        format: CheckFormat,
+        quiet: bool,
+        max_findings: FiniteOrUnlimited<MaxFindings>,
+    ) -> Result<String> {
+        render(
+            report,
+            format,
+            quiet,
+            max_findings,
+            &FilePaths::Prefixed(String::new()),
+        )
+    }
 
     /// Renders the human report under `max_findings`, as `render_check_report` does.
     fn render_human(
@@ -932,7 +972,7 @@ mod tests {
 
         #[test]
         fn it_annotates_a_violation_that_warnings_would_have_crowded_out() {
-            let output = render_check_report(
+            let output = render_at_the_root(
                 &report_with_every_section(),
                 CheckFormat::Github,
                 false,
@@ -1118,7 +1158,7 @@ mod tests {
                 }
 
                 fn render(format: CheckFormat) -> String {
-                    render_check_report(
+                    render_at_the_root(
                         &report(),
                         format,
                         false,
@@ -1150,7 +1190,7 @@ mod tests {
             fn it_annotates_the_gap_as_an_error_on_its_file() {
                 let report = report_with_gap(UnreadablePathSeverity::Error, vec![]);
 
-                let output = render_check_report(
+                let output = render_at_the_root(
                     &report,
                     CheckFormat::Github,
                     false,
@@ -1168,7 +1208,7 @@ mod tests {
                 let report = report_with_gap(UnreadablePathSeverity::Error, vec![]);
 
                 let output: serde_json::Value = serde_json::from_str(
-                    &render_check_report(
+                    &render_at_the_root(
                         &report,
                         CheckFormat::Sarif,
                         false,
@@ -1219,7 +1259,7 @@ mod tests {
             fn it_annotates_the_gap_as_a_warning() {
                 let report = report_with_gap(UnreadablePathSeverity::Warning, vec![]);
 
-                let output = render_check_report(
+                let output = render_at_the_root(
                     &report,
                     CheckFormat::Github,
                     false,
@@ -1234,7 +1274,8 @@ mod tests {
             fn it_keeps_the_sarif_run_successful() {
                 let report = report_with_gap(UnreadablePathSeverity::Warning, vec![]);
 
-                let output = sarif::sarif_check_report(&report);
+                let output =
+                    sarif::sarif_check_report(&report, &FilePaths::Prefixed(String::new()));
 
                 let invocation = &output["runs"][0]["invocations"][0];
                 assert_eq!(invocation["executionSuccessful"], true);

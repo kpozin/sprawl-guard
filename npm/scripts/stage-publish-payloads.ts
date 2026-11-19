@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { inspectFilesystemEntry } from "./filesystem-entry.ts";
 import {
   PUBLISH_WORKSPACE_DIRECTORY,
@@ -463,23 +464,17 @@ function validateExistingPayloadPathEntry(args: {
   return { kind: "valid" };
 }
 
-function parseArtifactRootDirectory(args: readonly string[]): ParseArtifactRootDirectoryResult {
+function parseArtifactRootDirectory(): ParseArtifactRootDirectoryResult {
+  const args = parseArgs({ allowPositionals: true }).positionals;
   const [artifactRootDirectory] = args;
   if (args.length === 1 && artifactRootDirectory !== undefined) {
-    return {
-      kind: "ok",
-      artifactRootDirectory: artifactRootDirectoryPath(artifactRootDirectory),
-    };
+    return { kind: "ok", artifactRootDirectory: artifactRootDirectoryPath(artifactRootDirectory) };
   }
-
-  return {
-    kind: "invalid_arguments",
-    args: [...args],
-  };
+  return { kind: "invalid_arguments", args };
 }
 
 function main(): number {
-  const parsedArtifactRootDirectory = parseArtifactRootDirectory(process.argv.slice(2));
+  const parsedArtifactRootDirectory = parseArtifactRootDirectory();
   if (parsedArtifactRootDirectory.kind === "invalid_arguments") {
     printFailure(parsedArtifactRootDirectory);
     return 1;

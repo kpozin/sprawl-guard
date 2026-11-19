@@ -2,20 +2,18 @@
 
 use serde::Serialize;
 
-use crate::{FileByteLimit, FileBytes, FileSizeSource, RelativePath};
+use crate::{FileByteLimit, FileBytes, FileStorage, RelativePath};
 
 /// A file, source or not, that is larger than its byte limit.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FileBytesViolation {
-    /// Stable violation kind for machine consumers.
+    /// Stable violation kind for machine consumers, which says which byte limit the file is over.
     pub kind: FileBytesViolationKind,
     /// Repository-relative file path.
     pub path: RelativePath,
-    /// Size of the file: its size on disk, or the size its Git LFS pointer declares.
+    /// Size of the file's content. For a file in Git LFS that isn't downloaded, it is the size
+    /// that its pointer declares.
     pub actual: FileBytes,
-    /// Where `actual` came from.
-    #[serde(flatten)]
-    pub measured_from: FileSizeSource,
     /// Byte limit that applies to the file.
     pub limit: FileByteLimit,
     /// Ceiling recorded for this file in the ratchet file, which the file grew above.
@@ -29,6 +27,27 @@ pub struct FileBytesViolation {
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FileBytesViolationKind {
-    /// The file is larger than `max_bytes_per_file`.
+    /// A file that Git stores is larger than `max_bytes_per_file`.
     FileBytes,
+    /// A file that Git LFS stores is larger than `max_bytes_per_lfs_object`.
+    LfsObjectBytes,
+}
+
+impl FileBytesViolationKind {
+    /// Returns where Git stores a file with this kind of violation.
+    pub const fn storage(self) -> FileStorage {
+        match self {
+            Self::FileBytes => FileStorage::Git,
+            Self::LfsObjectBytes => FileStorage::Lfs,
+        }
+    }
+}
+
+impl From<FileStorage> for FileBytesViolationKind {
+    fn from(storage: FileStorage) -> Self {
+        match storage {
+            FileStorage::Git => Self::FileBytes,
+            FileStorage::Lfs => Self::LfsObjectBytes,
+        }
+    }
 }

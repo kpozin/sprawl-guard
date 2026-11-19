@@ -11,13 +11,17 @@ export const onRequest = defineRouteMiddleware(({ locals }) => {
   if (!result.ok) {
     throw new Error(`Cannot create Markdown alternate: ${result.error.kind}`);
   }
+  const [route] = result.value.entries;
+  if (route === undefined) {
+    throw new Error("Cannot create Markdown alternate: no route for the entry");
+  }
 
   head.push({
     tag: "link",
     attrs: {
       rel: "alternate",
       type: "text/markdown",
-      href: result.value.entries[0].markdownPath,
+      href: route.markdownPath,
     },
   });
 });

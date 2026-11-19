@@ -26,9 +26,16 @@ export type WasiFileSystem = {
 /** Direct WASI invocation for one wrapper run. */
 export type WasiInvocationPlan = {
   readonly args: string[];
-  readonly env: { readonly PWD: GuestPath };
+  readonly env: {
+    readonly PWD: GuestPath;
+    /** The GitHub Actions checkout directory, which `--format github` and SARIF output read. */
+    readonly GITHUB_WORKSPACE?: GuestPath;
+  };
   readonly fileSystem: WasiFileSystem;
 };
+
+/** The host environment variables that name paths the module reads. */
+export type WasiHostEnvironment = { readonly GITHUB_WORKSPACE?: string | undefined };
 
 /** Start of a Windows path that names a drive, such as `C:\dir` or the drive-relative `C:dir`. */
 const DRIVE_PREFIX = /^[A-Za-z]:/u;
@@ -75,14 +82,7 @@ export function wasiFileSystem(
   );
   return {
     preopens,
-    toGuest: (hostPath) => {
-      const volume = windowsVolume(hostPath);
-      if (!mounts.has(volume.key)) {
-        return undefined;
-      }
-      const rest = hostPath.slice(volume.root.length).replaceAll("\\", "/");
-      return unsafeGuestPath(rest === "" ? volume.guest : `${volume.guest}/${rest}`);
-    },
+    toGuest: (hostPath) => (mounts.has(windowsVolume(hostPath).key) ? windowsGuestPath(hostPath) : undefined),
     toHost: (guestPath) => {
       for (const [guest, root] of preopens) {
         if (guestPath === guest || guestPath.startsWith(`${guest}/`)) {
@@ -93,6 +93,13 @@ export function wasiFileSystem(
       return undefined;
     },
   };
+}
+
+/** Spells a Windows host path for the module, whether or not its volume is mounted. */
+function windowsGuestPath(hostPath: AbsolutePath): GuestPath {
+  const volume = windowsVolume(hostPath);
+  const rest = hostPath.slice(volume.root.length).replaceAll("\\", "/");
+  return unsafeGuestPath(rest === "" ? volume.guest : `${volume.guest}/${rest}`);
 }
 
 /**
@@ -120,19 +127,30 @@ function windowsVolume(hostPath: AbsolutePath) {
  *
  * POSIX arguments pass through unchanged. On Windows, an absolute path in an argument or in an
  * `--option=value` value is respelled for the module, and backslashes become forward slashes.
+ * The host's `GITHUB_WORKSPACE` is respelled the same way.
  */
 export function buildWasiInvocation(
   userArgv: readonly string[],
   platform: NodeJS.Platform = process.platform,
   cwd: AbsolutePath = resolveAbsolutePath(process.cwd()),
+  { GITHUB_WORKSPACE: workspace }: WasiHostEnvironment = process.env,
 ): WasiInvocationPlan {
   if (platform !== "win32") {
     return {
       args: ["sprawl-guard", ...userArgv],
-      env: { PWD: unsafeGuestPath(cwd) },
+      env: {
+        PWD: unsafeGuestPath(cwd),
+        ...(workspace === undefined ? {} : { GITHUB_WORKSPACE: unsafeGuestPath(workspace) }),
+      },
       fileSystem: POSIX_FILE_SYSTEM,
     };
   }
+  const workspaceHostValue = workspace === undefined ? undefined : withoutExtendedPrefix(workspace);
+  // GitHub sets an absolute workspace. Any other value names no directory the module could find.
+  const workspaceHostPath =
+    workspaceHostValue !== undefined && path.win32.isAbsolute(workspaceHostValue)
+      ? unsafeAbsolutePathFromKnownAbsolute(path.win32.resolve(cwd, workspaceHostValue))
+      : undefined;
   // A value is a host path when it is absolute or names a drive. As natively, `\dir` is on the
   // working directory's drive, and `D:dir` is under the current directory of drive D.
   const split = userArgv.map((argument) => {
@@ -154,6 +172,10 @@ export function buildWasiInvocation(
     cwd,
     split.flatMap(({ hostPath }) => (hostPath === undefined ? [] : [hostPath])),
   );
+  // The workspace's volume is never mounted for the workspace alone: a missing volume would stop
+  // every command, even `--version`. On an unmounted volume the workspace names nothing the
+  // module can see, which the CLI reads as a root outside the workspace.
+  const workspaceGuestPath = workspaceHostPath && windowsGuestPath(workspaceHostPath);
   return {
     args: [
       "sprawl-guard",
@@ -163,7 +185,10 @@ export function buildWasiInvocation(
       ),
     ],
     // The preopens always contain the working directory's volume.
-    env: { PWD: fileSystem.toGuest(cwd) ?? unsafeGuestPath("/") },
+    env: {
+      PWD: fileSystem.toGuest(cwd) ?? unsafeGuestPath("/"),
+      ...(workspaceGuestPath === undefined ? {} : { GITHUB_WORKSPACE: workspaceGuestPath }),
+    },
     fileSystem,
   };
 }

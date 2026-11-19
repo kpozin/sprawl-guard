@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { resolveNpmDistTagSelection } from "./npm-dist-tag.ts";
+import { NPM_DIST_TAG_SCHEMA, npmDistTagAcceptsVersion, resolveNpmDistTagSelection } from "./npm-dist-tag.ts";
 import type { PublicPackageVersion } from "./package-version.ts";
 
 const STABLE_VERSION = "1.2.3" as PublicPackageVersion;
@@ -19,6 +19,38 @@ describe("resolveNpmDistTagSelection", () => {
         resolveNpmDistTagSelection({ customTag: "preview", releaseVersion: STABLE_VERSION, selection: "next" }),
         { kind: "unexpected_custom_tag", selection: "next" },
       );
+    });
+  });
+
+  describe("when latest is selected", () => {
+    function resolveLatest(version: string, selection: "latest" | "custom") {
+      return resolveNpmDistTagSelection({
+        customTag: selection === "custom" ? "latest" : "",
+        releaseVersion: version as PublicPackageVersion,
+        selection,
+      });
+    }
+
+    describe("for a stable release", () => {
+      it("returns latest", () => {
+        assert.deepEqual(resolveLatest("1.2.3", "latest"), { kind: "ok", tag: "latest" });
+      });
+    });
+
+    describe("for a prerelease", () => {
+      it("refuses to point latest at it", () => {
+        assert.deepEqual(resolveLatest("0.6.0-beta.3", "latest"), {
+          kind: "prerelease_on_latest",
+          releaseVersion: "0.6.0-beta.3",
+        });
+      });
+
+      it("refuses latest spelled as a custom tag", () => {
+        assert.deepEqual(resolveLatest("0.6.0-beta.3", "custom"), {
+          kind: "prerelease_on_latest",
+          releaseVersion: "0.6.0-beta.3",
+        });
+      });
     });
   });
 
@@ -97,6 +129,25 @@ describe("resolveNpmDistTagSelection", () => {
         resolveNpmDistTagSelection({ customTag: "", releaseVersion: STABLE_VERSION, selection: "stable" }),
         { kind: "invalid_selection", value: "stable" },
       );
+    });
+  });
+});
+
+describe("npmDistTagAcceptsVersion", () => {
+  const accepts = (tag: string, version: string) =>
+    npmDistTagAcceptsVersion(NPM_DIST_TAG_SCHEMA.parse(tag), version as PublicPackageVersion);
+
+  describe("when the tag is latest", () => {
+    it("accepts a stable version and refuses a prerelease", () => {
+      assert.equal(accepts("latest", "1.2.3"), true);
+      assert.equal(accepts("latest", "1.2.3-beta.1"), false);
+    });
+  });
+
+  describe("when the tag is any other", () => {
+    it("accepts stable versions and prereleases", () => {
+      assert.equal(accepts("beta", "1.2.3-beta.1"), true);
+      assert.equal(accepts("next", "1.2.3"), true);
     });
   });
 });

@@ -4,9 +4,12 @@ use std::path::Path;
 use crate::classification::SourceKind;
 use crate::config::Config;
 use crate::ratchet::{
-    DirectoryRatchetKey, FileRatchetKey, RatchetCount, RatchetFile, RatchetLookup,
+    DirectoryRatchetKey, FileRatchetKey, FileSizeRatchetKey, RatchetCount, RatchetFile,
+    RatchetLookup,
 };
-use crate::{DirectFiles, FileByteLimit, LanguageGroupId, LineLimit, RelativePath, Result};
+use crate::{
+    DirectFiles, FileByteLimit, FileStorage, LanguageGroupId, LineLimit, RelativePath, Result,
+};
 
 use super::directory_direct_files::{DirectoryDirectFilesCheck, DirectoryDirectFilesMeasurement};
 use super::report::{CheckViolation, FileViolationKind, RatchetEntryCount};
@@ -178,7 +181,7 @@ pub(super) fn stale_missing_ratchets(
 pub(super) struct MeasuredRatchets {
     files: BTreeSet<FileRatchetKey>,
     directories: BTreeSet<DirectoryRatchetKey>,
-    file_sizes: BTreeSet<RelativePath>,
+    file_sizes: BTreeSet<FileSizeRatchetKey>,
 }
 
 impl MeasuredRatchets {
@@ -198,8 +201,15 @@ impl MeasuredRatchets {
 
     /// Records a file whose size was measured, or failed to read, so its byte ceiling is not
     /// reported missing.
-    pub(super) fn record_file_size(&mut self, path: &RelativePath) {
-        self.file_sizes.insert(path.clone());
+    pub(super) fn record_file_size(&mut self, key: FileSizeRatchetKey) {
+        self.file_sizes.insert(key);
+    }
+
+    /// Records a file whose storage is unknown, because a `.gitattributes` file above it can't be
+    /// read, so neither of its byte ceilings is reported missing.
+    pub(super) fn record_unknown_storage_file(&mut self, path: &RelativePath) {
+        self.file_sizes
+            .extend(FileStorage::ALL.map(|storage| FileSizeRatchetKey::new(path.clone(), storage)));
     }
 
     pub(super) fn record_directory(&mut self, measurement: &DirectoryDirectFilesMeasurement) {
@@ -265,8 +275,8 @@ impl RatchetState {
     }
 
     /// Returns the byte ceiling for one file.
-    pub(super) fn file_size_ceiling(&self, path: &RelativePath) -> Option<FileByteLimit> {
-        self.ratchets.file_size_ceiling(path)
+    pub(super) fn file_size_ceiling(&self, key: &FileSizeRatchetKey) -> Option<FileByteLimit> {
+        self.ratchets.file_size_ceiling(key)
     }
 
     /// Returns the direct-file ceiling for one directory's production or test files in `group`.

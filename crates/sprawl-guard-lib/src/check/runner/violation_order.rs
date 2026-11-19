@@ -3,7 +3,8 @@
 use crate::RelativePath;
 
 use super::super::report::{
-    CheckViolation, DirectoryViolationKind, FileViolationKind, RatchetViolationKind,
+    CheckViolation, DirectoryViolationKind, FileBytesViolationKind, FileViolationKind,
+    RatchetViolationKind,
 };
 
 /// Sorts violations by kind, file violations first and stale ratchet entries last, then by path.
@@ -22,7 +23,7 @@ impl CheckViolation {
                 &violation.path,
             ),
             Self::FileBytes(violation) => {
-                ViolationSortKey::new(FILE_BYTES_SORT_ORDER, &violation.path)
+                ViolationSortKey::new(file_bytes_sort_order(violation.kind), &violation.path)
             }
             Self::Ratchet(violation) => ViolationSortKey::new(
                 ratchet_violation_sort_order(violation.kind()),
@@ -53,21 +54,27 @@ fn file_violation_sort_order(kind: FileViolationKind) -> u8 {
 }
 
 /// File size violations follow line violations, since both describe single files.
-const FILE_BYTES_SORT_ORDER: u8 = 2;
+fn file_bytes_sort_order(kind: FileBytesViolationKind) -> u8 {
+    match kind {
+        FileBytesViolationKind::FileBytes => 2,
+        FileBytesViolationKind::LfsObjectBytes => 3,
+    }
+}
 
 fn directory_violation_sort_order(kind: DirectoryViolationKind) -> u8 {
     match kind {
-        DirectoryViolationKind::DirectoryDirectFiles => 3,
-        DirectoryViolationKind::TestDirectoryDirectFiles => 4,
+        DirectoryViolationKind::DirectoryDirectFiles => 4,
+        DirectoryViolationKind::TestDirectoryDirectFiles => 5,
     }
 }
 
 fn ratchet_violation_sort_order(kind: RatchetViolationKind) -> u8 {
     match kind {
-        RatchetViolationKind::FileLinesStale => 5,
-        RatchetViolationKind::TestFileLinesStale => 6,
-        RatchetViolationKind::DirectoryDirectFilesStale => 7,
-        RatchetViolationKind::TestDirectoryDirectFilesStale => 8,
-        RatchetViolationKind::FileBytesStale => 9,
+        RatchetViolationKind::FileLinesStale => 6,
+        RatchetViolationKind::TestFileLinesStale => 7,
+        RatchetViolationKind::DirectoryDirectFilesStale => 8,
+        RatchetViolationKind::TestDirectoryDirectFilesStale => 9,
+        RatchetViolationKind::FileBytesStale => 10,
+        RatchetViolationKind::LfsObjectBytesStale => 11,
     }
 }

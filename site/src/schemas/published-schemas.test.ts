@@ -73,9 +73,16 @@ describe("published schemas", () => {
       function withByteLimits(value: unknown, parsedCodeValue: unknown = value) {
         return {
           schema_version: CONFIG_SCHEMA_VERSION,
-          limits: { max_bytes_per_file: value },
+          limits: { max_bytes_per_file: value, max_bytes_per_lfs_object: value },
           traversal: { max_parsed_code_file_bytes: parsedCodeValue },
-          overrides: [{ paths: ["assets/**"], reason: "Assets", max_bytes_per_file: value }],
+          overrides: [
+            {
+              paths: ["assets/**"],
+              reason: "Assets",
+              max_bytes_per_file: value,
+              max_bytes_per_lfs_object: value,
+            },
+          ],
         };
       }
 
@@ -85,7 +92,7 @@ describe("published schemas", () => {
         });
       }
 
-      test('accepts "unlimited" for max_bytes_per_file', () => {
+      test('accepts "unlimited" for the file and LFS object limits', () => {
         assert.ok(validate(withByteLimits("unlimited", 4096)), JSON.stringify(validate.errors));
       });
 

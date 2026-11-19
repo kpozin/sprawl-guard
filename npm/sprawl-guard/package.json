@@ -1,6 +1,6 @@
 {
   "name": "@kpozin/sprawl-guard",
-  "version": "0.6.0-beta.2",
+  "version": "0.6.0-beta.3",
   "description": "Node.js wrapper for the sprawl-guard CLI.",
   "license": "(MIT OR Apache-2.0)",
   "type": "module",

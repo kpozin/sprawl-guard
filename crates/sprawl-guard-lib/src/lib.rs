@@ -34,7 +34,8 @@ pub use config::{
 pub use error::{ConfigUpgradeCommand, Result, SprawlError};
 pub use ratchet::{
     DirectoryRatchet, DirectoryRatchetKey, FileRatchet, FileRatchetKey, FileSizeRatchet,
-    RatchetCount, RatchetFile, RatchetLookup, RatchetSchemaVersion, authored_ratchet_json_schema,
+    FileSizeRatchetKey, RatchetCount, RatchetFile, RatchetLookup, RatchetSchemaVersion,
+    authored_ratchet_json_schema,
 };
 pub use resolved_limits::{
     MatchedOverride, OverrideOrdinal, ResolvedDirectFileLimit, ResolvedFileBytesLimit,
@@ -42,7 +43,7 @@ pub use resolved_limits::{
 };
 pub use rust_cfg::{ExcludedItemCount, RustCfgTestInfo, RustCfgTestStatus};
 pub use value::file_bytes::{
-    FileByteLimit, FileByteLimitError, FileBytes, FileSizeSource, MaxBytesPerFile, MeasuredFileSize,
+    FileByteLimit, FileByteLimitError, FileBytes, FileStorage, MaxBytesPerFile,
 };
 pub use value::glob::{GlobPattern, GlobPatternError};
 pub use value::language::{LanguageId, LanguageIdError};

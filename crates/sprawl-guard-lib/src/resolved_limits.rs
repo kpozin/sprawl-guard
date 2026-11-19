@@ -3,14 +3,14 @@
 use std::num::NonZeroUsize;
 use std::path::Path;
 
-use globset::{Glob, GlobMatcher};
+use globset::GlobMatcher;
 use serde::Serialize;
 
 use crate::classification::{ClassifiedSource, SourceKind};
 use crate::config::{Config, OverrideLimits, OverridePaths, OverrideReason};
 use crate::{
-    CountLines, DirectFileLimit, LanguageGroupId, LineLimit, MaxBytesPerFile, RelativePath, Result,
-    SprawlError,
+    CountLines, DirectFileLimit, FileStorage, LanguageGroupId, LineLimit, MaxBytesPerFile,
+    RelativePath, Result,
 };
 
 const DIRECTORY_OVERRIDE_DESCENDANT_PROBE: &str = "__sprawl_guard_directory_metric__";
@@ -109,7 +109,7 @@ impl<'config> LimitResolver<'config> {
                 .map(|(index, override_entry)| {
                     Ok(CompiledOverride {
                         ordinal: OverrideOrdinal::from_zero_based(index),
-                        paths: override_path_matchers(&override_entry.paths)?,
+                        paths: override_path_matchers(&override_entry.paths),
                         limits: &override_entry.limits,
                         original_paths: &override_entry.paths,
                         reason: &override_entry.reason,
@@ -171,43 +171,61 @@ impl<'config> LimitResolver<'config> {
 
     /// Returns whether any file can have a finite byte limit, so that file sizes need measuring.
     pub(crate) fn limits_file_bytes(&self) -> bool {
-        self.config.limits.max_bytes_per_file.finite().is_some()
-            || self.overrides.iter().any(|override_entry| {
-                override_entry
+        [FileStorage::Git, FileStorage::Lfs]
+            .into_iter()
+            .any(|storage| {
+                self.config
                     .limits
-                    .max_bytes_per_file()
-                    .and_then(MaxBytesPerFile::finite)
+                    .max_file_bytes(storage)
+                    .finite()
                     .is_some()
+                    || self.overrides.iter().any(|override_entry| {
+                        override_entry
+                            .limits
+                            .max_file_bytes(storage)
+                            .and_then(MaxBytesPerFile::finite)
+                            .is_some()
+                    })
             })
     }
 
-    /// Resolves the byte limit for one file: the repository default, replaced by each matching
-    /// override that sets one, in declaration order.
-    pub(crate) fn max_bytes_per_file(&self, path: &RelativePath) -> MaxBytesPerFile {
-        self.byte_limit_overrides(path)
+    /// Resolves the byte limit for one file stored in `storage`: the repository default, replaced
+    /// by each matching override that sets one, in declaration order.
+    pub(crate) fn max_file_bytes(
+        &self,
+        path: &RelativePath,
+        storage: FileStorage,
+    ) -> MaxBytesPerFile {
+        self.byte_limit_overrides(path, storage)
             .map(|(_, limit)| limit)
             .last()
-            .unwrap_or(self.config.limits.max_bytes_per_file)
+            .unwrap_or(self.config.limits.max_file_bytes(storage))
     }
 
-    /// Resolves the byte limit for one file, with the overrides that set it.
-    pub(crate) fn file_bytes_limit(&self, path: &RelativePath) -> ResolvedFileBytesLimit {
+    /// Resolves the byte limit for one file stored in `storage`, with the overrides that set it.
+    pub(crate) fn file_bytes_limit(
+        &self,
+        path: &RelativePath,
+        storage: FileStorage,
+    ) -> ResolvedFileBytesLimit {
         ResolvedFileBytesLimit {
-            value: self.max_bytes_per_file(path),
+            value: self.max_file_bytes(path, storage),
             matched_overrides: self
-                .byte_limit_overrides(path)
+                .byte_limit_overrides(path, storage)
                 .map(|(override_entry, _)| override_entry.matched_override())
                 .collect(),
         }
     }
 
-    /// Returns the overrides that match a file and set its byte limit, in declaration order.
+    /// Returns the overrides that match a file and set its byte limit for `storage`, in
+    /// declaration order.
     fn byte_limit_overrides<'resolver>(
         &'resolver self,
         path: &'resolver RelativePath,
+        storage: FileStorage,
     ) -> impl Iterator<Item = (&'resolver CompiledOverride<'config>, MaxBytesPerFile)> {
         self.overrides.iter().filter_map(move |override_entry| {
-            let limit = override_entry.limits.max_bytes_per_file()?;
+            let limit = override_entry.limits.max_file_bytes(storage)?;
             file_matches_override(&override_entry.paths, path).then_some((override_entry, limit))
         })
     }
@@ -279,19 +297,13 @@ struct OverridePathMatcher {
     matcher: GlobMatcher,
 }
 
-fn override_path_matchers(paths: &OverridePaths) -> Result<Vec<OverridePathMatcher>> {
+fn override_path_matchers(paths: &OverridePaths) -> Vec<OverridePathMatcher> {
     paths
         .as_slice()
         .iter()
-        .map(|path| {
-            let glob = Glob::new(path.as_str()).map_err(|source| SprawlError::InvalidGlob {
-                pattern: path.to_string(),
-                source,
-            })?;
-            Ok(OverridePathMatcher {
-                matches_directory_descendants: path.as_str().ends_with("/**"),
-                matcher: glob.compile_matcher(),
-            })
+        .map(|path| OverridePathMatcher {
+            matches_directory_descendants: path.as_str().ends_with("/**"),
+            matcher: path.compile().compile_matcher(),
         })
         .collect()
 }

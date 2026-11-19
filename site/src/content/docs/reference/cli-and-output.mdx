@@ -15,8 +15,8 @@ commands from the repository root, or pass its path with `--root`.
 <CliCommandReference path="sprawl-guard" />
 
 The npm package includes native builds for macOS (x64 and Arm), Linux (x64 and Arm with glibc, x64
-with musl), and Windows (x64). On other platforms it runs a slower WebAssembly build. The Linux
-glibc builds need glibc 2.35 or newer.
+with musl), and Windows (x64). The Linux glibc builds need glibc 2.35 or newer. On other platforms,
+and on Linux with an older glibc, it runs a slower WebAssembly build.
 
 ## Commands
 
@@ -47,7 +47,10 @@ Checks the whole repository when no paths are given, or only the selected paths.
 `--require-ratchet-current` and `--no-require-ratchet-current` cannot be combined. The check
 reports every unreadable path and every source file too large to count along with its violations.
 With `--unreadable-paths warn`, those gaps are warnings, so a check can pass with a partial report.
-A selected path that doesn't exist is still an error.
+A selected path that doesn't exist is still an error. A selected path that the scan skips, because
+it is hidden or an ignore file excludes it, is not checked. Human and JSON output warn about each
+one, and SARIF output lists each as a notification. The exit code doesn't change, so a hook that
+hides the output of a passing command hides the warning too.
 
 ### `update [PATHS]...`
 
@@ -179,9 +182,10 @@ Shows, for one path, whether it is ignored or excluded, which language claims it
 test file, its limits, matching overrides, its current lines, and Rust `cfg(test)` handling.
 
 - **A file's size** is shown next to its byte limit and the overrides that set that limit, as in
-  `size: 1500 bytes (1.5 kB), limit 1000 bytes (1.0 kB)`. JSON reports them as `file_bytes`, with
-  the `limit` and a `size` whose `state` is `measured` or `not_found`. A measured `size` has the
-  same `measured_from` field as a `file_bytes` violation.
+  `size: 1500 bytes (1.5 kB), limit 1000 bytes (1.0 kB)`. For a file in Git LFS, the size is
+  followed by `stored in Git LFS`. JSON reports them as `file_bytes`, with the file's `storage`
+  (`git` or `lfs`), the `limit` that applies to that storage, and a `size` whose `state` is
+  `measured` or `not_found`.
 - **A source file too large to count** is reported as not counted, with its size and
   `[traversal].max_parsed_code_file_bytes`, instead of failing.
 - **A source file that is a Git LFS pointer** is reported as not counted. JSON reports
@@ -234,7 +238,8 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
     `GITHUB_WORKSPACE`; otherwise it's relative to the root. A pull request's diff shows the
     annotation only when line 1 is part of the diff.
   - Directory violations, stale ratchet entries, and file violations under a root outside
-    `GITHUB_WORKSPACE` name no file, so GitHub lists them only on the workflow run.
+    `GITHUB_WORKSPACE`, or when `GITHUB_WORKSPACE` names a directory that does not exist, name no
+    file, so GitHub lists them only on the workflow run.
   - GitHub shows at most 10 error annotations per step and 50 per job; the full report stays in the
     step log.
 
@@ -304,15 +309,18 @@ The report fields are:
 - `summary`: the number of source files, distinct source directories, and languages checked, plus
   the number of remaining ratchet entries. Passing human output shows the same summary.
 - `warnings` and `violations`: structured diagnostics. Each violation's `kind` is `file_lines`,
-  `test_file_lines`, `file_bytes`, `directory_direct_files`, or `test_directory_direct_files`, or,
+  `test_file_lines`, `file_bytes`, `lfs_object_bytes`, `directory_direct_files`, or
+  `test_directory_direct_files`, or,
   for a stale ratchet entry, one of these kinds followed by `_stale`. A file or directory
   violation's `ratchet` field holds its ratchet ceiling when it grew above one, and is `null` when
-  the ratchet file has no entry for it. Only a `file_bytes` violation has `measured_from`: it is
-  `on_disk`, or `lfs_pointer` for a file that Git LFS stores, in which case `actual` is the size the
-  pointer declares and `pointer_bytes` is the size of the pointer itself. Each warning has a `kind`
+  the ratchet file has no entry for it. A `file_bytes` violation is for a file that Git stores,
+  and an `lfs_object_bytes` violation is for a file in Git LFS, whose `actual` size is the content
+  size whether or not Git LFS has downloaded it. Each warning has a `kind`
   and a `path`. A `rust_cfg_test_parse_failed` warning adds the parser's `detail`. An
   `lfs_pointer_source` warning, for a source file whose lines weren't counted because it is a Git
-  LFS pointer, adds the file's `role` and the `declared_bytes` of the object.
+  LFS pointer, adds the file's `role` and the `declared_bytes` of the object. A
+  `selected_path_skipped` warning names a path given on the command line that the scan skipped
+  because the path is hidden or an ignore file excludes it.
 
 When a path can't be read or a source file is too large to count, every format still prints the
 full report. Other errors print only a message on stderr, so check the exit code before parsing

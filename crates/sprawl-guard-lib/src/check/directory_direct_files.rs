@@ -63,6 +63,14 @@ pub(super) enum DirectoryDirectFilesCheck {
 }
 
 impl DirectoryDirectFilesCheck {
+    /// Returns the directory that was measured.
+    pub(super) fn path(&self) -> &RelativePath {
+        match self {
+            Self::WithinLimit(measurement) => &measurement.path,
+            Self::Exceeded(violation) => &violation.path,
+        }
+    }
+
     pub(super) fn measurement(&self) -> DirectoryDirectFilesMeasurement {
         match self {
             Self::WithinLimit(measurement) => measurement.clone(),

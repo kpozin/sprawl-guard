@@ -1,6 +1,8 @@
 //! Which findings the human report lists under the finding cap, and in what order.
 
-use sprawl_guard_lib::check::{CheckViolation, DirectoryViolationKind, FileViolationKind};
+use sprawl_guard_lib::check::{
+    CheckViolation, DirectoryViolationKind, FileBytesViolationKind, FileViolationKind,
+};
 use sprawl_guard_lib::{CheckReport, CheckStatus};
 use sprawl_guard_lib::{FiniteOrUnlimited, MaxFindings};
 
@@ -81,6 +83,7 @@ pub(super) enum ViolationGroup {
     FileLines,
     TestFileLines,
     FileBytes,
+    LfsObjectBytes,
     DirectoryDirectFiles,
     TestDirectoryDirectFiles,
     StaleRatchet,
@@ -97,7 +100,10 @@ impl ViolationGroup {
                 DirectoryViolationKind::DirectoryDirectFiles => Self::DirectoryDirectFiles,
                 DirectoryViolationKind::TestDirectoryDirectFiles => Self::TestDirectoryDirectFiles,
             },
-            CheckViolation::FileBytes(_) => Self::FileBytes,
+            CheckViolation::FileBytes(violation) => match violation.kind {
+                FileBytesViolationKind::FileBytes => Self::FileBytes,
+                FileBytesViolationKind::LfsObjectBytes => Self::LfsObjectBytes,
+            },
             CheckViolation::Ratchet(_) => Self::StaleRatchet,
         }
     }
@@ -107,6 +113,7 @@ impl ViolationGroup {
             Self::FileLines => "Files over the line limit",
             Self::TestFileLines => "Test files over the line limit",
             Self::FileBytes => "Files over the byte limit",
+            Self::LfsObjectBytes => "Git LFS objects over the byte limit",
             Self::DirectoryDirectFiles => "Directories with too many direct files",
             Self::TestDirectoryDirectFiles => "Test directories with too many direct files",
             Self::StaleRatchet => "Stale ratchet entries",

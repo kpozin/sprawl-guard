@@ -425,7 +425,8 @@ mod when_explaining_a_file_with_a_byte_limit {
                         },
                     ],
                 },
-                "size": { "state": "measured", "bytes": 1500, "measured_from": "on_disk" },
+                "storage": "git",
+                "size": { "state": "measured", "bytes": 1500 },
             })
         );
     }

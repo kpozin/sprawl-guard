@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
+use std::fmt;
 
 use schemars::JsonSchema;
 use schemars::{Schema, SchemaGenerator, json_schema};
-use serde::{Deserialize, Serialize};
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
 use tokei::LanguageType;
 
 use crate::{CountLines, GlobPattern, LanguageId, LineLimit, Result, SprawlError};
@@ -120,9 +122,47 @@ pub(super) struct PartialLanguageConfig {
 ///
 /// The map needs a custom schema because the enclosing key determines whether Rust-only fields are
 /// valid. Deserialization still uses the same partial config structs as runtime loading.
-#[derive(Debug, Deserialize)]
-#[serde(transparent)]
+#[derive(Debug)]
 pub(super) struct PartialLanguagesConfig(BTreeMap<LanguageId, PartialLanguageConfig>);
+
+/// Rejects a language that appears under two keys.
+///
+/// Language keys are case-insensitive, so `rust` and `Rust` are distinct TOML keys for one
+/// language, and a plain map would keep only one of the two tables.
+impl<'de> Deserialize<'de> for PartialLanguagesConfig {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct LanguagesVisitor;
+
+        impl<'de> Visitor<'de> for LanguagesVisitor {
+            type Value = PartialLanguagesConfig;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a table of language settings keyed by language")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut languages = BTreeMap::new();
+                while let Some((language, config)) = map.next_entry::<LanguageId, _>()? {
+                    if languages.insert(language, config).is_some() {
+                        return Err(de::Error::custom(format!(
+                            "language {language} is configured more than once; \
+                             language keys are case-insensitive"
+                        )));
+                    }
+                }
+                Ok(PartialLanguagesConfig(languages))
+            }
+        }
+
+        deserializer.deserialize_map(LanguagesVisitor)
+    }
+}
 
 impl PartialLanguagesConfig {
     /// Consumes the authored language entries in deterministic key order.

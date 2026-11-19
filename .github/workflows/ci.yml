@@ -168,7 +168,7 @@ jobs:
         shell: bash
         run: |
           pnpm install --frozen-lockfile
-          node test.mjs "${SPRAWL_GUARD_BINARY}"
+          node test.mts "${SPRAWL_GUARD_BINARY}"
         env:
           SPRAWL_GUARD_BINARY: ${{ github.workspace }}/${{ matrix.built_binary_path }}
 
@@ -217,7 +217,7 @@ jobs:
       - name: Test ESLint and Oxlint import with the WASI CLI
         working-directory: npm/linter-import
         shell: bash
-        run: node test.mjs ../sprawl-guard/dist/bin/sprawl-guard.js
+        run: node test.mts ../sprawl-guard/dist/bin/sprawl-guard.js
         env:
           SPRAWL_GUARD_BINARY: ""
 

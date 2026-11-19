@@ -8,7 +8,7 @@ use crate::value::byte_size::{
 };
 use crate::value::file_bytes::FileByteLimit;
 use crate::value::limits::FiniteOrUnlimited;
-use crate::{CountLines, DirectFileLimit, LineLimit, MaxBytesPerFile};
+use crate::{CountLines, DirectFileLimit, FileStorage, LineLimit, MaxBytesPerFile};
 
 /// Limits applied to source files, to direct files per directory, and to the size of every file.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -18,8 +18,22 @@ pub struct Limits {
     pub max_lines_per_file: MaxLinesPerFileLimits,
     /// Maximum direct source files per directory.
     pub max_direct_files_per_directory: MaxDirectFilesPerDirectoryLimits,
-    /// Repository-wide maximum size of any file, source or not, before path overrides.
+    /// Repository-wide maximum size of any file that Git stores, source or not, before path
+    /// overrides.
     pub max_bytes_per_file: MaxBytesPerFile,
+    /// Repository-wide maximum size of the content of any file that Git LFS stores, before path
+    /// overrides.
+    pub max_bytes_per_lfs_object: MaxBytesPerFile,
+}
+
+impl Limits {
+    /// Returns the repository-wide byte limit for files stored in `storage`.
+    pub const fn max_file_bytes(&self, storage: FileStorage) -> MaxBytesPerFile {
+        match storage {
+            FileStorage::Git => self.max_bytes_per_file,
+            FileStorage::Lfs => self.max_bytes_per_lfs_object,
+        }
+    }
 }
 
 /// Line-count limits applied to source files by classification.
@@ -65,6 +79,9 @@ pub(super) fn merge_limits(config: &mut Limits, partial: PartialLimits) {
     if let Some(ConfiguredMaxBytesPerFile(value)) = partial.max_bytes_per_file {
         config.max_bytes_per_file = value;
     }
+    if let Some(ConfiguredMaxBytesPerFile(value)) = partial.max_bytes_per_lfs_object {
+        config.max_bytes_per_lfs_object = value;
+    }
 }
 
 pub(super) fn merge_max_direct_files_per_directory_limits(
@@ -85,6 +102,7 @@ pub(super) struct PartialLimits {
     max_lines_per_file: Option<PartialMaxLinesPerFileLimits>,
     max_direct_files_per_directory: Option<PartialMaxDirectFilesPerDirectoryLimits>,
     max_bytes_per_file: Option<ConfiguredMaxBytesPerFile>,
+    max_bytes_per_lfs_object: Option<ConfiguredMaxBytesPerFile>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -136,7 +154,7 @@ impl JsonSchema for ConfiguredMaxBytesPerFile {
     fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
         let [count, size] = byte_count_schemas();
         json_schema!({
-            "description": "Largest size of one file: a positive number of bytes, a size such as \"10 MB\" or \"1.5 GiB\", or \"unlimited\".",
+            "description": "Byte limit: a positive number of bytes, a size such as \"10 MB\" or \"1.5 GiB\", or \"unlimited\".",
             "anyOf": [count, size, { "type": "string", "const": UNLIMITED }]
         })
     }

@@ -57,7 +57,8 @@ describe("documentation routes", () => {
       const result = createDocumentationRoutes(["index", "quick-start", "reference/configuration"]);
       assert.equal(result.ok, true);
       if (!result.ok) return;
-      const currentEntry = result.value.entries[1].entryId;
+      const currentEntry = result.value.entries[1]?.entryId;
+      assert.ok(currentEntry !== undefined);
 
       assert.equal(
         rewriteDocumentationLink(

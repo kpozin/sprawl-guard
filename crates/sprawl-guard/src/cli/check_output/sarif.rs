@@ -1,10 +1,15 @@
 use serde_json::{Value, json};
-use sprawl_guard_lib::{CheckReport, CheckStatus, RelativePath, UnreadablePathSeverity};
+use sprawl_guard_lib::{
+    CheckReport, CheckStatus, CheckWarning, RelativePath, UnreadablePathSeverity,
+};
 
-use super::{gap_notices, size_source_note};
+use super::artifact_uris::{ArtifactUris, ROOT_DIRECTORY};
+use super::github::FilePaths;
+use super::{gap_notices, warning_message};
 use sprawl_guard_lib::check::{
     CheckViolation, DirectoryDirectFilesViolation, DirectoryViolationKind, FileBytesViolation,
-    FileLinesViolation, FileViolationKind, RatchetViolation, RatchetViolationKind,
+    FileBytesViolationKind, FileLinesViolation, FileViolationKind, RatchetViolation,
+    RatchetViolationKind,
 };
 
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
@@ -16,9 +21,14 @@ const TEST_FILE_LINES_RULE_ID: &str = "sprawl-guard/test-file-lines";
 const DIRECTORY_DIRECT_FILES_RULE_ID: &str = "sprawl-guard/directory-direct-files";
 const TEST_DIRECTORY_DIRECT_FILES_RULE_ID: &str = "sprawl-guard/test-directory-direct-files";
 const FILE_BYTES_RULE_ID: &str = "sprawl-guard/file-bytes";
+const LFS_OBJECT_BYTES_RULE_ID: &str = "sprawl-guard/lfs-object-bytes";
 const RATCHET_STALE_RULE_ID: &str = "sprawl-guard/ratchet-stale";
 
-pub(super) fn sarif_check_report(report: &CheckReport) -> Value {
+pub(super) fn sarif_check_report(report: &CheckReport, file_paths: &FilePaths) -> Value {
+    sarif_report(report, &ArtifactUris::new(file_paths))
+}
+
+fn sarif_report(report: &CheckReport, uris: &ArtifactUris) -> Value {
     json!({
         "$schema": SARIF_SCHEMA,
         "version": SARIF_VERSION,
@@ -31,18 +41,19 @@ pub(super) fn sarif_check_report(report: &CheckReport) -> Value {
                         "rules": rules()
                     }
                 },
-                "invocations": [invocation(report)],
-                "results": results(report)
+                "invocations": [invocation(report, uris)],
+                "results": results(report, uris)
             }
         ]
     })
 }
 
-/// Describes the run itself: whether it analyzed everything, and each gap as a notification.
+/// Describes the run itself: whether it analyzed everything, and each gap and each skipped
+/// selected path as a notification.
 ///
 /// SARIF results are rule violations, so analysis gaps go here instead. A run whose gaps fail the
 /// check is not an execution success.
-fn invocation(report: &CheckReport) -> Value {
+fn invocation(report: &CheckReport, uris: &ArtifactUris) -> Value {
     let notifications = gap_notices(
         report,
         report.unreadable_paths().len(),
@@ -58,15 +69,31 @@ fn invocation(report: &CheckReport) -> Value {
             "message": { "text": gap.message },
         });
         if let Some(file) = gap.file {
-            notification["locations"] = json!([location(file)]);
+            notification["locations"] = json!(uris.file_locations(file));
         }
         notification
     })
+    .chain(skipped_selection_notifications(report))
     .collect::<Vec<_>>();
     json!({
         "executionSuccessful": report.status() != CheckStatus::Error,
         "toolExecutionNotifications": notifications,
     })
+}
+
+/// Reports each selected path that the scan never reached, so a caller that reads only SARIF can
+/// tell that a path it asked about went unchecked. Other warnings stay out of SARIF.
+fn skipped_selection_notifications(report: &CheckReport) -> impl Iterator<Item = Value> {
+    report
+        .warnings()
+        .iter()
+        .filter(|warning| matches!(warning, CheckWarning::SelectedPathSkipped { .. }))
+        .map(|warning| {
+            json!({
+                "level": "warning",
+                "message": { "text": warning_message(warning) },
+            })
+        })
 }
 
 fn rules() -> Vec<Value> {
@@ -94,7 +121,12 @@ fn rules() -> Vec<Value> {
         rule(
             FILE_BYTES_RULE_ID,
             "File over the byte limit",
-            "A file, source or not, is larger than its byte limit.",
+            "A file that Git stores, source or not, is larger than its byte limit.",
+        ),
+        rule(
+            LFS_OBJECT_BYTES_RULE_ID,
+            "Git LFS object over the byte limit",
+            "A file that Git LFS stores is larger than its byte limit for Git LFS objects.",
         ),
         rule(
             RATCHET_STALE_RULE_ID,
@@ -156,13 +188,20 @@ fn file_lines_finding(violation: &FileLinesViolation) -> Finding {
 }
 
 fn file_bytes_finding(violation: &FileBytesViolation) -> Finding {
+    let (rule_id, subject) = match violation.kind {
+        FileBytesViolationKind::FileBytes => {
+            (FILE_BYTES_RULE_ID, format!("{} has", violation.path))
+        }
+        FileBytesViolationKind::LfsObjectBytes => (
+            LFS_OBJECT_BYTES_RULE_ID,
+            format!("{} is a Git LFS object of", violation.path),
+        ),
+    };
     Finding {
-        rule_id: FILE_BYTES_RULE_ID,
+        rule_id,
         message: format!(
-            "{} has {} bytes{}, over the limit of {}{}.",
-            violation.path,
+            "{subject} {} bytes, over the limit of {}{}.",
             violation.actual,
-            size_source_note(violation.measured_from),
             violation.limit,
             ceiling_message(violation.ratchet)
         ),
@@ -191,22 +230,22 @@ fn directory_direct_files_finding(violation: &DirectoryDirectFilesViolation) -> 
     }
 }
 
-fn results(report: &CheckReport) -> Vec<Value> {
+fn results(report: &CheckReport, uris: &ArtifactUris) -> Vec<Value> {
     report
         .violations()
         .iter()
         .map(|violation| match violation {
-            CheckViolation::FileLines(violation) => file_lines_result(violation),
+            CheckViolation::FileLines(violation) => file_lines_result(violation, uris),
             CheckViolation::DirectoryDirectFiles(violation) => {
-                directory_direct_files_result(violation)
+                directory_direct_files_result(violation, uris)
             }
-            CheckViolation::FileBytes(violation) => file_bytes_result(violation),
-            CheckViolation::Ratchet(violation) => ratchet_result(violation),
+            CheckViolation::FileBytes(violation) => file_bytes_result(violation, uris),
+            CheckViolation::Ratchet(violation) => ratchet_result(violation, uris),
         })
         .collect()
 }
 
-fn file_lines_result(violation: &FileLinesViolation) -> Value {
+fn file_lines_result(violation: &FileLinesViolation, uris: &ArtifactUris) -> Value {
     let Finding { rule_id, message } = file_lines_finding(violation);
     json!({
         "ruleId": rule_id,
@@ -214,7 +253,7 @@ fn file_lines_result(violation: &FileLinesViolation) -> Value {
         "message": {
             "text": message
         },
-        "locations": [location(&violation.path)],
+        "locations": uris.file_locations(&violation.path),
         "properties": {
             "kind": violation.kind,
             "path": violation.path,
@@ -228,7 +267,7 @@ fn file_lines_result(violation: &FileLinesViolation) -> Value {
     })
 }
 
-fn file_bytes_result(violation: &FileBytesViolation) -> Value {
+fn file_bytes_result(violation: &FileBytesViolation, uris: &ArtifactUris) -> Value {
     let Finding { rule_id, message } = file_bytes_finding(violation);
     json!({
         "ruleId": rule_id,
@@ -236,12 +275,15 @@ fn file_bytes_result(violation: &FileBytesViolation) -> Value {
         "message": {
             "text": message
         },
-        "locations": [location(&violation.path)],
+        "locations": uris.file_locations(&violation.path),
         "properties": violation
     })
 }
 
-fn directory_direct_files_result(violation: &DirectoryDirectFilesViolation) -> Value {
+fn directory_direct_files_result(
+    violation: &DirectoryDirectFilesViolation,
+    uris: &ArtifactUris,
+) -> Value {
     let Finding { rule_id, message } = directory_direct_files_finding(violation);
     let mut result = json!({
         "ruleId": rule_id,
@@ -249,7 +291,7 @@ fn directory_direct_files_result(violation: &DirectoryDirectFilesViolation) -> V
         "message": {
             "text": message
         },
-        "locations": [location(&violation.path)],
+        "locations": uris.directory_locations(&violation.path),
         "properties": {
             "kind": violation.kind,
             "path": violation.path,
@@ -260,23 +302,23 @@ fn directory_direct_files_result(violation: &DirectoryDirectFilesViolation) -> V
             "files": violation.files
         }
     });
-    if !violation.files.is_empty() {
-        result["relatedLocations"] = Value::Array(
-            violation
-                .files
-                .iter()
-                .enumerate()
-                .map(|(index, path)| {
-                    json!({
-                        "id": index + 1,
-                        "physicalLocation": physical_location(path),
-                        "message": {
-                            "text": "Direct file"
-                        }
-                    })
-                })
-                .collect(),
-        );
+    let related_locations = violation
+        .files
+        .iter()
+        .filter_map(|path| uris.file_physical_location(path))
+        .enumerate()
+        .map(|(index, physical_location)| {
+            json!({
+                "id": index + 1,
+                "physicalLocation": physical_location,
+                "message": {
+                    "text": "Direct file"
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    if !related_locations.is_empty() {
+        result["relatedLocations"] = Value::Array(related_locations);
     }
     result
 }
@@ -288,14 +330,17 @@ fn ceiling_message(ceiling: Option<impl std::fmt::Display>) -> String {
         .unwrap_or_default()
 }
 
-fn ratchet_result(violation: &RatchetViolation) -> Value {
+fn ratchet_result(violation: &RatchetViolation, uris: &ArtifactUris) -> Value {
     let mut result = json!({
         "ruleId": RATCHET_STALE_RULE_ID,
         "level": "error",
         "message": {
             "text": ratchet_message(violation)
         },
-        "locations": [location(violation.path())],
+        "locations": match violation.group() {
+            Some(_) => uris.directory_locations(violation.path()),
+            None => uris.file_locations(violation.path()),
+        },
         "properties": {
             "kind": violation.kind(),
             "path": violation.path(),
@@ -337,33 +382,12 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
     }
 }
 
-fn location(path: &RelativePath) -> Value {
-    json!({
-        "physicalLocation": physical_location(path)
-    })
-}
-
-fn physical_location(path: &RelativePath) -> Value {
-    json!({
-        "artifactLocation": {
-            "uri": uri(path)
-        },
-        "region": {
-            "startLine": 1
-        }
-    })
-}
-
-fn uri(path: &RelativePath) -> &str {
+fn display_path(path: &RelativePath) -> &str {
     if path.as_str().is_empty() {
-        "."
+        ROOT_DIRECTORY
     } else {
         path.as_str()
     }
-}
-
-fn display_path(path: &RelativePath) -> &str {
-    uri(path)
 }
 
 #[cfg(test)]
@@ -381,6 +405,7 @@ pub(super) mod tests {
         RatchetCount, RatchetEntryCount, RatchetLimit, RelativePath, ScanSummary,
     };
 
+    use super::super::github::FilePaths;
     use super::*;
 
     fn scan_summary() -> ScanSummary {
@@ -389,6 +414,15 @@ pub(super) mod tests {
             CheckedDirectoryCount::new(2),
             DetectedLanguageCount::new(1),
             RatchetEntryCount::new(0),
+        )
+    }
+
+    /// Renders SARIF as a standalone report rooted at the checkout, whatever workspace the test
+    /// process happens to run in.
+    fn sarif_at_the_root(report: &CheckReport) -> Value {
+        sarif_report(
+            report,
+            &ArtifactUris::new(&FilePaths::Prefixed(String::new())),
         )
     }
 
@@ -467,7 +501,7 @@ pub(super) mod tests {
 
         #[test]
         fn it_uses_sarif_2_1_0_with_stable_rule_ids() {
-            let output = sarif_check_report(&report_with(vec![]));
+            let output = sarif_at_the_root(&report_with(vec![]));
 
             assert_eq!(
                 json!({
@@ -522,7 +556,16 @@ pub(super) mod tests {
                                     "text": "File over the byte limit"
                                 },
                                 "fullDescription": {
-                                    "text": "A file, source or not, is larger than its byte limit."
+                                    "text": "A file that Git stores, source or not, is larger than its byte limit."
+                                }
+                            },
+                            {
+                                "id": "sprawl-guard/lfs-object-bytes",
+                                "shortDescription": {
+                                    "text": "Git LFS object over the byte limit"
+                                },
+                                "fullDescription": {
+                                    "text": "A file that Git LFS stores is larger than its byte limit for Git LFS objects."
                                 }
                             },
                             {
@@ -557,7 +600,7 @@ pub(super) mod tests {
                 vec![],
             );
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
 
             assert_eq!(
                 json!({
@@ -572,6 +615,39 @@ pub(super) mod tests {
         }
     }
 
+    mod when_the_scan_skipped_a_selected_path {
+        use super::*;
+
+        #[test]
+        fn it_reports_the_path_as_a_warning_notification() {
+            let report = CheckReport::complete(
+                sprawl_guard_lib::ReportRoot::trusted("/repo"),
+                sprawl_guard_lib::ConfigSource::BuiltIn,
+                CounterInfo {
+                    backend: "tokei",
+                    version: "14.0.0",
+                },
+                scan_summary(),
+                vec![CheckWarning::SelectedPathSkipped {
+                    path: RelativePath::new(".hidden.rs").unwrap(),
+                }],
+                vec![],
+            );
+
+            let output = sarif_at_the_root(&report);
+
+            assert_eq!(
+                output["runs"][0]["invocations"][0]["toolExecutionNotifications"],
+                json!([{
+                    "level": "warning",
+                    "message": {
+                        "text": ".hidden.rs: not checked, because the scan did not reach it; the scan skips hidden and ignored paths",
+                    },
+                }])
+            );
+        }
+    }
+
     mod when_rendering_file_lines_findings {
         use super::*;
 
@@ -582,7 +658,7 @@ pub(super) mod tests {
                 "src/lib.rs",
             ))]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let result = &output["runs"][0]["results"][0];
 
             assert_eq!(
@@ -622,7 +698,7 @@ pub(super) mod tests {
                 ..file_lines_violation(FileViolationKind::FileLines, "src/lib.rs")
             })]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let result = &output["runs"][0]["results"][0];
 
             assert_eq!(
@@ -646,11 +722,93 @@ pub(super) mod tests {
                 "src/lib.test.rs",
             ))]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
 
             assert_eq!(
                 output["runs"][0]["results"][0]["ruleId"],
                 TEST_FILE_LINES_RULE_ID
+            );
+        }
+    }
+
+    mod when_naming_files {
+        use super::*;
+
+        fn first_uri(path: &str, file_paths: &FilePaths) -> Value {
+            let report = report_with(vec![CheckViolation::FileLines(file_lines_violation(
+                FileViolationKind::FileLines,
+                path,
+            ))]);
+            let output = sarif_report(&report, &ArtifactUris::new(file_paths));
+            output["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                ["uri"]
+                .clone()
+        }
+
+        fn at_the_workspace_root() -> FilePaths {
+            FilePaths::Prefixed(String::new())
+        }
+
+        #[test]
+        fn it_percent_encodes_characters_that_a_uri_reserves() {
+            assert_eq!(
+                first_uri("src/my dir/a#1 100%.rs", &at_the_workspace_root()),
+                "src/my%20dir/a%231%20100%25.rs"
+            );
+        }
+
+        #[test]
+        fn it_percent_encodes_non_ascii_text_as_utf_8() {
+            assert_eq!(
+                first_uri("src/héllo?.rs", &at_the_workspace_root()),
+                "src/h%C3%A9llo%3F.rs"
+            );
+        }
+
+        #[test]
+        fn it_prefixes_the_place_of_the_root_in_the_workspace() {
+            assert_eq!(
+                first_uri(
+                    "src/lib.rs",
+                    &FilePaths::Prefixed("packages/my app/".to_owned())
+                ),
+                "packages/my%20app/src/lib.rs"
+            );
+        }
+
+        #[test]
+        fn it_gives_no_location_under_a_root_outside_the_workspace() {
+            let report = report_with(vec![CheckViolation::FileLines(file_lines_violation(
+                FileViolationKind::FileLines,
+                "src/lib.rs",
+            ))]);
+
+            let output = sarif_report(&report, &ArtifactUris::new(&FilePaths::OutsideWorkspace));
+            let result = &output["runs"][0]["results"][0];
+
+            assert_eq!(result["locations"], json!([]));
+            assert_eq!(
+                result["message"]["text"],
+                "src/lib.rs has 3 lines (counting code), over the limit of 2."
+            );
+        }
+
+        #[test]
+        fn it_names_the_root_directory_with_a_dot() {
+            let report = report_with(vec![CheckViolation::DirectoryDirectFiles(
+                directory_direct_files_violation(
+                    DirectoryViolationKind::DirectoryDirectFiles,
+                    "",
+                    vec!["a.rs", "b.rs"],
+                ),
+            )]);
+
+            let output = sarif_report(&report, &ArtifactUris::new(&at_the_workspace_root()));
+
+            assert_eq!(
+                output["runs"][0]["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]
+                    ["uri"],
+                "."
             );
         }
     }
@@ -668,7 +826,7 @@ pub(super) mod tests {
                 ),
             )]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let result = &output["runs"][0]["results"][0];
 
             assert_eq!(
@@ -692,6 +850,34 @@ pub(super) mod tests {
         }
 
         #[test]
+        fn it_gives_the_directory_no_line_and_each_file_its_first_line() {
+            let report = report_with(vec![CheckViolation::DirectoryDirectFiles(
+                directory_direct_files_violation(
+                    DirectoryViolationKind::DirectoryDirectFiles,
+                    "src",
+                    vec!["src/a.rs"],
+                ),
+            )]);
+
+            let output = sarif_at_the_root(&report);
+            let result = &output["runs"][0]["results"][0];
+
+            assert_eq!(
+                json!({
+                    "directory": result["locations"][0]["physicalLocation"],
+                    "file": result["relatedLocations"][0]["physicalLocation"],
+                }),
+                json!({
+                    "directory": { "artifactLocation": { "uri": "src" } },
+                    "file": {
+                        "artifactLocation": { "uri": "src/a.rs" },
+                        "region": { "startLine": 1 },
+                    },
+                })
+            );
+        }
+
+        #[test]
         fn it_uses_the_test_directory_rule_for_test_directory_violations() {
             let report = report_with(vec![CheckViolation::DirectoryDirectFiles(
                 directory_direct_files_violation(
@@ -701,7 +887,7 @@ pub(super) mod tests {
                 ),
             )]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
 
             assert_eq!(
                 output["runs"][0]["results"][0]["ruleId"],
@@ -727,7 +913,7 @@ pub(super) mod tests {
                 },
             )]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
 
             assert_eq!(
                 output["runs"][0]["results"][0]["message"]["text"],
@@ -752,7 +938,7 @@ pub(super) mod tests {
                 )),
             ]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let results = &output["runs"][0]["results"];
 
             assert_eq!(
@@ -783,7 +969,7 @@ pub(super) mod tests {
                 )),
             ]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let results = &output["runs"][0]["results"];
 
             assert_eq!(results[0]["ruleId"], DIRECTORY_DIRECT_FILES_RULE_ID);
@@ -807,7 +993,7 @@ pub(super) mod tests {
                 }),
             ))]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let result = &output["runs"][0]["results"][0];
 
             assert_eq!(result["ruleId"], RATCHET_STALE_RULE_ID);
@@ -827,7 +1013,7 @@ pub(super) mod tests {
                 }),
             ))]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let result = &output["runs"][0]["results"][0];
 
             assert_eq!(
@@ -846,7 +1032,7 @@ pub(super) mod tests {
                 }),
             ))]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let result = &output["runs"][0]["results"][0];
 
             assert_eq!(
@@ -873,7 +1059,7 @@ pub(super) mod tests {
                 ),
             ]);
 
-            let output = sarif_check_report(&report);
+            let output = sarif_at_the_root(&report);
             let results = &output["runs"][0]["results"];
 
             assert_eq!(

@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use sprawl_guard_lib::{
     DirectFiles, DirectoryRatchet, DirectoryRatchetKey, FileByteLimit, FileRatchet, FileRatchetKey,
-    FileSizeRatchet, LineLimit, RatchetFile, RatchetLookup, RatchetSchemaVersion, RelativePath,
+    FileSizeRatchet, FileSizeRatchetKey, LineLimit, RatchetFile, RatchetLookup,
+    RatchetSchemaVersion, RelativePath,
 };
 
 use super::{CeilingUpdatePolicy, scope::RatchetScope};
@@ -91,11 +92,11 @@ impl CeilingEntry for DirectoryRatchet {
 }
 
 impl CeilingEntry for FileSizeRatchet {
-    type Key = RelativePath;
+    type Key = FileSizeRatchetKey;
     type Ceiling = FileByteLimit;
 
     fn key(&self) -> Self::Key {
-        self.path.clone()
+        Self::key(self)
     }
 
     fn path(&self) -> &RelativePath {
@@ -173,14 +174,17 @@ mod tests {
 
             [[file_sizes]]
             path = "assets/kept.png"
+            storage = "git"
             max_bytes = 50
 
             [[file_sizes]]
             path = "assets/logo.png"
+            storage = "git"
             max_bytes = 100
 
             [[file_sizes]]
             path = "assets/removed.png"
+            storage = "git"
             max_bytes = 70
         "#};
 
@@ -189,14 +193,17 @@ mod tests {
 
             [[file_sizes]]
             path = "assets/kept.png"
+            storage = "git"
             max_bytes = 40
 
             [[file_sizes]]
             path = "assets/logo.png"
+            storage = "git"
             max_bytes = 120
 
             [[file_sizes]]
             path = "assets/new.png"
+            storage = "git"
             max_bytes = 30
         "#};
 

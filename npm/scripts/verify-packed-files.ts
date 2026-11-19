@@ -1,6 +1,7 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { z } from "zod/v4";
 
 const USAGE =
@@ -120,51 +121,44 @@ type PnpmPackDryRunCommandResult =
     };
 
 /** Parses verifier CLI arguments into explicit package-content rules. */
-export function parseVerifierArgs(args: readonly string[]): ParseArgsResult {
-  const [packageDirectory, ...ruleArgs] = args;
+export function parseVerifierArgs(args?: readonly string[]): ParseArgsResult {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: args?.slice(),
+      options: { require: { type: "string" }, "forbid-suffix": { type: "string" } },
+      allowPositionals: true,
+      tokens: true,
+    });
+  } catch (error) {
+    return invalidArguments(String(error));
+  }
+  const [packageDirectory, unexpected] = parsed.positionals;
   if (packageDirectory === undefined) {
     return invalidArguments(USAGE);
   }
-  if (ruleArgs.length === 0) {
-    return invalidArguments(USAGE);
+  if (unexpected !== undefined) {
+    return invalidArguments(`unexpected argument: ${unexpected}`);
   }
 
   const rules: PackVerificationRule[] = [];
-  for (let index = 0; index < ruleArgs.length; index += 1) {
-    const token = ruleArgs[index];
-    if (token === undefined) {
-      return invalidArguments(USAGE);
+  for (const token of parsed.tokens) {
+    if (token.kind !== "option") {
+      continue;
     }
-
-    if (token === "--require") {
-      const value = ruleArgs[index + 1];
-      if (value === undefined) {
-        return invalidArguments("--require must be followed by a package-relative path");
-      }
-      const parsedPath = PackageRelativePathSchema.safeParse(value);
+    if (token.name === "require") {
+      const parsedPath = PackageRelativePathSchema.safeParse(token.value);
       if (!parsedPath.success) {
-        return invalidArguments(`invalid package-relative path: ${value}`);
+        return invalidArguments(`invalid package-relative path: ${token.value}`);
       }
       rules.push({ kind: "required_path", path: parsedPath.data });
-      index += 1;
-      continue;
-    }
-
-    if (token === "--forbid-suffix") {
-      const value = ruleArgs[index + 1];
-      if (value === undefined) {
-        return invalidArguments("--forbid-suffix must be followed by a path suffix");
-      }
-      const parsedSuffix = PackagePathSuffixSchema.safeParse(value);
+    } else {
+      const parsedSuffix = PackagePathSuffixSchema.safeParse(token.value);
       if (!parsedSuffix.success) {
-        return invalidArguments(`invalid package path suffix: ${value}`);
+        return invalidArguments(`invalid package path suffix: ${token.value}`);
       }
       rules.push({ kind: "forbidden_suffix", suffix: parsedSuffix.data });
-      index += 1;
-      continue;
     }
-
-    return invalidArguments(`unexpected argument: ${token}`);
   }
 
   const nonEmptyRules = toNonEmptyArray(rules);
@@ -306,8 +300,8 @@ export function pnpmPackDryRunCommand(args: {
   };
 }
 
-function main(args: readonly string[]): number {
-  const parsedArgs = parseVerifierArgs(args);
+function main(): number {
+  const parsedArgs = parseVerifierArgs();
   if (parsedArgs.kind !== "ok") {
     console.error(parsedArgs.message);
     return 1;
@@ -471,6 +465,6 @@ if (process.argv[1] !== undefined) {
   const invokedPath = path.resolve(process.argv[1]);
   const modulePath = fileURLToPath(import.meta.url);
   if (invokedPath === modulePath) {
-    process.exit(main(process.argv.slice(2)));
+    process.exit(main());
   }
 }

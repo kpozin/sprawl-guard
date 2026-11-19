@@ -27,7 +27,7 @@ const GITHUB_WORKSPACE: &str = "GITHUB_WORKSPACE";
 
 /// How file annotations name their files.
 #[derive(Debug, Eq, PartialEq)]
-enum FilePaths {
+pub(super) enum FilePaths {
     /// Each file's path is this prefix followed by its root-relative path. The prefix is the
     /// root's path inside the workspace, ending in `/`, or empty.
     Prefixed(String),
@@ -43,12 +43,22 @@ pub(super) fn github_check_report(
     human_report: &str,
     report: &CheckReport,
     listing: FindingListing,
+    file_paths: &FilePaths,
 ) -> String {
-    let root = Path::new(report.root());
-    let workspace =
-        env::var_os(GITHUB_WORKSPACE).and_then(|path| Path::new(&path).canonicalize().ok());
-    plain_log_text(human_report)
-        + &annotations(report, &file_paths(root, workspace.as_deref()), listing)
+    plain_log_text(human_report) + &annotations(report, file_paths, listing)
+}
+
+/// Decides how to name files under `root` from the workspace that GitHub Actions declares.
+///
+/// A declared workspace that does not exist cannot contain the root, so the root is outside it.
+pub(super) fn workspace_file_paths(root: &Path) -> FilePaths {
+    match env::var_os(GITHUB_WORKSPACE).filter(|path| !path.is_empty()) {
+        None => file_paths(root, None),
+        Some(workspace) => match Path::new(&workspace).canonicalize() {
+            Ok(workspace) => file_paths(root, Some(&workspace)),
+            Err(_) => FilePaths::OutsideWorkspace,
+        },
+    }
 }
 
 /// Prints text, such as a report that names repository files, so that the runner shows it without

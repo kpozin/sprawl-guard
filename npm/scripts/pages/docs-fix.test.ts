@@ -87,7 +87,7 @@ function createFixture(): Fixture {
   const quotedName = commitFiles(work, "Add café guide", { "site/src/content/docs/café.md": "coffee\n" });
   const asset = commitFiles(work, "Add illustration", { "site/src/assets/tree.svg": "<svg/>\n" });
   const mixed = commitFiles(work, "Add preview image and its tooling", {
-    "site/astro.config.mjs": "export default {};\n",
+    "site/astro.config.ts": "export default {};\n",
     "site/public/card.png": "png\n",
     "src/lib.rs": "fn unreleased() {}\nfn more() {}\nfn card() {}\n",
   });
@@ -181,7 +181,7 @@ describe("applyDocsFix", () => {
         assert.equal(originBranch(fixture), result.commit);
         assert.equal(
           git(fixture.origin, "diff", "--name-only", RELEASE_TAG, result.commit),
-          "site/astro.config.mjs\nsite/public/card.png",
+          "site/astro.config.ts\nsite/public/card.png",
         );
         assert.equal(
           git(fixture.origin, "log", "-1", "--format=%an <%ae>", result.commit),
@@ -203,7 +203,7 @@ describe("applyDocsFix", () => {
         assert.ok(result.kind === "applied");
         assert.equal(
           git(fixture.origin, "diff", "--name-only", RELEASE_TAG, result.commit),
-          "site/astro.config.mjs\nsite/public/card.png",
+          "site/astro.config.ts\nsite/public/card.png",
         );
       });
     });

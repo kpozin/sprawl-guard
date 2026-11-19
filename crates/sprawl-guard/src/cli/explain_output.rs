@@ -4,13 +4,11 @@ use sprawl_guard_lib::classification::{
     SourceKind,
 };
 use sprawl_guard_lib::{
-    FiniteOrUnlimited, MatchedOverride, MaxBytesPerFile, RelativePath, RustCfgTestStatus,
-    SourceResolvedLimits,
+    FileStorage, FiniteOrUnlimited, MatchedOverride, MaxBytesPerFile, RelativePath,
+    RustCfgTestStatus, SourceResolvedLimits,
 };
 
-use super::check_output::{
-    byte_size, ceiling_message, plural, size_source_note, unreadable_path_message,
-};
+use super::check_output::{byte_size, ceiling_message, plural, unreadable_path_message};
 use super::display_relative;
 
 /// Everything `explain` reports about one path.
@@ -46,14 +44,14 @@ pub(super) fn explain_message(explanation: &PathExplanation) -> String {
 fn file_bytes_message(file_bytes: &FileBytesExplanation) -> String {
     let size = match file_bytes.size {
         FileSize::NotFound => "not found".to_owned(),
-        FileSize::Measured(size) => format!(
-            "{}{}",
-            byte_size(size.bytes.into_inner()),
-            size_source_note(size.source)
-        ),
+        FileSize::Measured { bytes } => byte_size(bytes.into_inner()),
+    };
+    let storage = match file_bytes.storage {
+        FileStorage::Git => "",
+        FileStorage::Lfs => ", stored in Git LFS",
     };
     format!(
-        "  size: {size}, limit {}",
+        "  size: {size}{storage}, limit {}",
         byte_limit(file_bytes.limit.value)
     )
 }

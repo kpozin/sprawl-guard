@@ -57,6 +57,7 @@ pub fn built_in_config() -> Config {
                 )),
             },
             max_bytes_per_file: MaxBytesPerFile::Unlimited,
+            max_bytes_per_lfs_object: MaxBytesPerFile::Unlimited,
         },
         ignore: IgnoreConfig {
             respect_gitignore: true,

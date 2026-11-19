@@ -11,7 +11,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, parseArgs } from "node:util";
 import { z } from "zod";
 
 const USAGE = "usage: check-directory-links.ts -- COMMAND [ARGS...]";
@@ -166,12 +166,13 @@ function describeFailure(result: CheckDirectoryLinksResult, expected: Expectatio
 }
 
 function main(): number {
-  const separator = process.argv.indexOf("--", 2);
-  if (separator !== 2 || process.argv.length === separator + 1) {
+  // The wrapped command's own options follow the terminator, so nothing before it is parsed strictly.
+  const { positionals, tokens } = parseArgs({ allowPositionals: true, strict: false, tokens: true });
+  if (tokens[0]?.kind !== "option-terminator" || positionals.length === 0) {
     console.error(USAGE);
     return USAGE_EXIT_STATUS;
   }
-  const failure = runChecks(process.argv.slice(separator + 1));
+  const failure = runChecks(positionals);
   if (failure !== undefined) {
     console.error(failure);
     return 1;

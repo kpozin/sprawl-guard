@@ -7,6 +7,7 @@
 
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { PACKAGE_VERSION } from "../package-manifests.ts";
 import type { PublicPackageVersion } from "../package-version.ts";
 
@@ -72,13 +73,13 @@ function describeFailure(failure: Exclude<CheckCliResult, { readonly kind: "ok" 
 }
 
 function main(): number {
-  const separator = process.argv.indexOf("--", 2);
-  const command = separator === -1 ? [] : process.argv.slice(separator + 1);
-  if (separator !== 2 || command.length === 0) {
+  // The wrapped command's own options follow the terminator, so nothing before it is parsed strictly.
+  const { positionals, tokens } = parseArgs({ allowPositionals: true, strict: false, tokens: true });
+  if (tokens[0]?.kind !== "option-terminator" || positionals.length === 0) {
     console.error(USAGE);
     return 2;
   }
-  const result = checkCli(command, PACKAGE_VERSION, runCommand);
+  const result = checkCli(positionals, PACKAGE_VERSION, runCommand);
   if (result.kind !== "ok") {
     console.error(describeFailure(result));
     return 1;

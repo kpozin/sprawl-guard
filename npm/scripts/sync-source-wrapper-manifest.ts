@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { sourceWrapperManifestFile } from "./package-manifests.ts";
 
 type SyncMode = "check" | "write";
@@ -112,26 +113,37 @@ function readExistingManifestFile(
   }
 }
 
-function parseMode(args: readonly string[]):
-  | SyncMode
-  | {
-      readonly kind: "invalid_arguments";
-      readonly args: readonly string[];
-    } {
-  if (args.length === 0) {
+/**
+ * Reads the mode from `args`, or from the command line when omitted. No arguments write the
+ * manifest, and a single `--check` only checks it. Anything else, including a bare `--`, is
+ * invalid.
+ */
+export function parseMode(
+  args?: readonly string[],
+): SyncMode | Extract<SyncSourceWrapperManifestFailure, { readonly kind: "invalid_arguments" }> {
+  const tokens = parseTokens(args);
+  if (tokens?.length === 0) {
     return "write";
   }
-  if (args.length === 1 && args[0] === "--check") {
-    return "check";
+  return tokens?.length === 1 && tokens[0]?.kind === "option"
+    ? "check"
+    : { kind: "invalid_arguments", args: args ?? [] };
+}
+
+function parseTokens(args: readonly string[] | undefined) {
+  try {
+    return parseArgs({
+      ...(args === undefined ? {} : { args: [...args] }),
+      options: { check: { type: "boolean" } },
+      tokens: true,
+    }).tokens;
+  } catch {
+    return undefined;
   }
-  return {
-    kind: "invalid_arguments",
-    args: [...args],
-  };
 }
 
 function main(): number {
-  const parsedMode = parseMode(process.argv.slice(2));
+  const parsedMode = parseMode();
   if (typeof parsedMode !== "string") {
     printFailure(parsedMode);
     return 1;

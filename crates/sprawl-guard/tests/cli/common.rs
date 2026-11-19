@@ -26,6 +26,8 @@ pub(crate) fn sprawl_guard(root: &TempDir) -> Command {
     command
 }
 
+/// Starts the CLI outside any GitHub Actions workspace, so file paths stay relative to the root
+/// wherever the tests run. A test that needs a workspace sets `GITHUB_WORKSPACE` itself.
 pub(crate) fn sprawl_guard_no_root() -> Command {
     let binary = std::path::Path::new(sprawl_guard_binary());
     let binary = if binary.is_absolute() {
@@ -33,8 +35,13 @@ pub(crate) fn sprawl_guard_no_root() -> Command {
     } else {
         std::env::current_dir().unwrap().join(binary)
     };
-    Command::new(binary)
+    let mut command = Command::new(binary);
+    command.env_remove(GITHUB_WORKSPACE);
+    command
 }
+
+/// The environment variable that holds the checkout directory in a GitHub Actions job.
+const GITHUB_WORKSPACE: &str = "GITHUB_WORKSPACE";
 
 /// Human check output's first paragraph when the default config file under the root is selected.
 pub(crate) const AUTHORED_CONFIG_HEADER: &str = "Configuration: sprawl-guard.toml\n\n";

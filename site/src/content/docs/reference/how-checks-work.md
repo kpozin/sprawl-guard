@@ -138,7 +138,8 @@ only with `--allow-increases`. `tighten` only lowers ceilings or removes stale e
 
 Paths passed to `check`, `update`, or `tighten` select what they cover. Paths are relative to the
 repository root, and absolute paths must still be inside it. A directory covers itself and
-everything under it. A file covers only itself, so `update` on a file never adds an entry for its
+everything under it. A file covers only itself: `check` on a file does not compare its directory's
+direct files with a limit or a ceiling, and `update` on a file never adds an entry for its
 directory.
 
 With selected paths, measurements and stale entries elsewhere are not reported. Run `check` with no

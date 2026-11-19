@@ -1,8 +1,10 @@
 //! File sizes measured on disk, and the limits they are checked against.
 
+use std::fmt;
+
 use nutype::nutype;
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::limits::FiniteOrUnlimited;
 
@@ -21,28 +23,31 @@ impl FileBytes {
     }
 }
 
-/// Size of a file that its byte limit is checked against, and where that size came from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct MeasuredFileSize {
-    /// Size checked against the limit.
-    pub bytes: FileBytes,
-    /// Where the size came from.
-    #[serde(flatten)]
-    pub source: FileSizeSource,
+/// Where Git stores a file, which decides the byte limit that applies to it.
+#[derive(
+    Clone, Copy, Debug, Deserialize, Eq, Hash, JsonSchema, Ord, PartialEq, PartialOrd, Serialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum FileStorage {
+    /// Git stores the file's content, so `max_bytes_per_file` limits its size on disk.
+    Git,
+    /// Git LFS stores the file's content and Git stores only a small pointer to it, so
+    /// `max_bytes_per_lfs_object` limits the size of the content.
+    Lfs,
 }
 
-/// Where a measured file size came from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "measured_from", rename_all = "snake_case")]
-pub enum FileSizeSource {
-    /// The size of the file on disk.
-    OnDisk,
-    /// The size a Git LFS pointer declares for the file it stands in for, so that a checkout
-    /// with and without LFS content measure the same.
-    LfsPointer {
-        /// Size of the pointer file itself on disk.
-        pointer_bytes: FileBytes,
-    },
+impl FileStorage {
+    /// Every way a file can be stored.
+    pub(crate) const ALL: [Self; 2] = [Self::Git, Self::Lfs];
+}
+
+impl fmt::Display for FileStorage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Git => "git",
+            Self::Lfs => "lfs",
+        })
+    }
 }
 
 /// Error returned when a file byte limit is invalid.

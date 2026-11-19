@@ -1,5 +1,5 @@
 {
-  "checksum": "7c0fdf50415949ede5dd9034f845acb086f13d22e3d5f54ee8b68c84627771aa",
+  "checksum": "627db3a63e301708cf642902ab961608e667c4ff5efc4763c94a28533a875769",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -6352,7 +6352,7 @@
       ],
       "version": "1.16.4"
     },
-    "sprawl-guard 0.6.0-beta.2": {
+    "sprawl-guard 0.6.0-beta.3": {
       "common_attrs": {
         "deps": {
           "common": [
@@ -6417,9 +6417,9 @@
       "package_url": "https://github.com/kpozin/sprawl-guard",
       "repository": null,
       "targets": [],
-      "version": "0.6.0-beta.2"
+      "version": "0.6.0-beta.3"
     },
-    "sprawl-guard-lib 0.6.0-beta.2": {
+    "sprawl-guard-lib 0.6.0-beta.3": {
       "common_attrs": {
         "deps": [
           {
@@ -6507,7 +6507,7 @@
           }
         }
       ],
-      "version": "0.6.0-beta.2"
+      "version": "0.6.0-beta.3"
     },
     "stacker 0.1.25": {
       "build_script_attrs": {
@@ -9270,7 +9270,7 @@
     "assert_fs 1.1.4"
   ],
   "workspace_members": {
-    "sprawl-guard 0.6.0-beta.2": "crates/sprawl-guard",
-    "sprawl-guard-lib 0.6.0-beta.2": "crates/sprawl-guard-lib"
+    "sprawl-guard 0.6.0-beta.3": "crates/sprawl-guard",
+    "sprawl-guard-lib 0.6.0-beta.3": "crates/sprawl-guard-lib"
   }
 }

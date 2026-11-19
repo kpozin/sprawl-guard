@@ -49,7 +49,6 @@ mod when_github_output_is_requested {
 
             let output = sprawl_guard(&root)
                 .args(["check", "--format", "github"])
-                .env_remove("GITHUB_WORKSPACE")
                 .output()
                 .unwrap();
 
@@ -111,6 +110,49 @@ mod when_github_output_is_requested {
             );
         }
     }
+
+    mod and_the_declared_workspace_is_empty {
+        use super::*;
+
+        #[test]
+        fn it_names_files_relative_to_the_root() {
+            let root = TempDir::new().unwrap();
+            write_rust_file_limit_config(&root, 1);
+            write_over_limit_source(&root);
+
+            let output = sprawl_guard(&root)
+                .args(["check", "--format", "github"])
+                .env("GITHUB_WORKSPACE", "")
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+            assert_human_report_then_annotation(&stdout(&output), "src/lib.rs");
+        }
+    }
+
+    mod and_the_declared_workspace_does_not_exist {
+        use super::*;
+
+        #[test]
+        fn it_annotates_the_file_violation_without_a_file() {
+            let root = TempDir::new().unwrap();
+            write_rust_file_limit_config(&root, 1);
+            write_over_limit_source(&root);
+
+            let output = sprawl_guard(&root)
+                .args(["check", "--format", "github"])
+                .env("GITHUB_WORKSPACE", root.path().join("missing"))
+                .output()
+                .unwrap();
+
+            assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+            assert_eq!(
+                stdout(&output).trim_end().rsplit_once('\n').unwrap().1,
+                format!("::error {ANNOTATION_MESSAGE}")
+            );
+        }
+    }
 }
 
 mod when_the_config_selects_github_output {
@@ -134,11 +176,7 @@ mod when_the_config_selects_github_output {
         );
         write_over_limit_source(&root);
 
-        let output = sprawl_guard(&root)
-            .arg("check")
-            .env_remove("GITHUB_WORKSPACE")
-            .output()
-            .unwrap();
+        let output = sprawl_guard(&root).arg("check").output().unwrap();
 
         assert_exit_code(&output, exit_codes::CHECK_FAILURE);
         assert_human_report_then_annotation(&stdout(&output), "src/lib.rs");

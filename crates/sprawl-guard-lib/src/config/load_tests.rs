@@ -971,6 +971,64 @@ mod when_config_values_are_invalid {
     }
 
     #[test]
+    fn it_names_the_rule_for_a_zero_direct_file_limit() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [limits.max_direct_files_per_directory]
+                production = 0
+            "#},
+            "direct-file count must be greater than zero",
+        );
+    }
+
+    #[test]
+    fn it_names_the_accepted_values_for_a_negative_direct_file_limit() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [limits.max_direct_files_per_directory]
+                production = -1
+            "#},
+            "invalid value: integer `-1`, expected a positive integer or \"unlimited\"",
+        );
+    }
+
+    #[test]
+    fn it_names_the_rule_for_a_zero_finding_cap() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [output]
+                max_findings = 0
+            "#},
+            "finding cap must be greater than zero",
+        );
+    }
+
+    #[test]
+    fn it_names_the_accepted_values_for_another_limit_keyword() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [output]
+                max_findings = "all"
+            "#},
+            "unsupported limit \"all\"; expected a positive integer or \"unlimited\"",
+        );
+    }
+
+    #[test]
+    fn it_rejects_one_language_configured_under_two_spellings() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [languages.rust]
+                enabled = false
+
+                [languages.Rust]
+                test_globs = ["x/**"]
+            "#},
+            "language Rust is configured more than once; language keys are case-insensitive",
+        );
+    }
+
+    #[test]
     fn it_rejects_zero_traversal_entry_limit() {
         assert_config_error_contains(
             indoc! {r#"

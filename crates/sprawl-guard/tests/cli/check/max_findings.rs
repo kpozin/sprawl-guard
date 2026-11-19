@@ -42,12 +42,7 @@ fn write_files_over_limit(root: &TempDir, prefix: &str, count: usize) {
 }
 
 fn check(root: &TempDir, args: &[&str]) -> std::process::Output {
-    sprawl_guard(root)
-        .arg("check")
-        .args(args)
-        .env_remove("GITHUB_WORKSPACE")
-        .output()
-        .unwrap()
+    sprawl_guard(root).arg("check").args(args).output().unwrap()
 }
 
 /// Counts the violations that the human report lists.

@@ -383,14 +383,14 @@ const USAGE =
   "usage: check-npm-install.ts --project DIR --version VERSION --runtime-package NAME " +
   "(--candidate-directory DIR | --dist-tag TAG --runtime-installation automatic|explicit)";
 
-/** Parses and validates the command line. */
+/** Parses and validates `argv`, or the process command line when omitted. */
 export function parseNpmInstallCheckArguments(
-  argv: readonly string[],
+  argv?: readonly string[],
 ): ParseNpmInstallCheckArgumentsResult {
   let values;
   try {
     ({ values } = parseArgs({
-      args: [...argv],
+      args: argv?.slice(),
       options: {
         "candidate-directory": { type: "string" },
         "dist-tag": { type: "string" },
@@ -451,7 +451,7 @@ export function parseNpmInstallCheckArguments(
 }
 
 async function main(): Promise<number> {
-  const parsed = parseNpmInstallCheckArguments(process.argv.slice(2));
+  const parsed = parseNpmInstallCheckArguments();
   if (parsed.kind === "invalid_arguments") {
     console.error(parsed.detail);
     return 2;

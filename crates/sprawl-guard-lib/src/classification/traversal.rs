@@ -35,12 +35,12 @@ pub(super) fn walk_sources_scoped(
         if root_device.is_some_and(|root_device| device::leaves(entry, root_device)) {
             return false;
         }
-        let hidden = entry.path() != filter_root
-            && entry
-                .file_name()
-                .to_str()
-                .is_some_and(|name| name.starts_with('.'));
-        (!skip_hidden || !hidden)
+        let name = entry.file_name().to_str();
+        let below_root = entry.path() != filter_root;
+        let hidden = below_root && name.is_some_and(|name| name.starts_with('.'));
+        let git_metadata = below_root && name == Some(GIT_METADATA_NAME);
+        !git_metadata
+            && (!skip_hidden || !hidden)
             && (scopes.is_empty() || is_native_scope_relevant(entry.path(), &filter_root, &scopes))
     });
     // ignore 0.4 still parses parent ignore files with parents(false). Their
@@ -51,6 +51,12 @@ pub(super) fn walk_sources_scoped(
         Err(error) => !is_parent_ignore_error(&root, error),
     })
 }
+
+/// Name of Git's own directory, or of the file that points to it in a worktree or submodule.
+///
+/// The walk leaves it out even when hidden paths are checked: its contents are Git's, not the
+/// repository's.
+const GIT_METADATA_NAME: &str = ".git";
 
 fn is_parent_ignore_error(root: &Path, error: &ignore::Error) -> bool {
     match error {

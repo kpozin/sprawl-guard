@@ -40,9 +40,9 @@ export function requiredStringAttribute(node: MdxJsxFlowElement, name: string): 
   const matches = node.attributes.filter(
     (attribute) => attribute.type === "mdxJsxAttribute" && attribute.name === name,
   );
-  if (matches.length !== 1) return undefined;
-  const [match] = matches;
-  return typeof match.value === "string" ? match.value : undefined;
+  const [match, ...others] = matches;
+  if (others.length > 0) return undefined;
+  return typeof match?.value === "string" ? match.value : undefined;
 }
 
 /** Accepts only literal string attributes with one of the allowed names. */

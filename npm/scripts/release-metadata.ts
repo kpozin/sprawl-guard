@@ -263,7 +263,7 @@ function main(): number {
     selection: process.env.NPM_CHANNEL ?? "",
   });
   if (npmDistTag.kind !== "ok") {
-    console.error(`NPM_CHANNEL and CUSTOM_NPM_TAG name no npm channel: ${JSON.stringify(npmDistTag)}`);
+    console.error(`NPM_CHANNEL and CUSTOM_NPM_TAG do not select a usable npm channel: ${JSON.stringify(npmDistTag)}`);
     return 1;
   }
   const githubDisposition = classifyGitHubRelease(

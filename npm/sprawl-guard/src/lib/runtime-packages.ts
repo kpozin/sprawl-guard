@@ -10,6 +10,15 @@ export const WASM_PACKAGE_NAME = "@kpozin/sprawl-guard-wasm32-wasip1" as const;
 export const GLIBC_FLOOR_IMAGE =
   "ubuntu:22.04@sha256:9abcaffc92a5279fff3a6a41635c0800ea33e528425fb389658806476e7defde" as const;
 
+/** A glibc release, such as 2.35. */
+export interface GlibcVersion {
+  readonly major: number;
+  readonly minor: number;
+}
+
+/** The glibc of {@link GLIBC_FLOOR_IMAGE}: the oldest glibc that can load the Linux glibc binaries. */
+export const GLIBC_FLOOR = { major: 2, minor: 35 } as const satisfies GlibcVersion;
+
 type RuntimeRunner = `${"macos" | "ubuntu" | "windows"}-${string}`;
 type NativeRustTarget =
   | `${string}-apple-darwin`

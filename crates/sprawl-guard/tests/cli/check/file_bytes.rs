@@ -56,7 +56,6 @@ mod when_only_the_default_limit_is_set {
                     "kind": "file_bytes",
                     "path": "assets/logo.png",
                     "actual": 20,
-                    "measured_from": "on_disk",
                     "limit": LIMIT,
                     "ratchet": null,
                 })],
@@ -221,7 +220,7 @@ mod when_the_ratchet_has_a_byte_entry {
         write_ratchet(
             root,
             &format!(
-                "schema_version = 1\n\n[[file_sizes]]\npath = \"{path}\"\nmax_bytes = {max_bytes}\n"
+                "schema_version = 1\n\n[[file_sizes]]\npath = \"{path}\"\nstorage = \"git\"\nmax_bytes = {max_bytes}\n"
             ),
         );
     }

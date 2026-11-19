@@ -11,8 +11,10 @@ import {
   type WasmModulePath,
 } from "./paths.js";
 import {
+  GLIBC_FLOOR,
   NATIVE_RUNTIME_PACKAGE_DEFINITIONS,
   WASM_PACKAGE_NAME,
+  type GlibcVersion,
   type LibcFamily,
   type NativePackageName,
   type RuntimePackageName,
@@ -24,32 +26,55 @@ export { WASM_PACKAGE_NAME };
 export type WasmPackageName = typeof WASM_PACKAGE_NAME;
 export type { LibcFamily, NativePackageName, RuntimePackageName };
 
+/** The C library of a Linux system. A glibc binary also needs a new enough glibc to load. */
+export type LinuxLibc =
+  | { readonly family: "musl" }
+  | { readonly family: "gnu"; readonly version: GlibcVersion };
+
 /** Runtime dimensions that select a native binary distribution package. */
 export type NativeRuntime =
   | {
       platform: "linux";
       arch: NodeJS.Architecture;
-      libcFamily: LibcFamily;
+      /** `null` when the C library could not be identified, so no native binary is known to run. */
+      libc: LinuxLibc | null;
     }
   | {
       platform: Exclude<NodeJS.Platform, "linux">;
       arch: NodeJS.Architecture;
     };
 
-/** Detects whether the current Linux runtime uses glibc or musl. */
-export function detectLibcFamily(): LibcFamily | null {
-  if (process.platform !== "linux") {
+/** Major and minor numbers at the start of the version that glibc reports, such as `2.35`. */
+const GLIBC_VERSION_PATTERN = /^(\d+)\.(\d+)/u;
+
+/**
+ * Identifies the C library from the `glibcVersionRuntime` of a Node diagnostic report, which only
+ * a Node linked against glibc sets.
+ */
+export function linuxLibcFromReportedGlibcVersion(reported: string | undefined): LinuxLibc | null {
+  if (reported === undefined) {
+    return { family: "musl" };
+  }
+  const match = GLIBC_VERSION_PATTERN.exec(reported);
+  if (match === null) {
     return null;
   }
+  return { family: "gnu", version: { major: Number(match[1]), minor: Number(match[2]) } };
+}
 
-  const report = process.report?.getReport?.() as
-    | {
-        header?: {
-          glibcVersionRuntime?: string;
-        };
-      }
-    | undefined;
-  return report?.header?.glibcVersionRuntime ? "gnu" : "musl";
+/** Detects the C library of the Linux system that Node is running on. */
+function detectLinuxLibc(): LinuxLibc | null {
+  // The report otherwise lists every network interface, which is slow to gather and never read.
+  // `@types/node` does not declare `excludeNetwork`, which Node has had since version 22.0.
+  const report = process.report as NodeJS.ProcessReport & { excludeNetwork: boolean };
+  const excludedNetwork = report.excludeNetwork;
+  report.excludeNetwork = true;
+  try {
+    const { header } = report.getReport() as { header?: { glibcVersionRuntime?: string } };
+    return linuxLibcFromReportedGlibcVersion(header?.glibcVersionRuntime);
+  } finally {
+    report.excludeNetwork = excludedNetwork;
+  }
 }
 
 /** Returns the current runtime dimensions used to select an optional native package. */
@@ -59,7 +84,7 @@ export function currentNativeRuntime(): NativeRuntime {
     return {
       platform,
       arch: process.arch,
-      libcFamily: detectLibcFamily() ?? "musl",
+      libc: detectLinuxLibc(),
     };
   }
 
@@ -69,7 +94,22 @@ export function currentNativeRuntime(): NativeRuntime {
   };
 }
 
-/** Resolves the native distribution package for the current Node platform and architecture. */
+/** Returns whether a system with `libc` can load a Linux binary built for `family`. */
+function canLoad(libc: LinuxLibc | null, family: LibcFamily): boolean {
+  if (libc === null || libc.family !== family) {
+    return false;
+  }
+  return (
+    libc.family === "musl"
+    || libc.version.major > GLIBC_FLOOR.major
+    || (libc.version.major === GLIBC_FLOOR.major && libc.version.minor >= GLIBC_FLOOR.minor)
+  );
+}
+
+/**
+ * Resolves the native distribution package for the current Node platform and architecture, or
+ * `null` when none of them runs there.
+ */
 export function resolveNativePackageName(
   runtime: NativeRuntime = currentNativeRuntime(),
 ): NativePackageName | null {
@@ -79,7 +119,7 @@ export function resolveNativePackageName(
     }
     if (
       runtime.platform === "linux"
-      && (!("libcFamily" in definition) || definition.libcFamily !== runtime.libcFamily)
+      && (!("libcFamily" in definition) || !canLoad(runtime.libc, definition.libcFamily))
     ) {
       continue;
     }

@@ -2,6 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 import { resolveNpmDistTagSelection } from "./npm-dist-tag.ts";
 import { parseReleaseTag } from "./release-policy.ts";
 
@@ -62,7 +63,7 @@ export function resolveNpmChannelPublication(
 }
 
 function main(): number {
-  const resolved = resolveNpmChannelPublication(process.argv.slice(2));
+  const resolved = resolveNpmChannelPublication(parseArgs({ allowPositionals: true }).positionals);
   if (resolved.kind !== "ok") {
     console.error(
       "usage: publish-npm-channel.ts <candidate-directory> <full-commit> <v-tag> <auto|latest|next|beta|rc|canary|custom> [custom-tag]",

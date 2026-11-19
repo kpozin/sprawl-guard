@@ -7,8 +7,8 @@ use super::explain_directory::DirectoryExplanation;
 use crate::code_line_counter::LineMeasurement;
 use crate::config::{ParsedCodeFileByteLimit, UnreadablePathPolicy};
 use crate::{
-    DiagnosticDetail, FileByteLimit, LanguageGroupId, LanguageId, RelativePath, RustCfgTestInfo,
-    SourceResolvedLimits,
+    DiagnosticDetail, FileByteLimit, FileStorage, LanguageGroupId, LanguageId, RelativePath,
+    RustCfgTestInfo, SourceResolvedLimits,
 };
 
 /// Production or test role assigned to an included source file.
@@ -92,6 +92,12 @@ pub(crate) struct SourceDiscoveryReport {
     ///
     /// Empty unless discovery was asked to resolve byte limits.
     pub(crate) byte_limited_files: Vec<ByteLimitedFile>,
+    /// Files with a finite limit for some storage whose storage is unknown, because a
+    /// `.gitattributes` file above them can't be read.
+    pub(crate) unknown_storage_files: Vec<RelativePath>,
+    /// Selected paths that the walk never reached, sorted by path. The usual cause is a
+    /// hidden-path or ignore rule.
+    pub(crate) skipped_scopes: Vec<RelativePath>,
 }
 
 /// A file whose resolved byte limit is finite, so `check` measures its size.
@@ -99,6 +105,8 @@ pub(crate) struct SourceDiscoveryReport {
 pub(crate) struct ByteLimitedFile {
     /// Repository-relative file path.
     pub(crate) path: RelativePath,
+    /// Where Git stores the file, which decides the byte limit that applies.
+    pub(crate) storage: FileStorage,
     /// Resolved byte limit.
     pub(crate) limit: FileByteLimit,
 }
@@ -147,6 +155,9 @@ pub enum UnreadablePathKind {
     IgnoreParseFailed,
     /// A discovered source file could not be read, so its lines were not counted.
     ReadFileFailed,
+    /// A directory's `.gitattributes` file could not be read, so whether Git LFS stores the files
+    /// in that directory and below is unknown.
+    ReadGitAttributesFailed,
 }
 
 /// Whether a gap in analysis fails the check, from `traversal.unreadable_paths` after CLI overrides.

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::classification::{SourceKind, UnreadablePath};
 use crate::config::{ConfigSchemaVersion, LanguageGroupsError};
-use crate::{LanguageGroupId, LanguageId, RelativePath};
+use crate::{FileStorage, LanguageGroupId, LanguageId, RelativePath};
 
 /// Error type for recoverable `sprawl-guard` library failures.
 #[derive(Debug, thiserror::Error)]
@@ -76,6 +76,14 @@ pub enum SprawlError {
     #[error("failed to read file type for {path}: {source}")]
     ReadFileType {
         /// Path whose file type could not be read.
+        path: PathBuf,
+        /// Underlying I/O error.
+        source: std::io::Error,
+    },
+    /// A `.gitattributes` file exists but could not be read, so where Git stores a file is unknown.
+    #[error("failed to read Git attributes file {path}: {source}")]
+    ReadGitAttributes {
+        /// Path of the `.gitattributes` file.
         path: PathBuf,
         /// Underlying I/O error.
         source: std::io::Error,
@@ -175,8 +183,10 @@ pub enum SprawlError {
         path: RelativePath,
     },
     /// A ratchet file contained two byte ceilings for the same file.
-    #[error("duplicate file size ratchet entry for path {path}")]
+    #[error("duplicate file size ratchet entry for storage {storage} and path {path}")]
     DuplicateFileSizeRatchetEntry {
+        /// Duplicate ratchet storage.
+        storage: FileStorage,
         /// Duplicate ratchet path.
         path: RelativePath,
     },
@@ -212,12 +222,10 @@ pub enum SprawlError {
         /// Language whose authored path selection is empty.
         language: LanguageId,
     },
-    /// A glob pattern is invalid.
-    #[error("invalid config include glob {pattern:?}: {source}")]
-    InvalidGlob {
-        /// Glob pattern.
-        pattern: String,
-        /// Glob parser error.
+    /// The configuration's glob patterns could not be combined into one matcher.
+    #[error("failed to combine the configured glob patterns: {source}")]
+    InvalidGlobSet {
+        /// Matcher construction error.
         source: globset::Error,
     },
     /// Ignore-aware traversal failed.

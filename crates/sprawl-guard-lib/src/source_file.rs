@@ -5,36 +5,41 @@ use std::io::{self, Read as _};
 use std::path::Path;
 
 use crate::config::ParsedCodeFileByteLimit;
-use crate::{FileBytes, FileSizeSource, MeasuredFileSize, Result, SprawlError};
+use crate::{FileBytes, FileStorage, Result, SprawlError};
 
+mod lfs_attributes;
 mod lfs_pointer;
+
+pub(crate) use lfs_attributes::LfsAttributes;
 
 /// Measures the size of a file for its byte limit.
 ///
-/// A regular file small enough to be a Git LFS pointer is read, and a valid pointer is measured by
-/// the size it declares. Any other file is measured by its size on disk, without reading it, so a
-/// special file such as a FIFO is never opened.
-pub(crate) fn measure_file_size(path: &Path) -> io::Result<MeasuredFileSize> {
+/// A file in Git LFS is measured by the size of its content: the size its pointer declares when
+/// Git LFS hasn't downloaded it, or its size on disk when it has. The two agree unless a Git LFS
+/// extension transforms the content, in which case the pointer declares the stored object's size.
+/// Any other file is measured on disk without being read.
+pub(crate) fn measure_file_size(path: &Path, storage: FileStorage) -> io::Result<FileBytes> {
     let metadata = fs::metadata(path)?;
     let on_disk = FileBytes::new(metadata.len());
-    if metadata.is_file() && on_disk.into_inner() < lfs_pointer::POINTER_SIZE_BOUND {
-        let mut content = Vec::new();
-        File::open(path)?
-            .take(lfs_pointer::POINTER_SIZE_BOUND)
-            .read_to_end(&mut content)?;
-        if let Some(declared) = lfs_pointer::declared_size(&content) {
-            return Ok(MeasuredFileSize {
-                bytes: declared,
-                source: FileSizeSource::LfsPointer {
-                    pointer_bytes: on_disk,
-                },
-            });
-        }
-    }
-    Ok(MeasuredFileSize {
-        bytes: on_disk,
-        source: FileSizeSource::OnDisk,
+    Ok(match storage {
+        FileStorage::Git => on_disk,
+        FileStorage::Lfs => declared_lfs_size(path, &metadata)?.unwrap_or(on_disk),
     })
+}
+
+/// Returns the size that the file at `path` declares, if it is a Git LFS pointer.
+///
+/// Only a regular file small enough to be a pointer is read, so a special file such as a FIFO is
+/// never opened.
+fn declared_lfs_size(path: &Path, metadata: &fs::Metadata) -> io::Result<Option<FileBytes>> {
+    if !metadata.is_file() || metadata.len() >= lfs_pointer::POINTER_SIZE_BOUND {
+        return Ok(None);
+    }
+    let mut content = Vec::new();
+    File::open(path)?
+        .take(lfs_pointer::POINTER_SIZE_BOUND)
+        .read_to_end(&mut content)?;
+    Ok(lfs_pointer::declared_size(&content))
 }
 
 /// Whether a source file can be read and counted.
@@ -56,17 +61,21 @@ pub(crate) fn parsed_code_file_size(
     path: &Path,
     limit: ParsedCodeFileByteLimit,
 ) -> Result<ParsedCodeFileSize> {
-    let size = measure_file_size(path).map_err(|source| SprawlError::ReadFileType {
+    let read_error = |source| SprawlError::ReadFileType {
         path: path.to_path_buf(),
         source,
-    })?;
-    Ok(match size.source {
-        FileSizeSource::LfsPointer { .. } => ParsedCodeFileSize::LfsPointer(size.bytes),
-        FileSizeSource::OnDisk if size.bytes.into_inner() > limit.into_inner() => {
-            ParsedCodeFileSize::TooLarge(size.bytes)
-        }
-        FileSizeSource::OnDisk => ParsedCodeFileSize::WithinLimit,
-    })
+    };
+    let metadata = fs::metadata(path).map_err(read_error)?;
+    let on_disk = FileBytes::new(metadata.len());
+    Ok(
+        match declared_lfs_size(path, &metadata).map_err(read_error)? {
+            Some(declared) => ParsedCodeFileSize::LfsPointer(declared),
+            None if on_disk.into_inner() > limit.into_inner() => {
+                ParsedCodeFileSize::TooLarge(on_disk)
+            }
+            None => ParsedCodeFileSize::WithinLimit,
+        },
+    )
 }
 
 /// Ensures a source file is within `traversal.max_parsed_code_file_bytes` before it is read.

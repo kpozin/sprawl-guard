@@ -3,7 +3,29 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { syncSourceWrapperManifest } from "./sync-source-wrapper-manifest.ts";
+import { parseMode, syncSourceWrapperManifest } from "./sync-source-wrapper-manifest.ts";
+
+describe("parseMode", () => {
+  describe("when there are no arguments", () => {
+    it("writes the manifest", () => {
+      assert.equal(parseMode([]), "write");
+    });
+  });
+
+  describe("when the only argument is --check", () => {
+    it("checks the manifest", () => {
+      assert.equal(parseMode(["--check"]), "check");
+    });
+  });
+
+  for (const args of [["--"], ["--check", "--"], ["--check", "--check"], ["extra"], ["--force"]]) {
+    describe(`when the arguments are ${JSON.stringify(args)}`, () => {
+      it("rejects them", () => {
+        assert.deepEqual(parseMode(args), { kind: "invalid_arguments", args });
+      });
+    });
+  }
+});
 
 describe("syncSourceWrapperManifest", () => {
   let tempWorkspaceRoot: string;

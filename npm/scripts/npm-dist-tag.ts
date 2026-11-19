@@ -36,6 +36,9 @@ export const NPM_DIST_TAG_SCHEMA = z
 /** npm distribution tag that is safe to pass to `npm publish --tag`. */
 export type NpmDistTag = z.infer<typeof NPM_DIST_TAG_SCHEMA>;
 
+/** The tag that `npm install` resolves when no version or tag is given. */
+const LATEST_NPM_DIST_TAG = NPM_DIST_TAG_SCHEMA.parse("latest");
+
 /** Result of resolving the release-channel inputs. */
 export type ResolveNpmDistTagSelectionResult =
   | { readonly kind: "ok"; readonly tag: NpmDistTag }
@@ -50,13 +53,46 @@ export type ResolveNpmDistTagSelectionResult =
       /** `auto` was selected for a prerelease whose label names no npm channel. */
       readonly kind: "no_automatic_channel";
       readonly releaseVersion: PublicPackageVersion;
+    }
+  | {
+      /**
+       * `latest` was selected for a prerelease. `npm install` with no version would then install
+       * the prerelease, and trusted publishing cannot move the tag back.
+       */
+      readonly kind: "prerelease_on_latest";
+      readonly releaseVersion: PublicPackageVersion;
     };
 
 /**
  * Resolves workflow or local channel inputs to one branded npm dist-tag. `auto` picks `latest`
- * for a stable release and the channel named by a beta or rc prerelease's label.
+ * for a stable release and the channel named by a beta or rc prerelease's label. A prerelease is
+ * never resolved to `latest`, however the tag was selected.
  */
 export function resolveNpmDistTagSelection(args: {
+  readonly customTag: string;
+  readonly releaseVersion: PublicPackageVersion;
+  readonly selection: string;
+}): ResolveNpmDistTagSelectionResult {
+  const selected = selectedNpmDistTag(args);
+  return selected.kind === "ok" && !npmDistTagAcceptsVersion(selected.tag, args.releaseVersion)
+    ? { kind: "prerelease_on_latest", releaseVersion: args.releaseVersion }
+    : selected;
+}
+
+/**
+ * Returns whether `releaseVersion` may be published under `tag`: any version under any tag,
+ * except a prerelease under `latest`. Every entry point that takes a tag and a version checks
+ * this before it prepares or publishes anything.
+ */
+export function npmDistTagAcceptsVersion(
+  tag: NpmDistTag,
+  releaseVersion: PublicPackageVersion,
+): boolean {
+  return tag !== LATEST_NPM_DIST_TAG || prerelease(releaseVersion) === null;
+}
+
+/** Resolves the channel inputs to a tag, whatever the release version allows on that tag. */
+function selectedNpmDistTag(args: {
   readonly customTag: string;
   readonly releaseVersion: PublicPackageVersion;
   readonly selection: string;
@@ -96,7 +132,7 @@ function automaticNpmDistTag(
 ): ResolveNpmDistTagSelectionResult {
   const labels = prerelease(releaseVersion);
   if (labels === null) {
-    return { kind: "ok", tag: NPM_DIST_TAG_SCHEMA.parse("latest") };
+    return { kind: "ok", tag: LATEST_NPM_DIST_TAG };
   }
   const channel = AUTOMATIC_PRERELEASE_CHANNELS.find(
     (candidate) => candidate === labels[0],
