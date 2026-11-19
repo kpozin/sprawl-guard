@@ -1,9 +1,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{CountLines, DirectFileLimit, LineLimit};
+use crate::{CountLines, DirectFileLimit, LineLimit, MaxBytesPerFile};
 
-/// Limits applied to source files and to direct files per directory.
+/// Limits applied to source files, to direct files per directory, and to the size of every file.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
@@ -11,6 +11,8 @@ pub struct Limits {
     pub max_lines_per_file: MaxLinesPerFileLimits,
     /// Maximum direct source files per directory.
     pub max_direct_files_per_directory: MaxDirectFilesPerDirectoryLimits,
+    /// Repository-wide maximum size of any file, source or not, before path overrides.
+    pub max_bytes_per_file: MaxBytesPerFile,
 }
 
 /// Line-count limits applied to source files by classification.
@@ -53,6 +55,9 @@ pub(super) fn merge_limits(config: &mut Limits, partial: PartialLimits) {
             value,
         );
     }
+    if let Some(value) = partial.max_bytes_per_file {
+        config.max_bytes_per_file = value;
+    }
 }
 
 pub(super) fn merge_max_direct_files_per_directory_limits(
@@ -72,6 +77,7 @@ pub(super) fn merge_max_direct_files_per_directory_limits(
 pub(super) struct PartialLimits {
     max_lines_per_file: Option<PartialMaxLinesPerFileLimits>,
     max_direct_files_per_directory: Option<PartialMaxDirectFilesPerDirectoryLimits>,
+    max_bytes_per_file: Option<MaxBytesPerFile>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

@@ -5,7 +5,7 @@ use serde::{Serialize, Serializer};
 
 use crate::code_line_counter::LineMeasurement;
 use crate::ratchet::RatchetCount;
-use crate::{LanguageGroupId, RelativePath};
+use crate::{FileByteLimit, FileBytes, LanguageGroupId, RelativePath};
 
 use super::{DirectoryViolationKind, FileViolationKind};
 
@@ -43,6 +43,10 @@ impl RatchetViolation {
             Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => {
                 RatchetViolationKind::stale_directory(violation.kind)
             }
+            Self::Measured(RatchetStaleMeasuredViolation::FileBytes(_))
+            | Self::Missing(RatchetStaleMissingViolation::FileBytes(_)) => {
+                RatchetViolationKind::FileBytesStale
+            }
         }
     }
 
@@ -53,6 +57,8 @@ impl RatchetViolation {
             Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => &violation.path,
             Self::Missing(RatchetStaleMissingViolation::File(violation)) => &violation.path,
             Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => &violation.path,
+            Self::Measured(RatchetStaleMeasuredViolation::FileBytes(violation)) => &violation.path,
+            Self::Missing(RatchetStaleMissingViolation::FileBytes(violation)) => &violation.path,
         }
     }
 
@@ -64,6 +70,9 @@ impl RatchetViolation {
             ),
             Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => {
                 Some(violation.actual)
+            }
+            Self::Measured(RatchetStaleMeasuredViolation::FileBytes(violation)) => {
+                Some(RatchetCount::from_file_bytes(violation.actual))
             }
             Self::Missing(_) => None,
         }
@@ -78,12 +87,15 @@ impl RatchetViolation {
             Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => {
                 Some(violation.limit)
             }
+            Self::Measured(RatchetStaleMeasuredViolation::FileBytes(violation)) => Some(
+                RatchetLimit::Finite(RatchetCount::from_file_byte_limit(violation.limit)),
+            ),
             Self::Missing(_) => None,
         }
     }
 
     /// Returns the stored ratchet ceiling.
-    pub const fn ratchet(&self) -> RatchetCount {
+    pub fn ratchet(&self) -> RatchetCount {
         match self {
             Self::Measured(RatchetStaleMeasuredViolation::File(violation)) => violation.ratchet,
             Self::Measured(RatchetStaleMeasuredViolation::Directory(violation)) => {
@@ -91,6 +103,12 @@ impl RatchetViolation {
             }
             Self::Missing(RatchetStaleMissingViolation::File(violation)) => violation.ratchet,
             Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => violation.ratchet,
+            Self::Measured(RatchetStaleMeasuredViolation::FileBytes(violation)) => {
+                RatchetCount::from_file_byte_limit(violation.ratchet)
+            }
+            Self::Missing(RatchetStaleMissingViolation::FileBytes(violation)) => {
+                RatchetCount::from_file_byte_limit(violation.ratchet)
+            }
         }
     }
 
@@ -103,8 +121,13 @@ impl RatchetViolation {
             Self::Missing(RatchetStaleMissingViolation::Directory(violation)) => {
                 Some(&violation.group)
             }
-            Self::Measured(RatchetStaleMeasuredViolation::File(_))
-            | Self::Missing(RatchetStaleMissingViolation::File(_)) => None,
+            Self::Measured(
+                RatchetStaleMeasuredViolation::File(_)
+                | RatchetStaleMeasuredViolation::FileBytes(_),
+            )
+            | Self::Missing(
+                RatchetStaleMissingViolation::File(_) | RatchetStaleMissingViolation::FileBytes(_),
+            ) => None,
         }
     }
 
@@ -114,7 +137,11 @@ impl RatchetViolation {
             Self::Measured(RatchetStaleMeasuredViolation::File(violation)) => {
                 Some(&violation.measurement)
             }
-            Self::Measured(RatchetStaleMeasuredViolation::Directory(_)) | Self::Missing(_) => None,
+            Self::Measured(
+                RatchetStaleMeasuredViolation::Directory(_)
+                | RatchetStaleMeasuredViolation::FileBytes(_),
+            )
+            | Self::Missing(_) => None,
         }
     }
 }
@@ -148,6 +175,8 @@ pub enum RatchetStaleMeasuredViolation {
     File(FileRatchetStaleMeasuredViolation),
     /// Stale directory direct-file measurement.
     Directory(DirectoryRatchetStaleMeasuredViolation),
+    /// Stale file size measurement.
+    FileBytes(FileBytesRatchetStaleMeasuredViolation),
 }
 
 /// Stale ratchet entry for a file that is still measured.
@@ -189,6 +218,8 @@ pub enum RatchetStaleMissingViolation {
     File(FileRatchetStaleMissingViolation),
     /// Missing grouped directory direct-file measurement.
     Directory(DirectoryRatchetStaleMissingViolation),
+    /// Missing file size measurement.
+    FileBytes(FileBytesRatchetStaleMissingViolation),
 }
 
 /// Stale file ratchet whose path is no longer measured.
@@ -213,4 +244,27 @@ pub struct DirectoryRatchetStaleMissingViolation {
     pub group: LanguageGroupId,
     /// Stored ratchet ceiling.
     pub ratchet: RatchetCount,
+}
+
+/// Stale byte ratchet for a file whose size is still measured.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileBytesRatchetStaleMeasuredViolation {
+    /// Repository-relative file path.
+    pub path: RelativePath,
+    /// Current size of the file.
+    pub actual: FileBytes,
+    /// Byte limit that currently applies to the file.
+    pub limit: FileByteLimit,
+    /// Stored ratchet ceiling.
+    pub ratchet: FileByteLimit,
+}
+
+/// Stale byte ratchet for a file whose size is no longer measured: the file is gone, excluded, or
+/// no longer has a byte limit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FileBytesRatchetStaleMissingViolation {
+    /// Repository-relative file path.
+    pub path: RelativePath,
+    /// Stored ratchet ceiling.
+    pub ratchet: FileByteLimit,
 }

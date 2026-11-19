@@ -41,8 +41,10 @@ impl<'config> Classifier<'config> {
     /// `Some(ClassifiedSource)` contains a path selected for checking. `None` means configured
     /// configuration excludes the path. Ambiguous language matches become errors because later checks
     /// need one definitive set of language settings.
-    pub(super) fn included_source(&self, path: RelativePath) -> Result<Option<ClassifiedSource>> {
-        match self.classify(path)? {
+    pub(super) fn included_source(
+        classification: PathClassification<ClassifiedSource>,
+    ) -> Result<Option<ClassifiedSource>> {
+        match classification {
             PathClassification::Source(source) => Ok(Some(source)),
             PathClassification::AmbiguousLanguage { path, languages } => {
                 Err(ambiguous_language(path, languages))

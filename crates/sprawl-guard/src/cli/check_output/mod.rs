@@ -1,7 +1,9 @@
+mod file_bytes;
 mod github;
 mod listing;
 mod sarif;
 
+pub(super) use file_bytes::byte_size;
 use std::path::Path;
 
 use sprawl_guard_lib::check::{
@@ -16,12 +18,13 @@ use sprawl_guard_lib::{
 
 use super::{CheckFormat, display_relative};
 use crate::error::{CliError, Result};
+use file_bytes::file_bytes_entry;
 use listing::{FindingListing, ViolationGroup, violations_in_display_order};
 
 #[cfg(test)]
 fn missing_directory_ratchet(
     group: sprawl_guard_lib::LanguageGroupId,
-    ratchet: u32,
+    ratchet: u64,
 ) -> CheckViolation {
     use sprawl_guard_lib::check::DirectoryViolationKind;
     use sprawl_guard_lib::{
@@ -304,7 +307,7 @@ fn unreadable_path_kind_message(kind: UnreadablePathKind) -> &'static str {
         UnreadablePathKind::SymlinkLoop => "symlink loop found",
         UnreadablePathKind::BrokenSymlink => "broken symlink",
         UnreadablePathKind::IgnoreParseFailed => "failed to parse ignore rule",
-        UnreadablePathKind::ReadFileFailed => "failed to read source file",
+        UnreadablePathKind::ReadFileFailed => "failed to read file",
     }
 }
 
@@ -336,6 +339,7 @@ fn violation_entry(violation: &CheckViolation, directory_files: usize) -> String
         CheckViolation::DirectoryDirectFiles(violation) => {
             directory_violation_message(violation, directory_files)
         }
+        CheckViolation::FileBytes(violation) => file_bytes_entry(violation),
         CheckViolation::Ratchet(violation) => ratchet_violation_message(violation),
     }
 }
@@ -391,6 +395,7 @@ fn ratchet_kind_message(kind: RatchetViolationKind) -> (&'static str, &'static s
         RatchetViolationKind::TestFileLinesStale => ("test file", "lines"),
         RatchetViolationKind::DirectoryDirectFilesStale => ("directory", "direct files"),
         RatchetViolationKind::TestDirectoryDirectFilesStale => ("test directory", "direct files"),
+        RatchetViolationKind::FileBytesStale => ("file", "bytes"),
     }
 }
 

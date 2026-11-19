@@ -134,7 +134,9 @@ fn file_violations(report: &CheckReport) -> Vec<&FileLinesViolation> {
         .iter()
         .filter_map(|violation| match violation {
             CheckViolation::FileLines(violation) => Some(violation),
-            CheckViolation::DirectoryDirectFiles(_) | CheckViolation::Ratchet(_) => None,
+            CheckViolation::DirectoryDirectFiles(_)
+            | CheckViolation::Ratchet(_)
+            | CheckViolation::FileBytes(_) => None,
         })
         .collect()
 }
@@ -145,7 +147,9 @@ fn directory_violations(report: &CheckReport) -> Vec<&DirectoryDirectFilesViolat
         .iter()
         .filter_map(|violation| match violation {
             CheckViolation::DirectoryDirectFiles(violation) => Some(violation),
-            CheckViolation::FileLines(_) | CheckViolation::Ratchet(_) => None,
+            CheckViolation::FileLines(_)
+            | CheckViolation::Ratchet(_)
+            | CheckViolation::FileBytes(_) => None,
         })
         .collect()
 }
@@ -156,7 +160,9 @@ fn ratchet_violations(report: &CheckReport) -> Vec<&RatchetViolation> {
         .iter()
         .filter_map(|violation| match violation {
             CheckViolation::Ratchet(violation) => Some(violation),
-            CheckViolation::FileLines(_) | CheckViolation::DirectoryDirectFiles(_) => None,
+            CheckViolation::FileLines(_)
+            | CheckViolation::DirectoryDirectFiles(_)
+            | CheckViolation::FileBytes(_) => None,
         })
         .collect()
 }
@@ -540,6 +546,66 @@ mod when_recoverable_traversal_errors_occur {
             let report = check_with_ratchet_current(tempdir.path(), true).unwrap();
 
             assert!(ratchet_violations(&report).is_empty());
+        }
+    }
+
+    mod with_ratchets_under_an_unreadable_directory {
+        use std::os::unix::fs::PermissionsExt;
+
+        use super::*;
+
+        /// Locks `assets/`, which holds a file with byte and line ceilings, and records a byte
+        /// ceiling for a file that no longer exists.
+        fn write_fixture(root: &Path) {
+            write_config(root, "[limits]\nmax_bytes_per_file = 10\n");
+            write_file(root, "assets/large.bin", &"x".repeat(20));
+            write_ratchet(
+                root,
+                indoc! {r#"
+                    schema_version = 1
+
+                    [[files]]
+                    path = "assets/script.rs"
+                    role = "production"
+                    max_lines = 5
+
+                    [[file_sizes]]
+                    path = "assets/large.bin"
+                    max_bytes = 20
+
+                    [[file_sizes]]
+                    path = "gone.bin"
+                    max_bytes = 20
+                "#},
+            );
+            fs::set_permissions(root.join("assets"), fs::Permissions::from_mode(0o000)).unwrap();
+        }
+
+        #[test]
+        fn it_reports_only_the_entry_outside_the_gap_as_stale() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_fixture(tempdir.path());
+            let config = load_config(tempdir.path());
+
+            let report = check_with_config(
+                tempdir.path(),
+                &config,
+                vec![],
+                Some(true),
+                Some(UnreadablePathPolicy::Warn),
+            );
+            fs::set_permissions(
+                tempdir.path().join("assets"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+
+            let report = report.unwrap();
+            let stale_paths: Vec<_> = ratchet_violations(&report)
+                .into_iter()
+                .map(|violation| violation.path().as_str())
+                .collect();
+            assert_eq!(stale_paths, ["gone.bin"]);
         }
     }
 
@@ -1296,7 +1362,9 @@ mod when_checking_directory_direct_files {
             .iter()
             .filter_map(|violation| match violation {
                 CheckViolation::DirectoryDirectFiles(violation) => Some(violation),
-                CheckViolation::FileLines(_) | CheckViolation::Ratchet(_) => None,
+                CheckViolation::FileLines(_)
+                | CheckViolation::Ratchet(_)
+                | CheckViolation::FileBytes(_) => None,
             })
             .map(|violation| violation.path.as_str())
             .collect::<Vec<_>>();

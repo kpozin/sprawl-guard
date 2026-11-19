@@ -7,7 +7,7 @@ use crate::config::{
 };
 use crate::{
     CountLines, DirectFileLimit, DirectFiles, FiniteOrUnlimited, GlobPattern, LanguageId,
-    LineLimit, MaxFindings, RatchetFilePath,
+    LineLimit, MaxBytesPerFile, MaxFindings, RatchetFilePath,
 };
 use tokei::LanguageType;
 
@@ -56,6 +56,7 @@ pub fn built_in_config() -> Config {
                     DEFAULT_MAX_DIRECT_FILES_PER_DIRECTORY,
                 )),
             },
+            max_bytes_per_file: MaxBytesPerFile::Unlimited,
         },
         ignore: IgnoreConfig {
             respect_gitignore: true,

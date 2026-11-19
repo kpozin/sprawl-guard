@@ -59,6 +59,7 @@ pub(super) fn explain_directory(
         config,
         std::slice::from_ref(&path),
         Some(UnreadablePathPolicy::Warn),
+        None,
     )?;
     let limits = LimitResolver::new(config)?;
     let ratchet = RatchetState::load_if_present(root, config)?;

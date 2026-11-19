@@ -99,6 +99,7 @@ mod when_explaining_rust_cfg_test_preprocessing {
                   line counts: 1 code, 0 comments, 1 blank
                   direct files limit for its directory: 10
                   Rust cfg(test): parsed, 1 top-level item not counted
+                  size: 49 bytes, limit unlimited
             "}
         );
         assert_eq!(stderr(&output), "");
@@ -181,6 +182,7 @@ mod when_explaining_matching_overrides {
                   line limit overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]
                   direct files overrides: #1 paths=[src/**], #2 paths=[src/legacy/**]
                   Rust cfg(test): skipped because the file never mentions cfg(test), 0 top-level items not counted
+                  size: 19 bytes, limit unlimited
             "}
         );
         assert_eq!(stderr(&output), "");
@@ -225,6 +227,7 @@ mod when_explaining_matching_overrides {
                   direct files limit for its directory: 3
                   direct files overrides: #1 paths=[src]
                   Rust cfg(test): skipped because the file never mentions cfg(test), 0 top-level items not counted
+                  size: 19 bytes, limit unlimited
             "}
         );
         assert_eq!(stderr(&output), "");
@@ -339,5 +342,125 @@ mod when_explaining_a_directory {
         assert_eq!(measurement["limit"]["value"], 1);
         assert_eq!(measurement["limit"]["matched_overrides"][0]["ordinal"], 1);
         assert_eq!(measurement["ratchet"], 2);
+    }
+}
+
+mod when_explaining_a_file_with_a_byte_limit {
+    use super::*;
+
+    /// Writes an unlimited and a finite byte override for the file, with an override between them
+    /// that matches the file but sets only a line limit.
+    fn write_fixture(root: &TempDir) {
+        write_config(
+            root,
+            indoc! {r#"
+                [limits]
+                max_bytes_per_file = 2000
+
+                [[overrides]]
+                paths = ["assets/**"]
+                max_bytes_per_file = "unlimited"
+                reason = "assets may be large"
+
+                [[overrides]]
+                paths = ["assets/**"]
+                max_lines_per_file = { production = 10 }
+                reason = "unrelated"
+
+                [[overrides]]
+                paths = ["assets/logo.*"]
+                max_bytes_per_file = 1000
+                reason = "logo budget"
+            "#},
+        );
+        write_file(root, "assets/logo.png", &"x".repeat(1_500));
+    }
+
+    #[test]
+    fn it_reports_the_size_limit_and_overrides_for_humans() {
+        let root = TempDir::new().unwrap();
+        write_fixture(&root);
+
+        let output = sprawl_guard(&root)
+            .args(["explain", "assets/logo.png"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            stdout(&output),
+            indoc! {"
+                assets/logo.png: not a source file for any enabled language
+                  size: 1500 bytes (1.5 kB), limit 1000 bytes (1.0 kB)
+                  byte limit overrides: #1 paths=[assets/**], #3 paths=[assets/logo.*]
+            "}
+        );
+    }
+
+    #[test]
+    fn it_reports_the_size_and_limit_as_structured_output() {
+        let root = TempDir::new().unwrap();
+        write_fixture(&root);
+
+        let (output, json) = run_json(&root, &["explain", "--format", "json", "assets/logo.png"]);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            json["file_bytes"],
+            serde_json::json!({
+                "limit": {
+                    "value": 1000,
+                    "matched_overrides": [
+                        {
+                            "ordinal": 1,
+                            "paths": ["assets/**"],
+                            "limits": { "max_bytes_per_file": "unlimited" },
+                            "reason": "assets may be large",
+                        },
+                        {
+                            "ordinal": 3,
+                            "paths": ["assets/logo.*"],
+                            "limits": { "max_bytes_per_file": 1000 },
+                            "reason": "logo budget",
+                        },
+                    ],
+                },
+                "size": { "state": "measured", "bytes": 1500 },
+            })
+        );
+    }
+}
+
+mod when_explaining_a_source_over_the_parsed_code_byte_limit {
+    use super::*;
+
+    #[test]
+    fn it_says_its_lines_are_not_counted() {
+        let root = TempDir::new().unwrap();
+        write_config(
+            &root,
+            indoc! {r#"
+                [traversal]
+                max_parsed_code_file_bytes = 8
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_file(&root, "src/lib.rs", "fn production() {}\n");
+
+        let output = sprawl_guard(&root)
+            .args(["explain", "src/lib.rs"])
+            .output()
+            .unwrap();
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert!(
+            stdout(&output).contains(
+                "  lines: not counted, larger than traversal.max_parsed_code_file_bytes (8 bytes); limit 400, counting code\n"
+            ),
+            "{}",
+            stdout(&output)
+        );
     }
 }

@@ -12,7 +12,8 @@ use crate::classification::SourceKind;
 use crate::file_io::write_text_atomically;
 use crate::value::schema::{TomlSchemaDirective, TomlSchemaUrl, authored_toml_schema_generator};
 use crate::{
-    CountedLines, DirectFiles, LanguageGroupId, LineLimit, RelativePath, Result, SprawlError,
+    CountedLines, DirectFiles, FileByteLimit, FileBytes, LanguageGroupId, LineLimit, RelativePath,
+    Result, SprawlError,
 };
 
 /// Measured ceilings for current violations.
@@ -31,6 +32,9 @@ pub struct RatchetFile {
     /// Directory direct-file count ceilings for both source roles.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub directories: Vec<DirectoryRatchet>,
+    /// Byte ceilings for files that were already larger than their byte limit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub file_sizes: Vec<FileSizeRatchet>,
 }
 
 impl RatchetFile {
@@ -89,17 +93,37 @@ impl RatchetFile {
     pub fn sort(&mut self) {
         self.files.sort_by_key(FileRatchet::key);
         self.directories.sort_by_key(DirectoryRatchet::key);
+        self.file_sizes
+            .sort_by(|left, right| left.path.cmp(&right.path));
     }
 
     /// Returns true when the file contains no ratchet ceilings.
     pub fn is_empty(&self) -> bool {
-        self.files.is_empty() && self.directories.is_empty()
+        self.files.is_empty() && self.directories.is_empty() && self.file_sizes.is_empty()
     }
 
     fn validate(&self) -> Result<()> {
-        reject_empty_file_paths(&self.files)?;
-        reject_duplicate_file_keys(&self.files)?;
-        reject_duplicate_directory_keys(&self.directories)
+        reject_empty_file_paths(self.files.iter().map(|entry| &entry.path))?;
+        reject_empty_file_paths(self.file_sizes.iter().map(|entry| &entry.path))?;
+        if let Some(entry) = first_duplicate(&self.files, FileRatchet::key) {
+            return Err(SprawlError::DuplicateFileRatchetEntry {
+                role: entry.role,
+                path: entry.path.clone(),
+            });
+        }
+        if let Some(entry) = first_duplicate(&self.directories, DirectoryRatchet::key) {
+            return Err(SprawlError::DuplicateDirectoryRatchetEntry {
+                role: entry.role,
+                group: entry.group.clone(),
+                path: entry.path.clone(),
+            });
+        }
+        if let Some(entry) = first_duplicate(&self.file_sizes, |entry| entry.path.clone()) {
+            return Err(SprawlError::DuplicateFileSizeRatchetEntry {
+                path: entry.path.clone(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -183,36 +207,46 @@ impl Default for RatchetSchemaVersion {
 
 /// Numeric value used when reporting ratchet comparisons.
 ///
-/// Ratchet ceilings can count either lines or direct files. The
+/// Ratchet ceilings can count lines, direct files or bytes. The
 /// violation kind identifies the metric, while this wrapper keeps comparison
 /// values branded instead of passing raw integers through the check report.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
-pub struct RatchetCount(u32);
+pub struct RatchetCount(u64);
 
 impl RatchetCount {
     /// Creates a reportable ratchet comparison count.
-    pub const fn new(value: u32) -> Self {
+    pub const fn new(value: u64) -> Self {
         Self(value)
     }
 
     /// Converts a line limit to a ratchet comparison count.
-    pub const fn from_loc_limit(value: LineLimit) -> Self {
-        Self(value.get())
+    pub fn from_loc_limit(value: LineLimit) -> Self {
+        Self(u64::from(value.get()))
     }
 
     /// Converts a measured line count to a ratchet comparison count.
-    pub const fn from_counted_lines(value: CountedLines) -> Self {
-        Self(value.get())
+    pub fn from_counted_lines(value: CountedLines) -> Self {
+        Self(u64::from(value.get()))
     }
 
     /// Converts a direct-file count to a ratchet comparison count.
-    pub const fn from_direct_files(value: DirectFiles) -> Self {
-        Self(value.get())
+    pub fn from_direct_files(value: DirectFiles) -> Self {
+        Self(u64::from(value.get()))
+    }
+
+    /// Converts a measured file size to a ratchet comparison count.
+    pub fn from_file_bytes(value: FileBytes) -> Self {
+        Self(value.into_inner())
+    }
+
+    /// Converts a file byte limit to a ratchet comparison count.
+    pub fn from_file_byte_limit(value: FileByteLimit) -> Self {
+        Self(value.into_inner())
     }
 
     /// Returns the raw count.
-    pub const fn get(self) -> u32 {
+    pub const fn get(self) -> u64 {
         self.0
     }
 }
@@ -325,11 +359,23 @@ impl DirectoryRatchet {
     }
 }
 
+/// Byte ceiling for one file that was already larger than its byte limit.
+#[derive(Clone, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileSizeRatchet {
+    /// Repository-relative file path.
+    #[schemars(schema_with = "nonempty_relative_path_schema")]
+    pub path: RelativePath,
+    /// Largest size, in bytes, the file may grow back to.
+    pub max_bytes: FileByteLimit,
+}
+
 /// Ratchet ceilings indexed by their complete measurement identities.
 #[derive(Debug)]
 pub struct RatchetLookup {
     files: BTreeMap<FileRatchetKey, LineLimit>,
     directories: BTreeMap<DirectoryRatchetKey, DirectFiles>,
+    file_sizes: BTreeMap<RelativePath, FileByteLimit>,
 }
 
 impl RatchetLookup {
@@ -352,6 +398,16 @@ impl RatchetLookup {
     pub fn directories(&self) -> &BTreeMap<DirectoryRatchetKey, DirectFiles> {
         &self.directories
     }
+
+    /// Returns the byte ceiling for one file, if the ratchet file records one.
+    pub fn file_size_ceiling(&self, path: &RelativePath) -> Option<FileByteLimit> {
+        self.file_sizes.get(path).copied()
+    }
+
+    /// Returns every byte ceiling, keyed by file path.
+    pub fn file_sizes(&self) -> &BTreeMap<RelativePath, FileByteLimit> {
+        &self.file_sizes
+    }
 }
 
 impl TryFrom<RatchetFile> for RatchetLookup {
@@ -370,6 +426,11 @@ impl TryFrom<RatchetFile> for RatchetLookup {
                 .into_iter()
                 .map(|entry| (entry.key(), entry.max_direct_files))
                 .collect(),
+            file_sizes: file
+                .file_sizes
+                .into_iter()
+                .map(|entry| (entry.path, entry.max_bytes))
+                .collect(),
         })
     }
 }
@@ -384,36 +445,18 @@ fn validate_schema_version(document: &toml::Value) -> Result<()> {
     Ok(())
 }
 
-fn reject_duplicate_file_keys(entries: &[FileRatchet]) -> Result<()> {
+/// Returns the first entry whose key an earlier entry already used.
+fn first_duplicate<Entry, Key: Ord>(
+    entries: &[Entry],
+    key: impl Fn(&Entry) -> Key,
+) -> Option<&Entry> {
     let mut seen = BTreeSet::new();
-    for entry in entries {
-        if !seen.insert(entry.key()) {
-            return Err(SprawlError::DuplicateFileRatchetEntry {
-                role: entry.role,
-                path: entry.path.clone(),
-            });
-        }
-    }
-    Ok(())
+    entries.iter().find(|entry| !seen.insert(key(entry)))
 }
 
-fn reject_empty_file_paths(entries: &[FileRatchet]) -> Result<()> {
-    if entries.iter().any(|entry| entry.path.as_str().is_empty()) {
+fn reject_empty_file_paths<'a>(mut paths: impl Iterator<Item = &'a RelativePath>) -> Result<()> {
+    if paths.any(|path| path.as_str().is_empty()) {
         return Err(SprawlError::EmptyFileRatchetPath);
-    }
-    Ok(())
-}
-
-fn reject_duplicate_directory_keys(entries: &[DirectoryRatchet]) -> Result<()> {
-    let mut seen = BTreeSet::new();
-    for entry in entries {
-        if !seen.insert(entry.key()) {
-            return Err(SprawlError::DuplicateDirectoryRatchetEntry {
-                role: entry.role,
-                group: entry.group.clone(),
-                path: entry.path.clone(),
-            });
-        }
     }
     Ok(())
 }
@@ -437,6 +480,7 @@ mod tests {
             schema_version: RatchetSchemaVersion::CURRENT,
             files: vec![entry.clone(), entry],
             directories: Vec::new(),
+            file_sizes: Vec::new(),
         }
     }
 
@@ -472,6 +516,10 @@ mod tests {
                     role = "test"
                     group = "frontend"
                     max_direct_files = 31
+
+                    [[file_sizes]]
+                    path = "assets/logo.png"
+                    max_bytes = 40000
                 "#};
 
                 let file =
@@ -603,6 +651,34 @@ mod tests {
             }
         }
 
+        mod when_file_size_entries_share_a_path {
+            use super::*;
+
+            #[test]
+            fn it_rejects_the_file() {
+                let error = RatchetFile::parse(
+                    Path::new("sprawl-guard.ratchet.toml"),
+                    indoc! {r#"
+                        schema_version = 1
+
+                        [[file_sizes]]
+                        path = "assets/logo.png"
+                        max_bytes = 2
+
+                        [[file_sizes]]
+                        path = "assets/logo.png"
+                        max_bytes = 3
+                    "#},
+                )
+                .unwrap_err();
+
+                assert_eq!(
+                    error.to_string(),
+                    "duplicate file size ratchet entry for path assets/logo.png"
+                );
+            }
+        }
+
         mod when_a_directory_entry_omits_its_group {
             use super::*;
 
@@ -689,8 +765,9 @@ mod tests {
             use super::*;
 
             #[test]
-            fn it_rejects_file_and_directory_entries() {
+            fn it_rejects_every_kind_of_entry() {
                 for input in [
+                    "schema_version = 1\n[[file_sizes]]\npath = \"a.png\"\nmax_bytes = 0",
                     "schema_version = 1\n[[files]]\npath = \"a.rs\"\nrole = \"production\"\nmax_lines = 0",
                     "schema_version = 1\n[[directories]]\npath = \"src\"\nrole = \"production\"\ngroup = \"source\"\nmax_direct_files = 0",
                 ] {
@@ -786,6 +863,17 @@ mod tests {
                         role = "production"
                         max_lines = 2
                     "#},
+                )
+                .unwrap_err();
+
+                assert!(matches!(error, SprawlError::EmptyFileRatchetPath));
+            }
+
+            #[test]
+            fn it_rejects_an_empty_file_size_path() {
+                let error = RatchetFile::parse(
+                    Path::new("sprawl-guard.ratchet.toml"),
+                    "schema_version = 1\n[[file_sizes]]\npath = \"\"\nmax_bytes = 2",
                 )
                 .unwrap_err();
 

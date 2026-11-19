@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use sprawl_guard_lib::check::check_without_ratchet;
 use sprawl_guard_lib::config::load_resolved_config;
 use sprawl_guard_lib::{
-    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileRatchet, LineLimit,
-    RatchetFile, RatchetSchemaVersion, SprawlError, UnreadablePathPolicy,
+    CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileRatchet, FileSizeRatchet,
+    LineLimit, RatchetFile, RatchetSchemaVersion, SprawlError, UnreadablePathPolicy,
 };
 
 use super::{ProjectArgs, RatchetFormat, TightenArgs, UpdateArgs};
@@ -178,6 +178,7 @@ fn ratchet_from_report(report: &CheckReport, import: Option<&import::Suppression
         schema_version: RatchetSchemaVersion::CURRENT,
         files: Vec::new(),
         directories: Vec::new(),
+        file_sizes: Vec::new(),
     };
     for violation in report.violations() {
         match violation {
@@ -200,7 +201,18 @@ fn ratchet_from_report(report: &CheckReport, import: Option<&import::Suppression
                     max_direct_files: violation.actual,
                 });
             }
-            CheckViolation::Ratchet(_) | CheckViolation::DirectoryDirectFiles(_) => {}
+            CheckViolation::FileBytes(violation) if import.is_none() => {
+                // A file over a positive limit is never empty, so it always has a ceiling.
+                if let Some(max_bytes) = violation.actual.as_limit() {
+                    ratchet.file_sizes.push(FileSizeRatchet {
+                        path: violation.path.clone(),
+                        max_bytes,
+                    });
+                }
+            }
+            CheckViolation::Ratchet(_)
+            | CheckViolation::DirectoryDirectFiles(_)
+            | CheckViolation::FileBytes(_) => {}
         }
     }
     ratchet.sort();

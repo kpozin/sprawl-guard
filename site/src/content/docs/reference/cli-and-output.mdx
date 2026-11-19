@@ -178,6 +178,11 @@ Prints the selected JSON Schema for local or offline editor integration.
 Shows, for one path, whether it is ignored or excluded, which language claims it, whether it is a
 test file, its limits, matching overrides, its current lines, and Rust `cfg(test)` handling.
 
+- **A file's size** is shown next to its byte limit and the overrides that set that limit, as in
+  `size: 1500 bytes (1.5 kB), limit 1000 bytes (1.0 kB)`. JSON reports them as `file_bytes`, with
+  the `limit` and a `size` whose `state` is `measured` or `not_found`.
+- **A source file too large to count** is reported as not counted, with its size and
+  `[traversal].max_parsed_code_file_bytes`, instead of failing.
 - **A path that doesn't exist** is classified by its name, so you can see where a planned file
   would land. JSON reports `state: "not_found"` instead of `state: "measured"`.
 - **A directory** gets one entry per kind and language group of source files directly inside it,
@@ -197,11 +202,11 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
 ## Output formats
 
 - Human output groups failures under "Files over the line limit", "Test files over the line limit",
-  "Directories with too many direct files", "Test directories with too many direct files", and
-  "Stale ratchet entries". Gaps in the analysis follow under "Skipped unreadable paths" and "Files
-  too large to count lines". Each heading shows the group's total, as in
-  `Files over the line limit (3):`. Each failure reads like `src/big.rs: 700 lines (limit 400)`, or
-  `src/big.rs: 700 lines (limit 400, ceiling 650)` when the file grew above its ratchet ceiling.
+  "Files over the byte limit", "Directories with too many direct files", "Test directories with too
+  many direct files", and "Stale ratchet entries". Gaps in the analysis follow under "Skipped
+  unreadable paths" and "Files too large to count lines". Each heading shows the group's total, as
+  in `Files over the line limit (3):`. Each failure reads like `src/big.rs: 700 lines (limit 400)`,
+  or `src/big.rs: 700 lines (limit 400, ceiling 650)` when the file grew above its ratchet ceiling.
   Paths are relative to the root and never quoted; control characters in them are escaped.
 - Human output lists at most 50 findings: gaps that fail the check first, then violations, then
   warnings, then gaps that are only warnings, so a failing check always shows why it failed. A group
@@ -295,9 +300,11 @@ The report fields are:
   `uncounted_files` too large to count, each with its size and the limit.
 - `summary`: the number of source files, distinct source directories, and languages checked, plus
   the number of remaining ratchet entries. Passing human output shows the same summary.
-- `warnings` and `violations`: structured diagnostics. A file or directory violation's `ratchet`
-  field holds its ratchet ceiling when it grew above one, and is `null` when the ratchet file has no
-  entry for it.
+- `warnings` and `violations`: structured diagnostics. Each violation's `kind` is `file_lines`,
+  `test_file_lines`, `file_bytes`, `directory_direct_files`, or `test_directory_direct_files`, or,
+  for a stale ratchet entry, one of these kinds followed by `_stale`. A file or directory
+  violation's `ratchet` field holds its ratchet ceiling when it grew above one, and is `null` when
+  the ratchet file has no entry for it.
 
 When a path can't be read or a source file is too large to count, every format still prints the
 full report. Other errors print only a message on stderr, so check the exit code before parsing
@@ -313,6 +320,7 @@ sprawl-guard check --format sarif
 | ------------------------------------------ | --------------------------------------------------------------- |
 | `sprawl-guard/file-lines`                  | A source file has more lines than its limit.                    |
 | `sprawl-guard/test-file-lines`             | A test file has more lines than its limit.                      |
+| `sprawl-guard/file-bytes`                  | A file is larger than its byte limit.                           |
 | `sprawl-guard/directory-direct-files`      | A directory directly contains more source files than its limit. |
 | `sprawl-guard/test-directory-direct-files` | A directory directly contains more test files than its limit.   |
 | `sprawl-guard/ratchet-stale`               | A ratchet entry's violation shrank or disappeared.              |

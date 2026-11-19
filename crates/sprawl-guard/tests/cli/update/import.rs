@@ -133,4 +133,38 @@ mod when_importing_oxlint_suppressions {
             assert!(ratchet.directories.is_empty());
         }
     }
+
+    mod and_a_suppressed_file_is_also_over_the_byte_limit {
+        use super::*;
+
+        #[test]
+        fn it_keeps_existing_byte_entries_without_adding_one() {
+            let root = TempDir::new().unwrap();
+            write_config(
+                &root,
+                "[limits]\nmax_bytes_per_file = 10\n\n[limits.max_lines_per_file]\ntest = 1\n",
+            );
+            root.child("src/all.test.ts")
+                .write_str(&format!("/* oxlint-disable */\n{OVER_LIMIT}"))
+                .unwrap();
+            root.child("assets/logo.png")
+                .write_str("0123456789ab")
+                .unwrap();
+            root.child("sprawl-guard.ratchet.toml")
+                .write_str(
+                    "schema_version = 1\n[[file_sizes]]\npath = \"assets/logo.png\"\nmax_bytes = 12\n",
+                )
+                .unwrap();
+
+            let ratchet = import(&root);
+
+            assert_eq!(ratchet.files.len(), 1);
+            let sizes = ratchet
+                .file_sizes
+                .iter()
+                .map(|entry| (entry.path.as_str(), entry.max_bytes.into_inner()))
+                .collect::<Vec<_>>();
+            assert_eq!(sizes, vec![("assets/logo.png", 12)]);
+        }
+    }
 }

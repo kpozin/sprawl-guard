@@ -9,7 +9,8 @@ its ceiling, and also when it shrinks below it, so that the file always matches 
 Commit ratchet changes together with the source changes that caused them.
 
 This ratchet file records a 640-line parser and a directory with 14 source files, both over the
-default limits:
+default limits, and a 2 MB image over a configured
+[byte limit](/sprawl-guard/reference/configuration/#limits):
 
 ```toml title="sprawl-guard.ratchet.toml"
 #:schema https://kpozin.github.io/sprawl-guard/schemas/v1/sprawl-guard.ratchet.schema.json
@@ -25,12 +26,18 @@ path = "src/handlers"
 role = "production"
 group = "source"
 max_direct_files = 14
+
+[[file_sizes]]
+path = "assets/hero.png"
+max_bytes = 2000000
 ```
 
 Each entry's `role` says whether the production or the test limit applies. A directory entry's
 `group` names the [language group](/sprawl-guard/reference/configuration/#language_groupsname)
 whose files it counts. Languages outside custom groups use `source`, except literate languages such
-as Markdown, which use `documentation`. The commands below write the file. Edit it by hand only to
+as Markdown, which use `documentation`. A `file_sizes` entry records the size in bytes of any
+file, source or not. Sprawl Guard versions without byte limits reject a ratchet file that
+has `file_sizes` entries. The commands below write the file. Edit it by hand only to
 resolve a merge conflict.
 
 ## Record an improvement

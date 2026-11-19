@@ -4,6 +4,7 @@ use serde_json::json;
 
 use super::common::*;
 
+mod file_bytes;
 mod github;
 mod ignore;
 mod max_findings;

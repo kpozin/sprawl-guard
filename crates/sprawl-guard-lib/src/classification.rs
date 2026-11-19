@@ -10,10 +10,11 @@ mod traversal;
 mod types;
 
 pub use bundled_languages::{bundled_extensions, bundled_filenames};
-pub use explain::explain_path;
+pub use explain::{FileBytesExplanation, FileSize, explain_file_bytes, explain_path};
 pub use explain_directory::{DirectFilesExplanation, DirectoryExplanation};
 pub use source_discovery::discover_sources;
 pub(crate) use source_discovery::discover_sources_report;
+pub(crate) use types::ByteLimitedFile;
 pub use types::{
     ClassifiedSource, PathClassification, SourceExplanation, SourceKind, UnreadablePath,
     UnreadablePathKind, UnreadablePathSeverity,

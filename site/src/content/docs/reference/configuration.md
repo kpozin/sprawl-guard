@@ -53,6 +53,17 @@ after the upgrade, so error messages name the v2 keys.
 
 ## Sections and defaults
 
+### `[limits]`
+
+| Field                | Type and default                               | Meaning                       |
+| -------------------- | ---------------------------------------------- | ----------------------------- |
+| `max_bytes_per_file` | positive integer or `"unlimited"`, `unlimited` | Largest size of any one file. |
+
+`max_bytes_per_file` applies to every file that `check` visits, not only source files: images,
+archives, generated data, and files of disabled or excluded languages count too. Files skipped by
+ignore files, by `[files].extend_exclude`, and the configuration and ratchet files are not checked.
+Set a default here and use `[[overrides]]` to raise or lower it for particular paths.
+
 ### `[limits.max_lines_per_file]`
 
 | Field         | Type and default        | Meaning                                               |
@@ -102,7 +113,8 @@ instead of reading rules from the link's target.
 
 Sprawl Guard doesn't count the lines of a source file larger than `max_parsed_code_file_bytes`.
 `check` lists the file and keeps checking everything else. Exclude large generated files instead of
-raising the limit.
+raising the limit. This setting protects the line counter and is not a policy. To fail `check` on
+large files, set [`[limits].max_bytes_per_file`](#limits).
 
 Paths below the root that can't be read and source files too large to count are gaps in the
 analysis. `check` reports every gap along with every violation. With `unreadable_paths = "fail"`,
@@ -211,6 +223,7 @@ production = 20
 | `max_lines_per_file.test`                   | optional positive integer                  | Test file limit.                                   |
 | `max_direct_files_per_directory.production` | optional positive integer or `"unlimited"` | Production direct-file limit.                      |
 | `max_direct_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test direct-file limit.                            |
+| `max_bytes_per_file`                        | optional positive integer or `"unlimited"` | Byte limit for any matching file.                  |
 
 Each override must set at least one limit. Matching entries apply in order, and later entries
 replace only the fields they set.
@@ -221,6 +234,11 @@ paths = ["vendor/**"]
 max_lines_per_file = { production = 1200, test = 1600 }
 max_direct_files_per_directory = { production = 20, test = "unlimited" }
 reason = "Upstream layout"
+
+[[overrides]]
+paths = ["assets/**"]
+max_bytes_per_file = 500000
+reason = "Image budget"
 ```
 
 ### `[ratchet]`

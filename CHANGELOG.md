@@ -13,10 +13,24 @@ All notable changes to `sprawl-guard` will be documented in this file.
   how many findings were shown out of the total. The cap also bounds the files a directory finding
   names. GitHub annotations cover only the listed findings. The exit status still reflects every
   violation, and JSON and SARIF output list every finding.
+- `[limits].max_bytes_per_file` limits the size of every file that `check` visits, source or not,
+  such as images and archives. It is unlimited by default, and `[[overrides]]` can set it for
+  particular paths. Human output lists files over the limit under `Files over the byte limit`.
+  JSON output reports them as `file_bytes` violations, SARIF output under the
+  `sprawl-guard/file-bytes` rule, and GitHub output as annotations on the file.
+- The ratchet file has a `[[file_sizes]]` table that records the accepted size of a file over its
+  byte limit. `update` adds entries and `tighten` lowers or removes them. Stale entries are
+  reported as `file_bytes_stale`. Earlier versions reject a ratchet file with this table.
+  `update --import` doesn't add byte entries and keeps the existing ones.
+- `explain` reports the size and byte limit of a file, with the overrides that set the limit, as
+  `file_bytes` in JSON output. For a source file too large to count, it reports why its lines are
+  not counted instead of failing.
 
 ### Changed
 
 - Human output headings show their group's total, as in `Files over the line limit (3):`.
+- SARIF and GitHub messages for a stale ratchet entry whose path is gone or no longer checked end
+  with `and it is no longer measured` instead of `and it was not found`.
 - `[traversal].max_file_bytes` is now `[traversal].max_parsed_code_file_bytes`, since it limits only
   the files whose code lines are counted. The old name still loads; `config upgrade --check` reports
   it and `config upgrade --write` renames it.
@@ -29,7 +43,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
     `unreadable_paths`, and the `error` object is gone.
   - SARIF output reports gaps as tool execution notifications and sets `executionSuccessful`.
   - GitHub output annotates gaps with `::error` or `::warning`, and prints the report on stdout.
-  - A file too large to count keeps its ratchet ceiling, and `tighten` doesn't remove it.
+  - A file too large to count, or one inside an unreadable directory, keeps its ratchet ceiling:
+    `check` doesn't report it as stale and `tighten` doesn't remove it.
   - `update` and `tighten` still refuse to write after an unreadable path.
 
 ## [0.6.0-beta.1] - 2026-11-18

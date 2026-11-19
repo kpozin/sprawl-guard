@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use sprawl_guard_lib::{
-    DirectoryRatchet, FileRatchet, RatchetFile, RatchetLookup, RatchetSchemaVersion,
+    DirectFiles, DirectoryRatchet, DirectoryRatchetKey, FileByteLimit, FileRatchet, FileRatchetKey,
+    FileSizeRatchet, LineLimit, RatchetFile, RatchetLookup, RatchetSchemaVersion, RelativePath,
 };
 
 use super::{CeilingUpdatePolicy, scope::RatchetScope};
@@ -15,43 +16,11 @@ pub(super) fn update_ratchet(
     current: RatchetFile,
     ceiling_policy: CeilingUpdatePolicy,
 ) -> RatchetFile {
-    let mut files = previous
-        .files
-        .into_iter()
-        .map(|entry| (entry.key(), entry))
-        .collect::<BTreeMap<_, _>>();
-    for current in current.files {
-        files
-            .entry(current.key())
-            .and_modify(|previous| {
-                if ceiling_policy.allows_increases() {
-                    previous.max_lines = std::cmp::max(previous.max_lines, current.max_lines);
-                }
-            })
-            .or_insert(current);
-    }
-
-    let mut directories = previous
-        .directories
-        .into_iter()
-        .map(|entry| (entry.key(), entry))
-        .collect::<BTreeMap<_, _>>();
-    for current in current.directories {
-        directories
-            .entry(current.key())
-            .and_modify(|previous| {
-                if ceiling_policy.allows_increases() {
-                    previous.max_direct_files =
-                        std::cmp::max(previous.max_direct_files, current.max_direct_files);
-                }
-            })
-            .or_insert(current);
-    }
-
     let mut next = RatchetFile {
         schema_version: RatchetSchemaVersion::CURRENT,
-        files: files.into_values().collect(),
-        directories: directories.into_values().collect(),
+        files: merge_entries(previous.files, current.files, ceiling_policy),
+        directories: merge_entries(previous.directories, current.directories, ceiling_policy),
+        file_sizes: merge_entries(previous.file_sizes, current.file_sizes, ceiling_policy),
     };
     next.sort();
     next
@@ -69,40 +38,117 @@ pub(super) fn lower_ratchet_scope(
     let current = RatchetLookup::try_from(current)?;
     let mut next = RatchetFile {
         schema_version: RatchetSchemaVersion::CURRENT,
-        files: previous
-            .files
-            .into_iter()
-            .filter_map(|entry| {
-                if !scope.contains(&entry.path) {
-                    return Some(entry);
-                }
-                current.file_ceiling(&entry.key()).map(|value| FileRatchet {
-                    path: entry.path,
-                    role: entry.role,
-                    max_lines: std::cmp::min(entry.max_lines, value),
-                })
-            })
-            .collect(),
-        directories: previous
-            .directories
-            .into_iter()
-            .filter_map(|entry| {
-                if !scope.contains(&entry.path) {
-                    return Some(entry);
-                }
-                current
-                    .directory_ceiling(&entry.key())
-                    .map(|value| DirectoryRatchet {
-                        path: entry.path,
-                        role: entry.role,
-                        group: entry.group,
-                        max_direct_files: std::cmp::min(entry.max_direct_files, value),
-                    })
-            })
-            .collect(),
+        files: lower_entries(previous.files, current.files(), scope),
+        directories: lower_entries(previous.directories, current.directories(), scope),
+        file_sizes: lower_entries(previous.file_sizes, current.file_sizes(), scope),
     };
     next.sort();
     Ok(next)
+}
+
+/// One kind of ratchet entry: an identity and the ceiling recorded for it.
+trait CeilingEntry {
+    type Key: Ord;
+    type Ceiling: Copy + Ord;
+
+    fn key(&self) -> Self::Key;
+    fn path(&self) -> &RelativePath;
+    fn ceiling_mut(&mut self) -> &mut Self::Ceiling;
+}
+
+impl CeilingEntry for FileRatchet {
+    type Key = FileRatchetKey;
+    type Ceiling = LineLimit;
+
+    fn key(&self) -> Self::Key {
+        FileRatchet::key(self)
+    }
+
+    fn path(&self) -> &RelativePath {
+        &self.path
+    }
+
+    fn ceiling_mut(&mut self) -> &mut Self::Ceiling {
+        &mut self.max_lines
+    }
+}
+
+impl CeilingEntry for DirectoryRatchet {
+    type Key = DirectoryRatchetKey;
+    type Ceiling = DirectFiles;
+
+    fn key(&self) -> Self::Key {
+        DirectoryRatchet::key(self)
+    }
+
+    fn path(&self) -> &RelativePath {
+        &self.path
+    }
+
+    fn ceiling_mut(&mut self) -> &mut Self::Ceiling {
+        &mut self.max_direct_files
+    }
+}
+
+impl CeilingEntry for FileSizeRatchet {
+    type Key = RelativePath;
+    type Ceiling = FileByteLimit;
+
+    fn key(&self) -> Self::Key {
+        self.path.clone()
+    }
+
+    fn path(&self) -> &RelativePath {
+        &self.path
+    }
+
+    fn ceiling_mut(&mut self) -> &mut Self::Ceiling {
+        &mut self.max_bytes
+    }
+}
+
+/// Adds current entries that `previous` lacks, raising existing ceilings only when allowed.
+fn merge_entries<Entry: CeilingEntry>(
+    previous: Vec<Entry>,
+    current: Vec<Entry>,
+    ceiling_policy: CeilingUpdatePolicy,
+) -> Vec<Entry> {
+    let mut entries = previous
+        .into_iter()
+        .map(|entry| (entry.key(), entry))
+        .collect::<BTreeMap<_, _>>();
+    for mut current in current {
+        entries
+            .entry(current.key())
+            .and_modify(|previous| {
+                if ceiling_policy.allows_increases() {
+                    let ceiling = previous.ceiling_mut();
+                    *ceiling = std::cmp::max(*ceiling, *current.ceiling_mut());
+                }
+            })
+            .or_insert(current);
+    }
+    entries.into_values().collect()
+}
+
+/// Lowers each in-scope entry to its current measurement and drops in-scope entries with none.
+fn lower_entries<Entry: CeilingEntry>(
+    previous: Vec<Entry>,
+    current: &BTreeMap<Entry::Key, Entry::Ceiling>,
+    scope: &RatchetScope,
+) -> Vec<Entry> {
+    previous
+        .into_iter()
+        .filter_map(|mut entry| {
+            if !scope.contains(entry.path()) {
+                return Some(entry);
+            }
+            let measured = *current.get(&entry.key())?;
+            let ceiling = entry.ceiling_mut();
+            *ceiling = std::cmp::min(*ceiling, measured);
+            Some(entry)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -117,6 +163,115 @@ mod tests {
 
     fn parse_ratchet(input: &str) -> RatchetFile {
         RatchetFile::parse(Path::new("sprawl-guard.ratchet.toml"), input).unwrap()
+    }
+
+    mod when_file_size_entries_change {
+        use super::*;
+
+        const PREVIOUS: &str = indoc! {r#"
+            schema_version = 1
+
+            [[file_sizes]]
+            path = "assets/kept.png"
+            max_bytes = 50
+
+            [[file_sizes]]
+            path = "assets/logo.png"
+            max_bytes = 100
+
+            [[file_sizes]]
+            path = "assets/removed.png"
+            max_bytes = 70
+        "#};
+
+        const CURRENT: &str = indoc! {r#"
+            schema_version = 1
+
+            [[file_sizes]]
+            path = "assets/kept.png"
+            max_bytes = 40
+
+            [[file_sizes]]
+            path = "assets/logo.png"
+            max_bytes = 120
+
+            [[file_sizes]]
+            path = "assets/new.png"
+            max_bytes = 30
+        "#};
+
+        fn sizes(ratchet: &RatchetFile) -> Vec<(&str, u64)> {
+            ratchet
+                .file_sizes
+                .iter()
+                .map(|entry| (entry.path.as_str(), entry.max_bytes.into_inner()))
+                .collect()
+        }
+
+        #[test]
+        fn updating_adds_new_files_and_keeps_existing_ceilings() {
+            let next = update_ratchet(
+                parse_ratchet(PREVIOUS),
+                parse_ratchet(CURRENT),
+                CeilingUpdatePolicy::Preserve,
+            );
+
+            assert_eq!(
+                sizes(&next),
+                vec![
+                    ("assets/kept.png", 50),
+                    ("assets/logo.png", 100),
+                    ("assets/new.png", 30),
+                    ("assets/removed.png", 70),
+                ]
+            );
+        }
+
+        #[test]
+        fn updating_raises_ceilings_when_allowed() {
+            let next = update_ratchet(
+                parse_ratchet(PREVIOUS),
+                parse_ratchet(CURRENT),
+                CeilingUpdatePolicy::AllowIncreases,
+            );
+
+            assert_eq!(sizes(&next)[1], ("assets/logo.png", 120));
+        }
+
+        #[test]
+        fn lowering_shrinks_ceilings_and_drops_unmeasured_files_in_scope() {
+            let scope = RatchetScope::Paths(vec![
+                RelativePath::new("assets/kept.png").unwrap(),
+                RelativePath::new("assets/logo.png").unwrap(),
+            ]);
+
+            let next = lower_ratchet_scope(parse_ratchet(PREVIOUS), parse_ratchet(CURRENT), &scope)
+                .unwrap();
+
+            assert_eq!(
+                sizes(&next),
+                vec![
+                    ("assets/kept.png", 40),
+                    ("assets/logo.png", 100),
+                    ("assets/removed.png", 70),
+                ]
+            );
+        }
+
+        #[test]
+        fn lowering_everything_drops_files_that_are_no_longer_measured() {
+            let next = lower_ratchet_scope(
+                parse_ratchet(PREVIOUS),
+                parse_ratchet(CURRENT),
+                &RatchetScope::All,
+            )
+            .unwrap();
+
+            assert_eq!(
+                sizes(&next),
+                vec![("assets/kept.png", 40), ("assets/logo.png", 100)]
+            );
+        }
     }
 
     mod when_directory_groups_share_a_path {

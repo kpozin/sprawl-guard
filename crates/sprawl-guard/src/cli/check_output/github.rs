@@ -134,6 +134,7 @@ fn annotation(file_paths: &FilePaths, violation: &CheckViolation) -> String {
     let Finding { rule_id, message } = finding(violation);
     let file = match violation {
         CheckViolation::FileLines(violation) => Some(&violation.path),
+        CheckViolation::FileBytes(violation) => Some(&violation.path),
         CheckViolation::DirectoryDirectFiles(_) | CheckViolation::Ratchet(_) => None,
     };
     let file = file_property(file_paths, file);
@@ -288,7 +289,7 @@ mod tests {
             assert_eq!(
                 root_annotations(&report),
                 "::error title=sprawl-guard/ratchet-stale::\
-                 src in group source has a stale ratchet entry: ceiling 4, and it was not found.\n"
+                 src in group source has a stale ratchet entry: ceiling 4, and it is no longer measured.\n"
             );
         }
     }

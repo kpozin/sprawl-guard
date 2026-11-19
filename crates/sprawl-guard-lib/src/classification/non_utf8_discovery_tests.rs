@@ -29,6 +29,7 @@ mod when_scoped_discovery_encounters_a_non_utf8_repository_entry {
             &load_config(tempdir.path()),
             &[scope],
             Some(UnreadablePathPolicy::Fail),
+            None,
         )
         .unwrap_err();
 

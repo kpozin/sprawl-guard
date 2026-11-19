@@ -1,13 +1,67 @@
+use serde::Serialize;
 use sprawl_guard_lib::classification::{
-    DirectoryExplanation, PathClassification, SourceExplanation, SourceKind,
+    DirectoryExplanation, FileBytesExplanation, FileSize, PathClassification, SourceExplanation,
+    SourceKind,
 };
-use sprawl_guard_lib::{MatchedOverride, RelativePath, RustCfgTestStatus};
+use sprawl_guard_lib::{
+    FiniteOrUnlimited, MatchedOverride, MaxBytesPerFile, RelativePath, RustCfgTestStatus,
+    SourceResolvedLimits,
+};
 
-use super::check_output::{ceiling_message, plural, unreadable_path_message};
+use super::check_output::{byte_size, ceiling_message, plural, unreadable_path_message};
 use super::display_relative;
 
-/// Renders the human `explain` output for one classified path.
-pub(super) fn explain_message(classification: &PathClassification) -> String {
+/// Everything `explain` reports about one path.
+#[derive(Debug, Serialize)]
+pub(super) struct PathExplanation {
+    /// How the path is classified, and how a source measures.
+    #[serde(flatten)]
+    pub(super) classification: PathClassification,
+    /// Byte limit and size, for files that byte limits apply to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) file_bytes: Option<FileBytesExplanation>,
+}
+
+/// Renders the human `explain` output for one path.
+pub(super) fn explain_message(explanation: &PathExplanation) -> String {
+    let mut message = classification_message(&explanation.classification);
+    if let Some(file_bytes) = &explanation.file_bytes {
+        let mut lines = vec![file_bytes_message(file_bytes)];
+        push_overrides(
+            &mut lines,
+            "byte limit overrides",
+            &file_bytes.limit.matched_overrides,
+        );
+        for line in lines {
+            message.push('\n');
+            message.push_str(&line);
+        }
+    }
+    message
+}
+
+/// Renders the size of a file next to its byte limit.
+fn file_bytes_message(file_bytes: &FileBytesExplanation) -> String {
+    let size = match file_bytes.size {
+        FileSize::NotFound => "not found".to_owned(),
+        FileSize::Measured { bytes } => byte_size(bytes.into_inner()),
+    };
+    format!(
+        "  size: {size}, limit {}",
+        byte_limit(file_bytes.limit.value)
+    )
+}
+
+/// Renders a byte limit, which may be unlimited.
+fn byte_limit(limit: MaxBytesPerFile) -> String {
+    match limit {
+        FiniteOrUnlimited::Finite(limit) => byte_size(limit.into_inner()),
+        FiniteOrUnlimited::Unlimited => "unlimited".to_owned(),
+    }
+}
+
+/// Renders how a path is classified, and how a source measures.
+fn classification_message(classification: &PathClassification) -> String {
     let shown = |path: &RelativePath| display_relative(path.as_str());
     match classification {
         PathClassification::Ignored { path } => {
@@ -104,20 +158,7 @@ fn source_message(explanation: &SourceExplanation) -> String {
                 "  line counts: {} code, {} comments, {} blank",
                 counts.code, counts.comments, counts.blank_lines
             ));
-            lines.push(format!(
-                "  direct files limit for its directory: {}",
-                resolved_limits.directory.value
-            ));
-            push_overrides(
-                &mut lines,
-                "line limit overrides",
-                &resolved_limits.file.matched_overrides,
-            );
-            push_overrides(
-                &mut lines,
-                "direct files overrides",
-                &resolved_limits.directory.matched_overrides,
-            );
+            push_source_limits(&mut lines, resolved_limits);
             if let Some(rust_cfg_test) = rust_cfg_test {
                 let excluded = rust_cfg_test.excluded_items.get();
                 lines.push(format!(
@@ -127,8 +168,39 @@ fn source_message(explanation: &SourceExplanation) -> String {
                 ));
             }
         }
+        SourceExplanation::Uncounted {
+            resolved_limits,
+            max_parsed_code_file_bytes,
+            ..
+        } => {
+            lines.push(format!(
+                "  lines: not counted, larger than traversal.max_parsed_code_file_bytes ({}); limit {}, counting {}",
+                byte_size(max_parsed_code_file_bytes.into_inner()),
+                resolved_limits.file.value,
+                resolved_limits.file.count_lines
+            ));
+            push_source_limits(&mut lines, resolved_limits);
+        }
     }
     lines.join("\n")
+}
+
+/// Adds the directory limit and the overrides behind a source's limits.
+fn push_source_limits(lines: &mut Vec<String>, resolved_limits: &SourceResolvedLimits) {
+    lines.push(format!(
+        "  direct files limit for its directory: {}",
+        resolved_limits.directory.value
+    ));
+    push_overrides(
+        lines,
+        "line limit overrides",
+        &resolved_limits.file.matched_overrides,
+    );
+    push_overrides(
+        lines,
+        "direct files overrides",
+        &resolved_limits.directory.matched_overrides,
+    );
 }
 
 /// Renders a directory as a heading followed by one indented block per measured kind and group.
@@ -236,7 +308,7 @@ mod tests {
         }
     }
 
-    mod explain_message_tests {
+    mod classification_message_tests {
         use super::*;
 
         mod when_the_path_is_not_a_regular_file {
@@ -244,7 +316,7 @@ mod tests {
 
             #[test]
             fn it_reports_the_filesystem_decision() {
-                let message = explain_message(&PathClassification::NonFile {
+                let message = classification_message(&PathClassification::NonFile {
                     path: path("src/lib.rs"),
                 });
 
@@ -266,7 +338,7 @@ mod tests {
             #[test]
             fn it_reports_each_measured_kind_and_group() {
                 let message =
-                    explain_message(&PathClassification::Directory(DirectoryExplanation {
+                    classification_message(&PathClassification::Directory(DirectoryExplanation {
                         path: path("src"),
                         measurements: vec![DirectFilesExplanation {
                             kind: SourceKind::Production,
@@ -294,7 +366,7 @@ mod tests {
             #[test]
             fn it_says_when_no_source_files_sit_directly_inside_it() {
                 let message =
-                    explain_message(&PathClassification::Directory(DirectoryExplanation {
+                    classification_message(&PathClassification::Directory(DirectoryExplanation {
                         path: path(""),
                         measurements: vec![],
                         unreadable_paths: vec![],
@@ -309,7 +381,7 @@ mod tests {
             #[test]
             fn it_warns_about_unreadable_paths() {
                 let message =
-                    explain_message(&PathClassification::Directory(DirectoryExplanation {
+                    classification_message(&PathClassification::Directory(DirectoryExplanation {
                         path: path("src"),
                         measurements: vec![],
                         unreadable_paths: vec![UnreadablePath {
@@ -335,7 +407,7 @@ mod tests {
 
             #[test]
             fn it_reports_the_language_decision() {
-                let message = explain_message(&PathClassification::NotSource {
+                let message = classification_message(&PathClassification::NotSource {
                     path: path("README.md"),
                 });
 
@@ -351,7 +423,7 @@ mod tests {
 
             #[test]
             fn it_says_the_path_was_classified_by_path_only() {
-                let message = explain_message(&PathClassification::Source(source(
+                let message = classification_message(&PathClassification::Source(source(
                     "src/planned.rs",
                     "rust",
                     SourceKind::Production,
@@ -369,7 +441,7 @@ mod tests {
 
             #[test]
             fn it_reports_test_code_without_calling_it_test_source() {
-                let message = explain_message(&PathClassification::TestExcluded {
+                let message = classification_message(&PathClassification::TestExcluded {
                     path: path("tests/integration.rs"),
                     language: LanguageId::new("rust").unwrap(),
                 });
@@ -387,7 +459,7 @@ mod tests {
 
             #[test]
             fn it_escapes_them() {
-                let message = explain_message(&PathClassification::NotSource {
+                let message = classification_message(&PathClassification::NotSource {
                     path: path("src/\u{1b}[2J.txt"),
                 });
 
@@ -403,7 +475,7 @@ mod tests {
 
             #[test]
             fn it_reports_all_matching_languages() {
-                let message = explain_message(&PathClassification::LanguagesExcluded {
+                let message = classification_message(&PathClassification::LanguagesExcluded {
                     path: path("src/shared"),
                     languages: vec![
                         LanguageId::new("rust").unwrap(),
@@ -454,7 +526,7 @@ mod tests {
                     }),
                 };
 
-                let message = explain_message(&PathClassification::Source(explanation));
+                let message = classification_message(&PathClassification::Source(explanation));
 
                 assert_eq!(
                     message,
@@ -478,7 +550,7 @@ mod tests {
             fn it_reports_the_automatic_group() {
                 let explanation = source("docs/guide.md", "markdown", SourceKind::Production);
 
-                let message = explain_message(&PathClassification::Source(explanation));
+                let message = classification_message(&PathClassification::Source(explanation));
 
                 assert_eq!(
                     message,

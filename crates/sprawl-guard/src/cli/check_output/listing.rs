@@ -8,8 +8,9 @@ use sprawl_guard_lib::{FiniteOrUnlimited, MaxFindings};
 ///
 /// Sections draw from one budget, in order of how much they decide the exit code, so that a
 /// failing run always shows why it failed: analysis gaps when they fail the check, then
-/// violations, then warnings, then analysis gaps that are only warnings. The report still prints them in its own order. Sections that
-/// `--quiet` hides neither count toward the total nor draw from the budget.
+/// violations, then warnings, then analysis gaps that are only warnings. The report still prints
+/// them in its own order. Sections that `--quiet` hides neither count toward the total nor draw
+/// from the budget.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct FindingListing {
     pub(super) warnings: usize,
@@ -79,6 +80,7 @@ pub(super) fn entry_limit(max_findings: FiniteOrUnlimited<MaxFindings>) -> usize
 pub(super) enum ViolationGroup {
     FileLines,
     TestFileLines,
+    FileBytes,
     DirectoryDirectFiles,
     TestDirectoryDirectFiles,
     StaleRatchet,
@@ -95,6 +97,7 @@ impl ViolationGroup {
                 DirectoryViolationKind::DirectoryDirectFiles => Self::DirectoryDirectFiles,
                 DirectoryViolationKind::TestDirectoryDirectFiles => Self::TestDirectoryDirectFiles,
             },
+            CheckViolation::FileBytes(_) => Self::FileBytes,
             CheckViolation::Ratchet(_) => Self::StaleRatchet,
         }
     }
@@ -103,6 +106,7 @@ impl ViolationGroup {
         match self {
             Self::FileLines => "Files over the line limit",
             Self::TestFileLines => "Test files over the line limit",
+            Self::FileBytes => "Files over the byte limit",
             Self::DirectoryDirectFiles => "Directories with too many direct files",
             Self::TestDirectoryDirectFiles => "Test directories with too many direct files",
             Self::StaleRatchet => "Stale ratchet entries",

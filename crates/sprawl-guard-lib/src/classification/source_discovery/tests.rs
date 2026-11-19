@@ -344,9 +344,14 @@ mod discover_sources {
             write_source_file(tempdir.path(), "real/lib.rs");
             symlink("..", tempdir.path().join("real/cycle")).unwrap();
 
-            let report =
-                discover_sources_report(tempdir.path(), &load_config(tempdir.path()), &[], None)
-                    .unwrap();
+            let report = discover_sources_report(
+                tempdir.path(),
+                &load_config(tempdir.path()),
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
 
             assert_eq!(source_paths(&report.sources), vec!["real/lib.rs"]);
             assert_eq!(report.unreadable_paths.len(), 1);

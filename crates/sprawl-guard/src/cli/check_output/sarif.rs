@@ -3,8 +3,8 @@ use sprawl_guard_lib::{CheckReport, CheckStatus, RelativePath, UnreadablePathSev
 
 use super::gap_notices;
 use sprawl_guard_lib::check::{
-    CheckViolation, DirectoryDirectFilesViolation, DirectoryViolationKind, FileLinesViolation,
-    FileViolationKind, RatchetViolation,
+    CheckViolation, DirectoryDirectFilesViolation, DirectoryViolationKind, FileBytesViolation,
+    FileLinesViolation, FileViolationKind, RatchetViolation, RatchetViolationKind,
 };
 
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
@@ -15,6 +15,7 @@ const FILE_LINES_RULE_ID: &str = "sprawl-guard/file-lines";
 const TEST_FILE_LINES_RULE_ID: &str = "sprawl-guard/test-file-lines";
 const DIRECTORY_DIRECT_FILES_RULE_ID: &str = "sprawl-guard/directory-direct-files";
 const TEST_DIRECTORY_DIRECT_FILES_RULE_ID: &str = "sprawl-guard/test-directory-direct-files";
+const FILE_BYTES_RULE_ID: &str = "sprawl-guard/file-bytes";
 const RATCHET_STALE_RULE_ID: &str = "sprawl-guard/ratchet-stale";
 
 pub(super) fn sarif_check_report(report: &CheckReport) -> Value {
@@ -91,6 +92,11 @@ fn rules() -> Vec<Value> {
             "A directory directly contains more test files than its limit.",
         ),
         rule(
+            FILE_BYTES_RULE_ID,
+            "File over the byte limit",
+            "A file, source or not, is larger than its byte limit.",
+        ),
+        rule(
             RATCHET_STALE_RULE_ID,
             "Stale ratchet entry",
             "A ratchet entry's violation shrank or disappeared.",
@@ -124,6 +130,7 @@ pub(super) fn finding(violation: &CheckViolation) -> Finding {
         CheckViolation::DirectoryDirectFiles(violation) => {
             directory_direct_files_finding(violation)
         }
+        CheckViolation::FileBytes(violation) => file_bytes_finding(violation),
         CheckViolation::Ratchet(violation) => Finding {
             rule_id: RATCHET_STALE_RULE_ID,
             message: ratchet_message(violation),
@@ -142,6 +149,19 @@ fn file_lines_finding(violation: &FileLinesViolation) -> Finding {
             violation.path,
             violation.measurement.actual().get(),
             violation.measurement.count_lines(),
+            violation.limit,
+            ceiling_message(violation.ratchet)
+        ),
+    }
+}
+
+fn file_bytes_finding(violation: &FileBytesViolation) -> Finding {
+    Finding {
+        rule_id: FILE_BYTES_RULE_ID,
+        message: format!(
+            "{} has {} bytes, over the limit of {}{}.",
+            violation.path,
+            violation.actual,
             violation.limit,
             ceiling_message(violation.ratchet)
         ),
@@ -179,6 +199,7 @@ fn results(report: &CheckReport) -> Vec<Value> {
             CheckViolation::DirectoryDirectFiles(violation) => {
                 directory_direct_files_result(violation)
             }
+            CheckViolation::FileBytes(violation) => file_bytes_result(violation),
             CheckViolation::Ratchet(violation) => ratchet_result(violation),
         })
         .collect()
@@ -203,6 +224,19 @@ fn file_lines_result(violation: &FileLinesViolation) -> Value {
             "limit": violation.limit,
             "ratchet": violation.ratchet
         }
+    })
+}
+
+fn file_bytes_result(violation: &FileBytesViolation) -> Value {
+    let Finding { rule_id, message } = file_bytes_finding(violation);
+    json!({
+        "ruleId": rule_id,
+        "level": "error",
+        "message": {
+            "text": message
+        },
+        "locations": [location(&violation.path)],
+        "properties": violation
     })
 }
 
@@ -284,11 +318,11 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
         Some(group) => format!("{} in group {group}", display_path(violation.path())),
         None => display_path(violation.path()).to_owned(),
     };
-    let measurement_context = violation
-        .line_measurement()
-        .map_or_else(String::new, |measurement| {
-            format!(" lines (counting {})", measurement.count_lines())
-        });
+    let measurement_context = match (violation.line_measurement(), violation.kind()) {
+        (Some(measurement), _) => format!(" lines (counting {})", measurement.count_lines()),
+        (None, RatchetViolationKind::FileBytesStale) => " bytes".to_owned(),
+        (None, _) => String::new(),
+    };
     match violation.actual() {
         Some(actual) => format!(
             "{subject} has a stale ratchet entry: ceiling {}, now {}{measurement_context}.",
@@ -296,7 +330,7 @@ fn ratchet_message(violation: &RatchetViolation) -> String {
             actual.get()
         ),
         None => format!(
-            "{subject} has a stale ratchet entry: ceiling {}, and it was not found.",
+            "{subject} has a stale ratchet entry: ceiling {}, and it is no longer measured.",
             violation.ratchet().get()
         ),
     }
@@ -480,6 +514,15 @@ pub(super) mod tests {
                                 },
                                 "fullDescription": {
                                     "text": "A directory directly contains more test files than its limit."
+                                }
+                            },
+                            {
+                                "id": "sprawl-guard/file-bytes",
+                                "shortDescription": {
+                                    "text": "File over the byte limit"
+                                },
+                                "fullDescription": {
+                                    "text": "A file, source or not, is larger than its byte limit."
                                 }
                             },
                             {
@@ -816,7 +859,7 @@ pub(super) mod tests {
                 json!({
                     "ruleId": RATCHET_STALE_RULE_ID,
                     "actual": null,
-                    "message": "src/deleted.rs has a stale ratchet entry: ceiling 4, and it was not found.",
+                    "message": "src/deleted.rs has a stale ratchet entry: ceiling 4, and it is no longer measured.",
                 })
             );
         }
@@ -848,11 +891,11 @@ pub(super) mod tests {
                 json!([
                     {
                         "group": "source",
-                        "message": "src in group source has a stale ratchet entry: ceiling 4, and it was not found.",
+                        "message": "src in group source has a stale ratchet entry: ceiling 4, and it is no longer measured.",
                     },
                     {
                         "group": "documentation",
-                        "message": "src in group documentation has a stale ratchet entry: ceiling 5, and it was not found.",
+                        "message": "src in group documentation has a stale ratchet entry: ceiling 5, and it is no longer measured.",
                     },
                 ])
             );

@@ -4,8 +4,13 @@ use std::path::Path;
 use crate::check::measure_source;
 use crate::config::Config;
 use crate::resolved_limits::LimitResolver;
+use crate::source_file::{ParsedCodeFileSize, parsed_code_file_size};
 use crate::value::path::{normalize_under_root, resolve_root};
 use crate::{RelativePath, Result, SprawlError};
+
+mod file_bytes;
+
+pub use file_bytes::{FileBytesExplanation, FileSize, explain_file_bytes};
 
 use super::classifier::Classifier;
 use super::explain_directory::explain_directory;
@@ -91,6 +96,16 @@ fn measure_existing_source(
 ) -> Result<SourceExplanation> {
     let limits = LimitResolver::new(config)?;
     let resolved_limits = limits.source_limits(&source)?;
+    let max_parsed_code_file_bytes = config.traversal.max_parsed_code_file_bytes;
+    if let ParsedCodeFileSize::TooLarge(_) =
+        parsed_code_file_size(absolute_path, max_parsed_code_file_bytes)?
+    {
+        return Ok(SourceExplanation::Uncounted {
+            source,
+            resolved_limits,
+            max_parsed_code_file_bytes,
+        });
+    }
     let measurement = measure_source(
         config,
         &source,
@@ -208,7 +223,7 @@ mod tests {
             }
 
             #[test]
-            fn it_rejects_sources_above_the_byte_size_limit_before_rust_cfg_explanation() {
+            fn it_reports_sources_above_the_parsed_code_byte_limit_as_uncounted() {
                 let tempdir = tempfile::tempdir().unwrap();
                 write_config(
                     tempdir.path(),
@@ -222,16 +237,19 @@ mod tests {
                 );
                 write_source_file(tempdir.path(), "src/lib.rs");
 
-                let error = explain_path(
+                let explanation = explain_path(
                     tempdir.path(),
                     Path::new("src/lib.rs"),
                     &load_config(tempdir.path()),
                 )
-                .unwrap_err();
+                .unwrap();
 
                 assert!(matches!(
-                    error,
-                    SprawlError::ParsedCodeFileTooLarge { limit, .. } if limit.into_inner() == 8
+                    explanation,
+                    PathClassification::Source(SourceExplanation::Uncounted {
+                        max_parsed_code_file_bytes,
+                        ..
+                    }) if max_parsed_code_file_bytes.into_inner() == 8
                 ));
             }
 

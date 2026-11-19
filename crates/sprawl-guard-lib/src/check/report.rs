@@ -17,12 +17,15 @@ use crate::{
 use super::runner::SelectedPaths;
 
 mod coverage;
+mod file_bytes;
 mod ratchet;
 mod summary;
 
 pub use coverage::{AnalysisCoverage, AnalysisGaps, UncountedFile};
+pub use file_bytes::{FileBytesViolation, FileBytesViolationKind};
 pub use ratchet::{
     DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
+    FileBytesRatchetStaleMeasuredViolation, FileBytesRatchetStaleMissingViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, RatchetLimit,
     RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetViolation,
     RatchetViolationKind,
@@ -328,6 +331,8 @@ pub enum CheckViolation {
     FileLines(FileLinesViolation),
     /// A directory exceeded its configured direct-file limit.
     DirectoryDirectFiles(DirectoryDirectFilesViolation),
+    /// A file exceeded its byte limit.
+    FileBytes(FileBytesViolation),
     /// A ratchet entry is stale.
     Ratchet(RatchetViolation),
 }

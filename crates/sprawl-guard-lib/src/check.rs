@@ -1,6 +1,7 @@
 //! Checks over classified and measured sources.
 
 mod directory_direct_files;
+mod file_bytes;
 mod ratchet;
 mod report;
 mod runner;
@@ -10,7 +11,9 @@ pub use report::{
     AnalysisCoverage, AnalysisGaps, CheckReport, CheckStatus, CheckViolation, CheckWarning,
     CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, CounterInfo, DetectedLanguageCount,
     DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
-    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind, FileLinesViolation,
+    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind,
+    FileBytesRatchetStaleMeasuredViolation, FileBytesRatchetStaleMissingViolation,
+    FileBytesViolation, FileBytesViolationKind, FileLinesViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
     RatchetEntryCount, RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
     RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError, ScanSummary,

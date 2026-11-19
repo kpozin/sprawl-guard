@@ -16,6 +16,8 @@ pub enum RatchetViolationKind {
     DirectoryDirectFilesStale,
     /// Test direct-file count improved or no longer exceeds its limit.
     TestDirectoryDirectFilesStale,
+    /// File size shrank or no longer exceeds its byte limit.
+    FileBytesStale,
 }
 
 impl RatchetViolationKind {

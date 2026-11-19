@@ -21,9 +21,10 @@ use crate::value::path::resolve_root;
 use crate::{CountLines, DiagnosticDetail, RelativePath, Result, SprawlError};
 
 use super::directory_direct_files::directory_direct_files_checks;
+use super::file_bytes::{FileBytesFindings, check_file_bytes};
 use super::ratchet::{
-    MeasuredRatchets, RatchetCurrentPolicy, RatchetState, directory_violations_with_ratchet,
-    file_violations_with_ratchet, stale_missing_ratchets,
+    JudgedScope, MeasuredRatchets, RatchetCurrentPolicy, RatchetState,
+    directory_violations_with_ratchet, file_violations_with_ratchet, stale_missing_ratchets,
 };
 use super::report::{
     AnalysisCoverage, CheckContext, CheckReport, CheckWarning, CounterInfo, FileLinesViolation,
@@ -123,8 +124,13 @@ fn check_with_counter_mode(
     let gap_policy = options
         .unreadable_paths
         .unwrap_or(config.traversal.unreadable_paths);
-    let discovery =
-        discover_sources_report(&root, config, selected_paths.paths(), Some(gap_policy))?;
+    let discovery = discover_sources_report(
+        &root,
+        config,
+        selected_paths.paths(),
+        Some(gap_policy),
+        Some(&limit_resolver),
+    )?;
     let directory_checks = directory_direct_files_checks(&limit_resolver, &discovery.sources)?;
     let summary = summarize_scan(
         &discovery.sources,
@@ -140,11 +146,21 @@ fn check_with_counter_mode(
         gap_severity: gap_policy.into(),
     };
     let source_outcomes = check_sources(&sources, counter, discovery.sources)?;
-    let mut violations = Vec::new();
+    let mut measured_ratchets = MeasuredRatchets::default();
+    let FileBytesFindings {
+        mut violations,
+        mut unreadable_paths,
+    } = check_file_bytes(
+        &root,
+        discovery.byte_limited_files,
+        ratchet.as_ref(),
+        ratchet_current_policy,
+        sources.gap_severity,
+        &mut measured_ratchets,
+    );
+    unreadable_paths.extend(discovery.unreadable_paths);
     let mut warnings = Vec::new();
     let mut uncounted_files = Vec::new();
-    let mut unreadable_paths = discovery.unreadable_paths;
-    let mut measured_ratchets = MeasuredRatchets::default();
 
     for source_outcome in source_outcomes {
         match source_outcome {
@@ -183,13 +199,15 @@ fn check_with_counter_mode(
     if ratchet_current_policy.requires_current() {
         violations.extend(stale_missing_ratchets(
             &ratchet,
-            &selected_paths,
+            &JudgedScope::new(&selected_paths, &unreadable_paths),
             &measured_ratchets,
         ));
     }
 
     sort_violations(&mut violations);
     unreadable_paths.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
+    // A source file that fails both its size and its content read is one gap, not two.
+    unreadable_paths.dedup_by(|left, right| left.path == right.path && left.kind == right.kind);
     Ok(CheckReport::new(
         CheckContext::new(
             ReportRoot::from_resolved_path(&root),

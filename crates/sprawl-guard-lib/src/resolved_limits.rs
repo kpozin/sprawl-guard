@@ -9,7 +9,8 @@ use serde::Serialize;
 use crate::classification::{ClassifiedSource, SourceKind};
 use crate::config::{Config, OverrideLimits, OverridePaths, OverrideReason};
 use crate::{
-    CountLines, DirectFileLimit, LanguageGroupId, LineLimit, RelativePath, Result, SprawlError,
+    CountLines, DirectFileLimit, LanguageGroupId, LineLimit, MaxBytesPerFile, RelativePath, Result,
+    SprawlError,
 };
 
 const DIRECTORY_OVERRIDE_DESCENDANT_PROBE: &str = "__sprawl_guard_directory_metric__";
@@ -69,6 +70,15 @@ pub struct ResolvedDirectFileLimit {
     /// A trailing `/**` pattern also matches the prefix directory itself for
     /// directory metrics. For example, `src/**` matches both `src` and
     /// `src/generated`.
+    pub matched_overrides: Vec<MatchedOverride>,
+}
+
+/// Resolved byte limit for one file, source or not.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ResolvedFileBytesLimit {
+    /// Final byte limit after precedence is applied.
+    pub value: MaxBytesPerFile,
+    /// Overrides whose path globs matched the file path.
     pub matched_overrides: Vec<MatchedOverride>,
 }
 
@@ -157,6 +167,49 @@ impl<'config> LimitResolver<'config> {
             value: limit,
             matched_overrides,
         }
+    }
+
+    /// Returns whether any file can have a finite byte limit, so that file sizes need measuring.
+    pub(crate) fn limits_file_bytes(&self) -> bool {
+        self.config.limits.max_bytes_per_file.finite().is_some()
+            || self.overrides.iter().any(|override_entry| {
+                override_entry
+                    .limits
+                    .max_bytes_per_file()
+                    .and_then(MaxBytesPerFile::finite)
+                    .is_some()
+            })
+    }
+
+    /// Resolves the byte limit for one file: the repository default, replaced by each matching
+    /// override that sets one, in declaration order.
+    pub(crate) fn max_bytes_per_file(&self, path: &RelativePath) -> MaxBytesPerFile {
+        self.byte_limit_overrides(path)
+            .map(|(_, limit)| limit)
+            .last()
+            .unwrap_or(self.config.limits.max_bytes_per_file)
+    }
+
+    /// Resolves the byte limit for one file, with the overrides that set it.
+    pub(crate) fn file_bytes_limit(&self, path: &RelativePath) -> ResolvedFileBytesLimit {
+        ResolvedFileBytesLimit {
+            value: self.max_bytes_per_file(path),
+            matched_overrides: self
+                .byte_limit_overrides(path)
+                .map(|(override_entry, _)| override_entry.matched_override())
+                .collect(),
+        }
+    }
+
+    /// Returns the overrides that match a file and set its byte limit, in declaration order.
+    fn byte_limit_overrides<'resolver>(
+        &'resolver self,
+        path: &'resolver RelativePath,
+    ) -> impl Iterator<Item = (&'resolver CompiledOverride<'config>, MaxBytesPerFile)> {
+        self.overrides.iter().filter_map(move |override_entry| {
+            let limit = override_entry.limits.max_bytes_per_file()?;
+            file_matches_override(&override_entry.paths, path).then_some((override_entry, limit))
+        })
     }
 
     /// Resolves the direct-file limit for one directory metric.

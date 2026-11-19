@@ -3,7 +3,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::{DirectFileLimit, GlobPattern, LineLimit};
+use crate::{DirectFileLimit, GlobPattern, LineLimit, MaxBytesPerFile};
 
 /// Error returned when an override reason is invalid.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -117,6 +117,9 @@ pub struct OverrideLimits {
     /// Optional directory direct-file limits.
     #[serde(skip_serializing_if = "OverrideMaxDirectFilesPerDirectoryLimits::is_empty")]
     max_direct_files_per_directory: OverrideMaxDirectFilesPerDirectoryLimits,
+    /// Optional file byte limit.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_bytes_per_file: Option<MaxBytesPerFile>,
 }
 
 /// Optional file line-count limits supplied by a path override.
@@ -159,14 +162,24 @@ impl OverrideLimits {
     fn new(
         max_lines_per_file: OverrideMaxLinesPerFileLimits,
         max_direct_files_per_directory: OverrideMaxDirectFilesPerDirectoryLimits,
+        max_bytes_per_file: Option<MaxBytesPerFile>,
     ) -> Result<Self, OverrideLimitsError> {
-        if max_lines_per_file.is_empty() && max_direct_files_per_directory.is_empty() {
+        if max_lines_per_file.is_empty()
+            && max_direct_files_per_directory.is_empty()
+            && max_bytes_per_file.is_none()
+        {
             return Err(OverrideLimitsError::Empty);
         }
         Ok(Self {
             max_lines_per_file,
             max_direct_files_per_directory,
+            max_bytes_per_file,
         })
+    }
+
+    /// Returns the file byte override, when present.
+    pub fn max_bytes_per_file(&self) -> Option<MaxBytesPerFile> {
+        self.max_bytes_per_file
     }
 
     /// Returns the production line override, when present.
@@ -202,6 +215,7 @@ impl<'de> Deserialize<'de> for OverrideLimits {
         Self::new(
             max_lines_per_file.into(),
             max_direct_files_per_directory.into(),
+            partial.max_bytes_per_file,
         )
         .map_err(serde::de::Error::custom)
     }
@@ -212,6 +226,7 @@ impl<'de> Deserialize<'de> for OverrideLimits {
 struct PartialOverrideLimits {
     max_lines_per_file: Option<PartialOverrideMaxLinesPerFileLimits>,
     max_direct_files_per_directory: Option<PartialOverrideMaxDirectFilesPerDirectoryLimits>,
+    max_bytes_per_file: Option<MaxBytesPerFile>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -262,7 +277,8 @@ impl From<PartialOverrideMaxDirectFilesPerDirectoryLimits>
         {
             "properties": { "max_direct_files_per_directory": {} },
             "required": ["max_direct_files_per_directory"]
-        }
+        },
+        { "properties": { "max_bytes_per_file": {} }, "required": ["max_bytes_per_file"] }
     ]
 ))]
 pub struct PathOverride {

@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use super::explain_directory::DirectoryExplanation;
 use crate::code_line_counter::LineMeasurement;
-use crate::config::UnreadablePathPolicy;
+use crate::config::{ParsedCodeFileByteLimit, UnreadablePathPolicy};
 use crate::{
-    DiagnosticDetail, LanguageGroupId, LanguageId, RelativePath, RustCfgTestInfo,
+    DiagnosticDetail, FileByteLimit, LanguageGroupId, LanguageId, RelativePath, RustCfgTestInfo,
     SourceResolvedLimits,
 };
 
@@ -88,6 +88,19 @@ pub(crate) struct SourceDiscoveryReport {
     pub(crate) sources: Vec<ClassifiedSource>,
     /// Recoverable traversal failures collected during discovery.
     pub(crate) unreadable_paths: Vec<UnreadablePath>,
+    /// Files, source or not, whose resolved byte limit is finite, sorted by path.
+    ///
+    /// Empty unless discovery was asked to resolve byte limits.
+    pub(crate) byte_limited_files: Vec<ByteLimitedFile>,
+}
+
+/// A file whose resolved byte limit is finite, so `check` measures its size.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ByteLimitedFile {
+    /// Repository-relative file path.
+    pub(crate) path: RelativePath,
+    /// Resolved byte limit.
+    pub(crate) limit: FileByteLimit,
 }
 
 /// Recoverable filesystem traversal failure.
@@ -186,6 +199,15 @@ pub enum SourceExplanation {
         /// Rust-specific preprocessing status, when the source is Rust.
         rust_cfg_test: Option<RustCfgTestInfo>,
     },
+    /// Existing source too large to read, so `check` does not count its lines.
+    Uncounted {
+        /// Included source classification.
+        source: ClassifiedSource,
+        /// Resolved file and directory limits used by `check`.
+        resolved_limits: SourceResolvedLimits,
+        /// Configured `traversal.max_parsed_code_file_bytes`, which the file is larger than.
+        max_parsed_code_file_bytes: ParsedCodeFileByteLimit,
+    },
 }
 
 impl SourceExplanation {
@@ -212,24 +234,29 @@ impl SourceExplanation {
     /// Returns the included source classification.
     pub fn source(&self) -> &ClassifiedSource {
         match self {
-            Self::NotFound { source } | Self::Measured { source, .. } => source,
+            Self::NotFound { source }
+            | Self::Measured { source, .. }
+            | Self::Uncounted { source, .. } => source,
         }
     }
 
-    /// Returns resolved limits when this existing source was measured.
+    /// Returns resolved limits when this source exists.
     pub fn resolved_limits(&self) -> Option<&SourceResolvedLimits> {
         match self {
             Self::NotFound { .. } => None,
             Self::Measured {
                 resolved_limits, ..
+            }
+            | Self::Uncounted {
+                resolved_limits, ..
             } => Some(resolved_limits),
         }
     }
 
-    /// Returns the line measurement for an existing source.
+    /// Returns the line measurement for a source whose lines were counted.
     pub fn measurement(&self) -> Option<&LineMeasurement> {
         match self {
-            Self::NotFound { .. } => None,
+            Self::NotFound { .. } | Self::Uncounted { .. } => None,
             Self::Measured { measurement, .. } => Some(measurement),
         }
     }
@@ -238,6 +265,7 @@ impl SourceExplanation {
     pub fn rust_cfg_test(&self) -> Option<&RustCfgTestInfo> {
         match self {
             Self::NotFound { .. }
+            | Self::Uncounted { .. }
             | Self::Measured {
                 rust_cfg_test: None,
                 ..
@@ -338,6 +366,33 @@ pub enum PathClassification<S = SourceExplanation> {
 }
 
 impl<S> PathClassification<S> {
+    /// Returns the path of a file whose size byte limits apply to, using `source_path` to find
+    /// an included source's path.
+    ///
+    /// Byte limits apply to every file the walk visits except the ratchet file, the configuration
+    /// file and globally excluded files, whatever its language, so a binary file or a file in a
+    /// disabled language is measured too. A file that several languages claim is a configuration
+    /// error that stops `check` before it reports anything, but `explain` still shows its size.
+    pub(crate) fn byte_limited_path<'path>(
+        &'path self,
+        source_path: impl FnOnce(&'path S) -> &'path RelativePath,
+    ) -> Option<&'path RelativePath> {
+        match self {
+            Self::Source(source) => Some(source_path(source)),
+            Self::NotSource { path }
+            | Self::AmbiguousLanguage { path, .. }
+            | Self::LanguageExcluded { path, .. }
+            | Self::LanguagesExcluded { path, .. }
+            | Self::TestExcluded { path, .. } => Some(path),
+            Self::Ignored { .. }
+            | Self::GloballyExcluded { .. }
+            | Self::RatchetExcluded { .. }
+            | Self::ConfigExcluded { .. }
+            | Self::Directory(_)
+            | Self::NonFile { .. } => None,
+        }
+    }
+
     /// Replaces an included source's payload with `explain_source`'s result, keeping every
     /// exclusion as is.
     pub(super) fn try_map_source<T>(

@@ -202,9 +202,18 @@ fn execute_explain(default_root: PathBuf, args: super::ExplainArgs) -> Result<Co
         &args.path,
         &loaded.config,
     )?;
+    let file_bytes = sprawl_guard_lib::classification::explain_file_bytes(
+        &load_options.root,
+        &classification,
+        &loaded.config,
+    )?;
+    let explanation = explain_output::PathExplanation {
+        classification,
+        file_bytes,
+    };
     let stdout = match args.format.unwrap_or(HumanJsonFormat::Human) {
-        HumanJsonFormat::Human => format!("{}\n", explain_output::explain_message(&classification)),
-        HumanJsonFormat::Json => serde_json::to_string_pretty(&classification)
+        HumanJsonFormat::Human => format!("{}\n", explain_output::explain_message(&explanation)),
+        HumanJsonFormat::Json => serde_json::to_string_pretty(&explanation)
             .map(|output| format!("{output}\n"))
             .map_err(|source| CliError::RenderJson { source })?,
     };

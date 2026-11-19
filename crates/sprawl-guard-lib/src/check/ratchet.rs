@@ -6,7 +6,7 @@ use crate::config::Config;
 use crate::ratchet::{
     DirectoryRatchetKey, FileRatchetKey, RatchetCount, RatchetFile, RatchetLookup,
 };
-use crate::{DirectFiles, LanguageGroupId, LineLimit, RelativePath, Result};
+use crate::{DirectFiles, FileByteLimit, LanguageGroupId, LineLimit, RelativePath, Result};
 
 use super::directory_direct_files::{DirectoryDirectFilesCheck, DirectoryDirectFilesMeasurement};
 use super::report::{CheckViolation, FileViolationKind, RatchetEntryCount};
@@ -14,9 +14,11 @@ use super::report::{
     DirectoryRatchetStaleMeasuredViolation, FileRatchetStaleMeasuredViolation, RatchetLimit,
     RatchetStaleMeasuredViolation, RatchetViolation,
 };
-use super::runner::{FileMeasurement, SelectedPaths, SourceCheck};
+use super::runner::{FileMeasurement, SourceCheck};
 
 mod missing;
+
+pub(super) use missing::JudgedScope;
 
 pub(super) fn file_violations_with_ratchet(
     ratchet: &Option<RatchetState>,
@@ -159,14 +161,14 @@ fn stale_directory_ratchet_violation(
 
 pub(super) fn stale_missing_ratchets(
     ratchet: &Option<RatchetState>,
-    selected_paths: &SelectedPaths,
+    scope: &JudgedScope<'_>,
     measured: &MeasuredRatchets,
 ) -> Vec<CheckViolation> {
     let Some(ratchet) = ratchet else {
         return Vec::new();
     };
     ratchet
-        .missing_in(selected_paths, measured)
+        .missing_in(scope, measured)
         .into_iter()
         .map(CheckViolation::Ratchet)
         .collect()
@@ -176,6 +178,7 @@ pub(super) fn stale_missing_ratchets(
 pub(super) struct MeasuredRatchets {
     files: BTreeSet<FileRatchetKey>,
     directories: BTreeSet<DirectoryRatchetKey>,
+    file_sizes: BTreeSet<RelativePath>,
 }
 
 impl MeasuredRatchets {
@@ -191,6 +194,12 @@ impl MeasuredRatchets {
     pub(super) fn record_uncounted_file(&mut self, path: &RelativePath, kind: FileViolationKind) {
         self.files
             .insert(FileRatchetKey::new(path.clone(), kind.role()));
+    }
+
+    /// Records a file whose size was measured, or failed to read, so its byte ceiling is not
+    /// reported missing.
+    pub(super) fn record_file_size(&mut self, path: &RelativePath) {
+        self.file_sizes.insert(path.clone());
     }
 
     pub(super) fn record_directory(&mut self, measurement: &DirectoryDirectFilesMeasurement) {
@@ -237,7 +246,11 @@ impl RatchetState {
 
     /// Returns the number of file and directory ceilings in the loaded ratchet file.
     pub(super) fn entry_count(&self) -> RatchetEntryCount {
-        RatchetEntryCount::from_len(self.ratchets.files().len() + self.ratchets.directories().len())
+        RatchetEntryCount::from_len(
+            self.ratchets.files().len()
+                + self.ratchets.directories().len()
+                + self.ratchets.file_sizes().len(),
+        )
     }
 
     fn from_file(file: RatchetFile) -> Result<Self> {
@@ -249,6 +262,11 @@ impl RatchetState {
     fn file_ceiling(&self, kind: FileViolationKind, path: &RelativePath) -> Option<LineLimit> {
         self.ratchets
             .file_ceiling(&FileRatchetKey::new(path.clone(), kind.role()))
+    }
+
+    /// Returns the byte ceiling for one file.
+    pub(super) fn file_size_ceiling(&self, path: &RelativePath) -> Option<FileByteLimit> {
+        self.ratchets.file_size_ceiling(path)
     }
 
     /// Returns the direct-file ceiling for one directory's production or test files in `group`.
@@ -264,19 +282,24 @@ impl RatchetState {
 
     fn missing_in(
         &self,
-        selected_paths: &SelectedPaths,
+        scope: &JudgedScope<'_>,
         measured: &MeasuredRatchets,
     ) -> Vec<RatchetViolation> {
         let mut violations = Vec::new();
         violations.extend(missing::file_ratchets(
             self.ratchets.files(),
             &measured.files,
-            selected_paths,
+            scope,
         ));
         violations.extend(missing::directory_ratchets(
             self.ratchets.directories(),
             &measured.directories,
-            selected_paths,
+            scope,
+        ));
+        violations.extend(missing::file_size_ratchets(
+            self.ratchets.file_sizes(),
+            &measured.file_sizes,
+            scope,
         ));
         violations
     }

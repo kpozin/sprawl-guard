@@ -174,6 +174,12 @@ pub enum SprawlError {
         /// Duplicate ratchet path.
         path: RelativePath,
     },
+    /// A ratchet file contained two byte ceilings for the same file.
+    #[error("duplicate file size ratchet entry for path {path}")]
+    DuplicateFileSizeRatchetEntry {
+        /// Duplicate ratchet path.
+        path: RelativePath,
+    },
     /// A ratchet file contained a duplicate directory identity.
     #[error("duplicate directory ratchet entry for role {role}, group {group}, and path {path}")]
     DuplicateDirectoryRatchetEntry {

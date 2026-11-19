@@ -18,7 +18,9 @@ pub use check::{
     AnalysisCoverage, AnalysisGaps, CheckOptions, CheckReport, CheckStatus, CheckViolation,
     CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount,
     DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
-    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind, FileLinesViolation,
+    DirectoryRatchetStaleMissingViolation, DirectoryViolationKind,
+    FileBytesRatchetStaleMeasuredViolation, FileBytesRatchetStaleMissingViolation,
+    FileBytesViolation, FileBytesViolationKind, FileLinesViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
     NonEmptyCheckPaths, RatchetEntryCount, RatchetLimit, RatchetStaleMeasuredViolation,
     RatchetStaleMissingViolation, RatchetViolation, RatchetViolationKind, ReportRoot,
@@ -31,15 +33,15 @@ pub use config::{
 };
 pub use error::{ConfigUpgradeCommand, Result, SprawlError};
 pub use ratchet::{
-    DirectoryRatchet, DirectoryRatchetKey, FileRatchet, FileRatchetKey, RatchetCount, RatchetFile,
-    RatchetLookup, RatchetSchemaVersion, authored_ratchet_json_schema,
+    DirectoryRatchet, DirectoryRatchetKey, FileRatchet, FileRatchetKey, FileSizeRatchet,
+    RatchetCount, RatchetFile, RatchetLookup, RatchetSchemaVersion, authored_ratchet_json_schema,
 };
 pub use resolved_limits::{
-    MatchedOverride, OverrideOrdinal, ResolvedDirectFileLimit, ResolvedFileLinesLimit,
-    SourceResolvedLimits,
+    MatchedOverride, OverrideOrdinal, ResolvedDirectFileLimit, ResolvedFileBytesLimit,
+    ResolvedFileLinesLimit, SourceResolvedLimits,
 };
 pub use rust_cfg::{ExcludedItemCount, RustCfgTestInfo, RustCfgTestStatus};
-pub use value::file_bytes::FileBytes;
+pub use value::file_bytes::{FileByteLimit, FileByteLimitError, FileBytes, MaxBytesPerFile};
 pub use value::glob::{GlobPattern, GlobPatternError};
 pub use value::language::{LanguageId, LanguageIdError};
 pub use value::language_group::{CustomLanguageGroupId, LanguageGroupId, LanguageGroupIdError};
