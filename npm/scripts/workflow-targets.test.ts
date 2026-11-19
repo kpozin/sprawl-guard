@@ -260,7 +260,7 @@ describe("native runtime workflow coverage", () => {
   });
 
   describe("when starting release assembly", () => {
-    it("uses the selected tag ref and explicit npm channel selection", () => {
+    it("uses the selected tag ref and derives the npm channel by default", () => {
       const releaseWorkflow = parseWorkflow(
         RELEASE_WORKFLOW_URL,
         RELEASE_WORKFLOW_SCHEMA,
@@ -269,7 +269,11 @@ describe("native runtime workflow coverage", () => {
       assert.deepEqual(Object.keys(releaseWorkflow.on), ["workflow_dispatch"]);
       assert.deepEqual(
         releaseWorkflow.on.workflow_dispatch.inputs.npm_channel.options,
-        ["latest", "next", "beta", "rc", "canary", "custom"],
+        ["auto", "latest", "next", "beta", "rc", "canary", "custom"],
+      );
+      assert.equal(
+        releaseWorkflow.on.workflow_dispatch.inputs.npm_channel.default,
+        "auto",
       );
       assert.equal(releaseWorkflow.concurrency.group, "sprawl-guard-release");
     });

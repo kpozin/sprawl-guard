@@ -3,6 +3,7 @@
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { resolveNpmDistTagSelection } from "./npm-dist-tag.ts";
+import { parseReleaseTag } from "./release-policy.ts";
 
 const PUBLISH_NPM_PACKAGES_SCRIPT = fileURLToPath(
   new URL("./publish-npm-packages.ts", import.meta.url),
@@ -11,6 +12,7 @@ const PUBLISH_NPM_PACKAGES_SCRIPT = fileURLToPath(
 export type ResolveNpmChannelPublicationResult =
   | { readonly kind: "ok"; readonly childArguments: readonly string[] }
   | { readonly kind: "invalid_arguments" }
+  | { readonly kind: "invalid_release_tag"; readonly releaseTag: string }
   | {
       readonly kind: "invalid_channel";
       readonly detail: Exclude<
@@ -35,7 +37,15 @@ export function resolveNpmChannelPublication(
   ) {
     return { kind: "invalid_arguments" };
   }
-  const channel = resolveNpmDistTagSelection({ customTag, selection });
+  const parsedTag = parseReleaseTag(releaseTag);
+  if (parsedTag.kind !== "ok") {
+    return parsedTag;
+  }
+  const channel = resolveNpmDistTagSelection({
+    customTag,
+    releaseVersion: parsedTag.releaseVersion,
+    selection,
+  });
   return channel.kind === "ok"
     ? {
         kind: "ok",
@@ -55,7 +65,7 @@ function main(): number {
   const resolved = resolveNpmChannelPublication(process.argv.slice(2));
   if (resolved.kind !== "ok") {
     console.error(
-      "usage: publish-npm-channel.ts <candidate-directory> <full-commit> <v-tag> <latest|next|beta|rc|canary|custom> [custom-tag]",
+      "usage: publish-npm-channel.ts <candidate-directory> <full-commit> <v-tag> <auto|latest|next|beta|rc|canary|custom> [custom-tag]",
     );
     console.error(JSON.stringify(resolved));
     return 1;

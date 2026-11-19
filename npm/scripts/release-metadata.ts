@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { NPM_DIST_TAG_SCHEMA } from "./npm-dist-tag.ts";
+import { resolveNpmDistTagSelection } from "./npm-dist-tag.ts";
 import { PACKAGE_VERSION } from "./package-manifests.ts";
 import { PUBLIC_PACKAGE_VERSION_SCHEMA } from "./package-version.ts";
 import {
@@ -257,14 +257,18 @@ function main(): number {
     return 1;
   }
 
-  const npmDistTag = NPM_DIST_TAG_SCHEMA.safeParse(process.env.NPM_DIST_TAG ?? "");
-  if (!npmDistTag.success) {
-    console.error("NPM_DIST_TAG must contain one validated npm distribution tag");
+  const npmDistTag = resolveNpmDistTagSelection({
+    customTag: process.env.CUSTOM_NPM_TAG ?? "",
+    releaseVersion: result.releaseVersion,
+    selection: process.env.NPM_CHANNEL ?? "",
+  });
+  if (npmDistTag.kind !== "ok") {
+    console.error(`NPM_CHANNEL and CUSTOM_NPM_TAG name no npm channel: ${JSON.stringify(npmDistTag)}`);
     return 1;
   }
   const githubDisposition = classifyGitHubRelease(
     result.releaseVersion,
-    npmDistTag.data,
+    npmDistTag.tag,
   );
   const githubPrerelease = githubDisposition.kind === "prerelease";
   const githubLatest = githubDisposition.kind === "stable_latest";
@@ -281,6 +285,7 @@ function main(): number {
       `release_tag=${result.releaseTag}`,
       `release_version=${result.releaseVersion}`,
       `python_version=${result.pythonVersion}`,
+      `npm_dist_tag=${npmDistTag.tag}`,
       `github_prerelease=${githubPrerelease}`,
       `github_latest=${githubLatest}`,
       "",

@@ -27,6 +27,36 @@ describe("resolveNpmChannelPublication", () => {
     });
   });
 
+  describe("when auto is selected", () => {
+    it("derives the channel from the release tag's version", () => {
+      const result = resolveNpmChannelPublication([
+        "/release/npm-candidate",
+        "0123456789abcdef0123456789abcdef01234567",
+        "v0.6.0-beta.1",
+        "auto",
+      ]);
+
+      assert.equal(result.kind, "ok");
+      if (result.kind === "ok") {
+        assert.equal(result.childArguments.at(-1), "beta");
+      }
+    });
+  });
+
+  describe("when the release tag holds no publishable version", () => {
+    it("rejects the tag before invoking the publisher", () => {
+      assert.deepEqual(
+        resolveNpmChannelPublication([
+          "/release/npm-candidate",
+          "0123456789abcdef0123456789abcdef01234567",
+          "release-1",
+          "latest",
+        ]),
+        { kind: "invalid_release_tag", releaseTag: "release-1" },
+      );
+    });
+  });
+
   describe("when a custom channel is version-like", () => {
     it("rejects the channel before invoking the publisher", () => {
       assert.deepEqual(

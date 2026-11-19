@@ -1,7 +1,6 @@
-#!/usr/bin/env node
-
-import { fileURLToPath } from "node:url";
+import { prerelease } from "semver";
 import { z } from "zod";
+import type { PublicPackageVersion } from "./package-version.ts";
 
 const MAXIMUM_NPM_DIST_TAG_LENGTH = 64;
 const CUSTOM_NPM_DIST_TAG_PATTERN = /^(?!v)(?!x(?:$|[.-]))[a-z][a-z0-9._-]*$/u;
@@ -15,7 +14,14 @@ export const PRESET_NPM_DIST_TAGS = [
   "canary",
 ] as const;
 
+/**
+ * Prerelease labels whose npm channel has the same name, so `auto` can pick it. Alpha and dev
+ * prereleases have no matching channel, so they need an explicit one.
+ */
+const AUTOMATIC_PRERELEASE_CHANNELS = ["beta", "rc"] as const;
+
 const NPM_DIST_TAG_SELECTION_SCHEMA = z.enum([
+  "auto",
   ...PRESET_NPM_DIST_TAGS,
   "custom",
 ]);
@@ -30,7 +36,7 @@ export const NPM_DIST_TAG_SCHEMA = z
 /** npm distribution tag that is safe to pass to `npm publish --tag`. */
 export type NpmDistTag = z.infer<typeof NPM_DIST_TAG_SCHEMA>;
 
-/** Result of resolving the preset/custom release-channel inputs. */
+/** Result of resolving the release-channel inputs. */
 export type ResolveNpmDistTagSelectionResult =
   | { readonly kind: "ok"; readonly tag: NpmDistTag }
   | { readonly kind: "invalid_selection"; readonly value: string }
@@ -38,12 +44,21 @@ export type ResolveNpmDistTagSelectionResult =
   | { readonly kind: "invalid_custom_tag"; readonly value: string }
   | {
       readonly kind: "unexpected_custom_tag";
-      readonly selection: (typeof PRESET_NPM_DIST_TAGS)[number];
+      readonly selection: Exclude<z.infer<typeof NPM_DIST_TAG_SELECTION_SCHEMA>, "custom">;
+    }
+  | {
+      /** `auto` was selected for a prerelease whose label names no npm channel. */
+      readonly kind: "no_automatic_channel";
+      readonly releaseVersion: PublicPackageVersion;
     };
 
-/** Resolves workflow or local preset/custom inputs to one branded npm dist-tag. */
+/**
+ * Resolves workflow or local channel inputs to one branded npm dist-tag. `auto` picks `latest`
+ * for a stable release and the channel named by a beta or rc prerelease's label.
+ */
 export function resolveNpmDistTagSelection(args: {
   readonly customTag: string;
+  readonly releaseVersion: PublicPackageVersion;
   readonly selection: string;
 }): ResolveNpmDistTagSelectionResult {
   const parsedSelection = NPM_DIST_TAG_SELECTION_SCHEMA.safeParse(
@@ -67,29 +82,26 @@ export function resolveNpmDistTagSelection(args: {
       selection: parsedSelection.data,
     };
   }
+  if (parsedSelection.data === "auto") {
+    return automaticNpmDistTag(args.releaseVersion);
+  }
   return {
     kind: "ok",
     tag: NPM_DIST_TAG_SCHEMA.parse(parsedSelection.data),
   };
 }
 
-function main(): number {
-  const [selection, customTag = "", ...extraArguments] = process.argv.slice(2);
-  if (selection === undefined || extraArguments.length > 0) {
-    console.error(
-      "usage: npm-dist-tag.ts <latest|next|beta|rc|canary|custom> [custom-tag]",
-    );
-    return 1;
+function automaticNpmDistTag(
+  releaseVersion: PublicPackageVersion,
+): ResolveNpmDistTagSelectionResult {
+  const labels = prerelease(releaseVersion);
+  if (labels === null) {
+    return { kind: "ok", tag: NPM_DIST_TAG_SCHEMA.parse("latest") };
   }
-  const result = resolveNpmDistTagSelection({ customTag, selection });
-  if (result.kind !== "ok") {
-    console.error(JSON.stringify(result));
-    return 1;
-  }
-  console.log(result.tag);
-  return 0;
-}
-
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exit(main());
+  const channel = AUTOMATIC_PRERELEASE_CHANNELS.find(
+    (candidate) => candidate === labels[0],
+  );
+  return channel === undefined
+    ? { kind: "no_automatic_channel", releaseVersion }
+    : { kind: "ok", tag: NPM_DIST_TAG_SCHEMA.parse(channel) };
 }

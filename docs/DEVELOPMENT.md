@@ -92,6 +92,21 @@ Actions builds native artifacts on each target platform, assembles the npm packa
 the release candidates. See the workflows in [`.github/workflows`](../.github/workflows/) for the
 complete release graph.
 
+To release a version, tag the commit on `main` that carries it as `v<version>` and run the
+`Release` workflow from that tag, replacing `VERSION` with the version:
+
+```sh
+gh workflow run release.yml --ref vVERSION -f release_mode=publish
+```
+
+The workflow picks the npm channel from the version: `latest` for a stable version, and `beta` or
+`rc` for those prereleases. Choose `npm_channel` yourself for other prereleases. The `draft` mode
+builds and checks everything and creates a draft GitHub Release without publishing to any registry,
+which is useful after changing the workflow. In `publish` mode, the publish jobs wait for approval
+in the `release` environment, and one approval covers crates.io, npm and PyPI. When the registry
+checks pass, publish the draft GitHub Release. If a publish job fails, fix the cause and re-run the
+failed jobs: the crates.io and npm jobs skip versions they already published.
+
 The Homebrew formula lives in the [kpozin/homebrew-tap](https://github.com/kpozin/homebrew-tap)
 repository and installs the release's prebuilt binary on macOS and Linux. When you publish a stable
 GitHub Release, the `Homebrew` workflow waits for approval in the `release` environment, then starts

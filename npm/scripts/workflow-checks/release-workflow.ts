@@ -50,8 +50,9 @@ export const RELEASE_WORKFLOW_SCHEMA = z.object({
     workflow_dispatch: z.object({
       inputs: z.object({
         npm_channel: z.object({
-          default: z.literal("latest"),
+          default: z.literal("auto"),
           options: z.tuple([
+            z.literal("auto"),
             z.literal("latest"),
             z.literal("next"),
             z.literal("beta"),

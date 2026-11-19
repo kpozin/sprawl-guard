@@ -4,9 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       npm_channel:
-        description: npm release channel
-        default: latest
+        description: npm release channel; auto picks latest for a stable version, or beta or rc from the prerelease label
+        default: auto
         options:
+          - auto
           - latest
           - next
           - beta
@@ -62,7 +63,7 @@ jobs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       release_version: ${{ steps.resolve.outputs.release_version }}
       python_version: ${{ steps.resolve.outputs.python_version }}
-      npm_dist_tag: ${{ steps.npm-channel.outputs.npm_dist_tag }}
+      npm_dist_tag: ${{ steps.resolve.outputs.npm_dist_tag }}
       github_prerelease: ${{ steps.resolve.outputs.github_prerelease }}
       github_latest: ${{ steps.resolve.outputs.github_latest }}
     steps:
@@ -115,16 +116,6 @@ jobs:
           CI: "true"
         run: pnpm install --frozen-lockfile
 
-      - name: Resolve npm release channel
-        id: npm-channel
-        shell: bash
-        run: |
-          npm_dist_tag="$(node npm/scripts/npm-dist-tag.ts "${NPM_CHANNEL}" "${CUSTOM_NPM_TAG}")"
-          printf 'npm_dist_tag=%s\n' "${npm_dist_tag}" >> "${GITHUB_OUTPUT}"
-        env:
-          CUSTOM_NPM_TAG: ${{ inputs.custom_npm_tag }}
-          NPM_CHANNEL: ${{ inputs.npm_channel }}
-
       - name: Resolve and validate release metadata
         id: resolve
         run: pnpm --dir npm run release:metadata
@@ -132,7 +123,8 @@ jobs:
           GITHUB_EVENT_COMMIT: ${{ github.sha }}
           GITHUB_REF_NAME: ${{ github.ref_name }}
           GITHUB_REF_TYPE: ${{ github.ref_type }}
-          NPM_DIST_TAG: ${{ steps.npm-channel.outputs.npm_dist_tag }}
+          CUSTOM_NPM_TAG: ${{ inputs.custom_npm_tag }}
+          NPM_CHANNEL: ${{ inputs.npm_channel }}
 
       # The draft release takes its notes from this section, so check it before the builds start.
       - name: Check release notes
