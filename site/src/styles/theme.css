@@ -17,3 +17,28 @@
 .sl-markdown-content :is(p, li):not(:where(.not-content *)) {
   text-wrap: pretty;
 }
+
+.hero .tagline a {
+  text-decoration: none;
+}
+
+main :target {
+  scroll-margin-top: calc(var(--sl-nav-height) + 1rem);
+  animation: paragraph-highlight 3s ease-out;
+}
+
+@keyframes paragraph-highlight {
+  from {
+    background-color: var(--sl-color-accent-low);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  main :target {
+    animation: none;
+    background-color: var(--sl-color-accent-low);
+  }
+}

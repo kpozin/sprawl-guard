@@ -133,6 +133,34 @@ pnpm exec sprawl-guard check
   });
 
   describe("when the homepage has a Starlight hero", () => {
+    test("preserves the tagline's link to its fine print", () => {
+      const result = renderDocumentationMarkdown(
+        {
+          id: "index",
+          title: "Sprawl Guard",
+          description: "Keep source trees navigable.",
+          body: `<div id="supported-languages">\n\nSupported languages. Run \`sprawl-guard languages\`.\n\n</div>`,
+          hero: {
+            tagline:
+              'Any<a href="#supported-languages" aria-label="Supported languages">*</a> language.',
+            actions: [],
+          },
+        },
+        routes,
+      );
+
+      assert.equal(result.ok, true);
+      if (!result.ok) return;
+      assert.match(
+        result.value,
+        /Any<a href="#supported-languages" aria-label="Supported languages">\*<\/a> language\./u,
+      );
+      assert.match(
+        result.value,
+        /<a id="supported-languages"><\/a>\n\nSupported languages\. Run `sprawl-guard languages`\./u,
+      );
+    });
+
     test("includes its text and actions but not its image", () => {
       const result = renderDocumentationMarkdown(
         {
@@ -184,6 +212,22 @@ After.`,
   });
 
   describe("when an entry contains an unsupported component", () => {
+    test("rejects executable attributes on a prose container", () => {
+      const result = renderDocumentationMarkdown(
+        {
+          id: "index",
+          title: "Sprawl Guard",
+          description: "Keep source trees navigable.",
+          body: '<div id="note" onClick="run()">\n\nNote.\n\n</div>',
+        },
+        routes,
+      );
+
+      assert.equal(result.ok, false);
+      if (result.ok) return;
+      assert.equal(result.error.kind, "malformed_mdx_component");
+    });
+
     test("fails without omitting the component", () => {
       const result = renderDocumentationMarkdown(
         {

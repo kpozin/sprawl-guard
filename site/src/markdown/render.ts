@@ -299,6 +299,19 @@ function transformComponent(
   node: MdxJsxFlowElement,
   context: TransformContext,
 ): Result<RootContent[], MarkdownRenderError> {
+  if (node.name === "div") {
+    const id = requiredStringAttribute(node, "id");
+    if (!id || !hasOnlyStringAttributes(node, ["id"])) {
+      return malformed(context.entryId, "div", "expected a prose container with an id");
+    }
+    const escapedId = id.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
+    const children = transformChildren(node.children, context);
+    if (!children.ok) return children;
+    return {
+      ok: true,
+      value: [{ type: "html", value: `<a id="${escapedId}"></a>` }, ...children.value],
+    };
+  }
   const kind = node.name === null ? undefined : context.components.get(node.name);
   if (kind === undefined) return unsupported(context.entryId, node.name ?? "MDX fragment");
 
@@ -394,7 +407,7 @@ function heroNodes(hero: MarkdownHero | undefined, context: TransformContext): R
     ],
   }));
   const actions: List = { type: "list", ordered: false, spread: false, children: items };
-  return [paragraph(hero.tagline), actions];
+  return [paragraphWithChildren([{ type: "html", value: hero.tagline }]), actions];
 }
 
 function paragraph(value: string): Paragraph {
