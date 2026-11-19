@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.6.0-beta.2] - 2026-11-19
+
 ### Added
 
 - `check` lists at most 50 findings in human and GitHub output, so a large first run keeps its
