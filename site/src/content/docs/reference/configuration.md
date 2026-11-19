@@ -31,71 +31,35 @@ or offline use.
 
 ## Upgrade the configuration
 
-After upgrading Sprawl Guard, run `sprawl-guard config upgrade` to preview the upgraded root
-configuration, and `sprawl-guard config upgrade --write` to save it. `--write` keeps your formatting
-and comments, and leaves the file unchanged if the upgraded configuration is invalid.
-`sprawl-guard config upgrade --check` saves nothing and exits with code `1` when an upgrade is
-needed, so CI can require the committed configuration to stay current.
-
-The schema v1 to v2 upgrade renames these keys and keeps all other settings:
-
-| Schema v1                               | Schema v2                                 |
-| --------------------------------------- | ----------------------------------------- |
-| `[limits.max_leaf_files_per_directory]` | `[limits.max_direct_files_per_directory]` |
-| `included_line_types`                   | `count_lines`, without `"code"`           |
-| `[tests].check_path_tests`              | `[tests].check`                           |
-| `[traversal].error_policy`              | `[traversal].unreadable_paths`            |
-| `[files].exclude`                       | `[files].extend_exclude`                  |
-| `[languages.<id>].additional_globs`     | `[languages.<id>].extend_include`         |
-
-It also removes the unused `[output].color` and `[traversal].max_depth` fields. Values are checked
-after the upgrade, so error messages name the v2 keys.
+When a new version of Sprawl Guard changes the configuration format, run
+`sprawl-guard config upgrade --write`. It upgrades the file and keeps your comments and formatting.
+The [CI workflow](/sprawl-guard/run-in-ci/) runs `sprawl-guard config upgrade --check`, which fails
+until you do.
 
 ## Sections and defaults
 
 ### `[limits]`
 
-| Field                      | Type and default                   | Meaning                                           |
-| -------------------------- | ---------------------------------- | ------------------------------------------------- |
-| `max_bytes_per_file`       | size or `"unlimited"`, `unlimited` | Largest size of any one file that Git stores.     |
-| `max_bytes_per_lfs_object` | size or `"unlimited"`, `unlimited` | Largest size of any one file that Git LFS stores. |
+| Field                      | Type and default                   | Meaning                                                  |
+| -------------------------- | ---------------------------------- | -------------------------------------------------------- |
+| `max_bytes_per_file`       | size or `"unlimited"`, `unlimited` | Largest size of any one file (other than Git LFS files). |
+| `max_bytes_per_lfs_object` | size or `"unlimited"`, `unlimited` | Largest size of any one [Git LFS file](#git-lfs-files).  |
 
-The byte limits apply to every file that `check` visits, not only source files: images, archives,
-generated data, and files of disabled or excluded languages count too. Files skipped by ignore
-files, by `[files].extend_exclude`, and the configuration and ratchet files are not checked. Set
-defaults here and use `[[overrides]]` to raise or lower them for particular paths.
+The byte limits apply to every file that `check` visits, including images, archives, and generated
+data. Use `[[overrides]]` to change them for particular paths.
 
-A size is a positive number of bytes, such as `500000`, or a string with a unit, such as `"500 kB"`
-or `"1.5 GiB"`. The units `B`, `kB`, `MB`, `GB`, and `TB` are powers of 1000, and `KiB`, `MiB`,
-`GiB`, and `TiB` are powers of 1024. Units are case-sensitive. A size must come to a whole number
-of bytes, have at most 12 digits after the decimal point, and be at most 9223372036854775807 bytes,
-the largest TOML integer. Output and the ratchet file give sizes in bytes.
+#### Sizes
 
-A file is stored in Git LFS when `.gitattributes` gives it `filter=lfs`, as `git lfs track` does.
-Such a file counts against `max_bytes_per_lfs_object` instead of `max_bytes_per_file`, so a small
-`max_bytes_per_file` catches large files committed to Git by mistake without flagging the files
-you moved to Git LFS on purpose. `max_bytes_per_lfs_object` measures the file's content: the size
-its pointer declares when Git LFS hasn't downloaded it, and its size on disk when it has, so
-`check` gives the same result either way. The exception is a file that a Git LFS extension
-transforms before storing it: its pointer declares the size of the stored object, which can differ
-from the size of the downloaded file.
+Write a size as a number of bytes, such as `500000`, or with a unit, such as `"500 kB"` or
+`"1.5 GiB"`. `kB`, `MB`, `GB`, and `TB` are powers of 1000; `KiB`, `MiB`, `GiB`, and `TiB` are
+powers of 1024.
 
-`check` decides storage from the current `.gitattributes` rules, not from what was committed. A file
-that was committed to Git before a rule assigned its path to Git LFS still counts against
-`max_bytes_per_lfs_object`, so `max_bytes_per_file` doesn't catch it. Run `git lfs migrate import`
-to move such files into Git LFS.
+#### Git LFS files
 
-`check` reads `.gitattributes` in the root, in its subdirectories, and in the directories above it
-up to the top of the Git work tree. It matches patterns case-sensitively, as Git does unless
-`core.ignoreCase` is set. It doesn't read Git configuration, so it ignores `core.ignoreCase` and
-`core.attributesFile`, and it doesn't read `.git/info/attributes`, a `.gitattributes` that is a
-symbolic link, attribute macros, quoted patterns, backslash escapes inside a character class such as
-`[\]]`, or POSIX character classes other than `[:space:]`. A nested repository or submodule inside
-the root is read as part of the outer work tree. `check` reads only the `.gitattributes` files
-present in the work tree. Git also applies ones that a sparse checkout leaves out, so include every
-`.gitattributes` in a sparse checkout. A Git LFS pointer that `.gitattributes` doesn't assign to Git
-LFS counts against `max_bytes_per_file` at its size on disk. Sprawl Guard doesn't count the lines of
-a source file that is a pointer, and reports it as a warning instead.
+If your repository uses Git LFS, files that `.gitattributes` assigns to Git LFS count against
+`max_bytes_per_lfs_object` instead of `max_bytes_per_file`, at their full size even when Git LFS
+hasn't downloaded them. This lets you keep `max_bytes_per_file` small without flagging the large
+files you keep in Git LFS on purpose.
 
 ### `[limits.max_lines_per_file]`
 
@@ -138,13 +102,13 @@ The scan always leaves out `.git`, whatever `skip_hidden` says.
 
 ### `[traversal]`
 
-| Field                        | Type and default                     | Meaning                                                     |
-| ---------------------------- | ------------------------------------ | ----------------------------------------------------------- |
-| `follow_symlinks`            | enum, `"none"`                       | `none`, `files`, `directories`, or `files-and-directories`. |
-| `same_file_system`           | boolean, `true`                      | Stay on the root's filesystem.                              |
-| `max_entries`                | positive integer, `1000000`          | Maximum visited filesystem entries.                         |
-| `max_parsed_code_file_bytes` | [size](#limits), `10485760` (10 MiB) | Largest source file whose code lines Sprawl Guard counts.   |
-| `unreadable_paths`           | enum, `"fail"`                       | `fail` or `warn` for gaps in what `check` could analyze.    |
+| Field                        | Type and default                    | Meaning                                                     |
+| ---------------------------- | ----------------------------------- | ----------------------------------------------------------- |
+| `follow_symlinks`            | enum, `"none"`                      | `none`, `files`, `directories`, or `files-and-directories`. |
+| `same_file_system`           | boolean, `true`                     | Stay on the root's filesystem.                              |
+| `max_entries`                | positive integer, `1000000`         | Maximum visited filesystem entries.                         |
+| `max_parsed_code_file_bytes` | [size](#sizes), `10485760` (10 MiB) | Largest source file whose code lines Sprawl Guard counts.   |
+| `unreadable_paths`           | enum, `"fail"`                      | `fail` or `warn` for gaps in what `check` could analyze.    |
 
 Sprawl Guard doesn't count the lines of a source file larger than `max_parsed_code_file_bytes`.
 `check` lists the file and keeps checking everything else. Exclude large generated files instead of
@@ -250,16 +214,16 @@ production = 20
 
 ### `[[overrides]]`
 
-| Field                                       | Type                                       | Meaning                                            |
-| ------------------------------------------- | ------------------------------------------ | -------------------------------------------------- |
-| `paths`                                     | non-empty array of globs                   | Repository-relative paths matched by the override. |
-| `reason`                                    | non-empty string                           | Why the override exists.                           |
-| `max_lines_per_file.production`             | optional positive integer                  | Production file limit.                             |
-| `max_lines_per_file.test`                   | optional positive integer                  | Test file limit.                                   |
-| `max_direct_files_per_directory.production` | optional positive integer or `"unlimited"` | Production direct-file limit.                      |
-| `max_direct_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test direct-file limit.                            |
-| `max_bytes_per_file`                        | optional [size](#limits) or `"unlimited"`  | Byte limit for matching files that Git stores.     |
-| `max_bytes_per_lfs_object`                  | optional [size](#limits) or `"unlimited"`  | Byte limit for matching files that Git LFS stores. |
+| Field                                       | Type                                       | Meaning                                                   |
+| ------------------------------------------- | ------------------------------------------ | --------------------------------------------------------- |
+| `paths`                                     | non-empty array of globs                   | Repository-relative paths matched by the override.        |
+| `reason`                                    | non-empty string                           | Why the override exists.                                  |
+| `max_lines_per_file.production`             | optional positive integer                  | Production file limit.                                    |
+| `max_lines_per_file.test`                   | optional positive integer                  | Test file limit.                                          |
+| `max_direct_files_per_directory.production` | optional positive integer or `"unlimited"` | Production direct-file limit.                             |
+| `max_direct_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test direct-file limit.                                   |
+| `max_bytes_per_file`                        | optional [size](#sizes) or `"unlimited"`   | Byte limit for matching files (other than Git LFS files). |
+| `max_bytes_per_lfs_object`                  | optional [size](#sizes) or `"unlimited"`   | Byte limit for matching Git LFS files.                    |
 
 Each override must set at least one limit. Matching entries apply in order, and later entries
 replace only the fields they set.

@@ -7,34 +7,10 @@ import { Steps, TabItem, Tabs } from "@astrojs/starlight/components";
 
 ## Install
 
-Install the command-line tool with Cargo or Homebrew, or add it to a Node.js project (Node.js 22 or
-newer) or a Python project:
+Add Sprawl Guard to a Node.js project (Node.js 22 or newer) or a Python project, or install the
+command-line tool with Cargo or Homebrew:
 
 <Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
-
-```sh
-cargo install sprawl-guard
-```
-
-  </TabItem>
-  <TabItem label="Homebrew">
-
-```sh
-brew install kpozin/tap/sprawl-guard
-```
-
-Homebrew installs one copy for the whole machine and upgrades it whenever you upgrade your other
-packages. Use it to try Sprawl Guard or to check repositories that you don't maintain. On
-Linux, the Homebrew copy needs glibc 2.35 or newer, as in Ubuntu 22.04 and Debian 12. On older
-systems, install with Cargo.
-
-If a project's CI runs Sprawl Guard, your local copy should match the version that CI uses. To
-install that version, follow [Run in CI](/sprawl-guard/run-in-ci/#run-the-check-before-you-commit).
-A Git hook runs the first `sprawl-guard` on your `PATH`, which might still be the Homebrew copy. Run
-`sprawl-guard --version` to see which version that is.
-
-  </TabItem>
   <TabItem label="pnpm">
 
 ```sh
@@ -65,11 +41,40 @@ Command examples on this site have a uv tab. For a command written in the text, 
 `sprawl-guard check`, type `uv run sprawl-guard` in place of `sprawl-guard`.
 
 To install Sprawl Guard outside a project, run `uv tool install sprawl-guard`,
-`pipx install sprawl-guard`, or `pip install sprawl-guard`. Then type commands as the Cargo tab
-shows them.
+`pipx install sprawl-guard`, or `pip install sprawl-guard`. Then type commands as the Cargo and
+Homebrew tabs show them.
 
-PyPI has Sprawl Guard for macOS, Windows on x64, Linux on x64 and Arm with glibc 2.35 or newer,
-and Linux on x64 with musl. On other systems, install with Cargo.
+PyPI has Sprawl Guard for macOS, Windows on x64, Alpine Linux on x64, and other Linux
+distributions on x64 and Arm from Ubuntu 22.04, Debian 12, and Fedora 36 onward. It has none for
+Red Hat Enterprise Linux 9, Rocky Linux 9, AlmaLinux 9, or Amazon Linux 2023. If uv or pip can't
+find a version that runs on your system, install with Cargo.
+
+  </TabItem>
+  <TabItem label="Cargo">
+
+```sh
+cargo install sprawl-guard
+```
+
+  </TabItem>
+  <TabItem label="Homebrew">
+
+```sh
+brew install kpozin/tap/sprawl-guard
+```
+
+Homebrew installs one copy for the whole machine and upgrades it whenever you upgrade your other
+packages. Use it to try Sprawl Guard or to check repositories that you don't maintain.
+
+On Linux, the Homebrew copy runs on Ubuntu 22.04, Debian 12, Fedora 36, and later releases. It
+doesn't run on older releases or on Red Hat Enterprise Linux 9, Rocky Linux 9, AlmaLinux 9, or
+Amazon Linux 2023. There, `sprawl-guard` fails with an error that mentions `GLIBC`; install with
+Cargo instead.
+
+If a project's CI runs Sprawl Guard, your local copy should match the version that CI uses. To
+install that version, follow [Run in CI](/sprawl-guard/run-in-ci/#run-the-check-before-you-commit).
+A Git hook runs the first `sprawl-guard` on your `PATH`, which might still be the Homebrew copy. Run
+`sprawl-guard --version` to see which version that is.
 
   </TabItem>
 </Tabs>

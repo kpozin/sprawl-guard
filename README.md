@@ -18,8 +18,10 @@ To try it on macOS or Linux, install it with Homebrew:
 brew install kpozin/tap/sprawl-guard
 ```
 
-On Linux, the Homebrew copy needs glibc 2.35 or newer, as in Ubuntu 22.04 and Debian 12. On older
-systems, install with Cargo.
+On Linux, the Homebrew copy runs on Ubuntu 22.04, Debian 12, Fedora 36, and later releases. It
+doesn't run on older releases or on Red Hat Enterprise Linux 9, Rocky Linux 9, AlmaLinux 9, or
+Amazon Linux 2023. There, `sprawl-guard` fails with an error that mentions `GLIBC`; install with
+Cargo instead.
 
 Or install it as a project-local development dependency with npm or another Node package manager.
 The npm package requires Node.js 22 or newer:

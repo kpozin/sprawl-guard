@@ -13,7 +13,7 @@ function tabs(meta: string | null, commands: readonly [string, string, string, s
     type: "mdxJsxFlowElement",
     name: "SprawlGuardCliTabs",
     attributes: [{ type: "mdxJsxAttribute", name: "syncKey", value: "package-manager" }],
-    children: (["Cargo", "Homebrew", "pnpm", "npm", "uv"] as const).map((label, index) => ({
+    children: (["pnpm", "npm", "uv", "Cargo", "Homebrew"] as const).map((label, index) => ({
       type: "mdxJsxFlowElement",
       name: "SprawlGuardCliTabItem",
       attributes: [{ type: "mdxJsxAttribute", name: "label", value: label }],
@@ -36,18 +36,18 @@ describe("CLI command tabs", () => {
             'import { Tabs as SprawlGuardCliTabs, TabItem as SprawlGuardCliTabItem } from "@astrojs/starlight/components";',
         },
         tabs('title="Check"', [
-          "sprawl-guard check",
-          "sprawl-guard check",
           "pnpm exec sprawl-guard check",
           "npm exec -- @kpozin/sprawl-guard check",
           "uv run sprawl-guard check",
+          "sprawl-guard check",
+          "sprawl-guard check",
         ]),
         tabs(null, [
-          "sprawl-guard update",
-          "sprawl-guard update",
           "pnpm exec sprawl-guard update",
           "npm exec -- @kpozin/sprawl-guard update",
           "uv run sprawl-guard update",
+          "sprawl-guard update",
+          "sprawl-guard update",
         ]),
       ]);
     });

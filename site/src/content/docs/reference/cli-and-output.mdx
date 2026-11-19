@@ -14,9 +14,10 @@ commands from the repository root, or pass its path with `--root`.
 
 <CliCommandReference path="sprawl-guard" />
 
-The npm package includes native builds for macOS (x64 and Arm), Linux (x64 and Arm with glibc, x64
-with musl), and Windows (x64). The Linux glibc builds need glibc 2.35 or newer. On other platforms,
-and on Linux with an older glibc, it runs a slower WebAssembly build.
+The npm package includes native builds for macOS (x64 and Arm), Windows (x64), Alpine Linux (x64),
+and other Linux distributions (x64 and Arm) from Ubuntu 22.04, Debian 12, and Fedora 36 onward.
+Anywhere else, including older Linux releases, Red Hat Enterprise Linux 9, Rocky Linux 9,
+AlmaLinux 9, and Amazon Linux 2023, it falls back to a slower WebAssembly build.
 
 ## Commands
 
@@ -313,9 +314,8 @@ The report fields are:
   `test_directory_direct_files`, or,
   for a stale ratchet entry, one of these kinds followed by `_stale`. A file or directory
   violation's `ratchet` field holds its ratchet ceiling when it grew above one, and is `null` when
-  the ratchet file has no entry for it. A `file_bytes` violation is for a file that Git stores,
-  and an `lfs_object_bytes` violation is for a file in Git LFS, whose `actual` size is the content
-  size whether or not Git LFS has downloaded it. Each warning has a `kind`
+  the ratchet file has no entry for it. An `lfs_object_bytes` violation is for a Git LFS file, and
+  a `file_bytes` violation is for any other file. Each warning has a `kind`
   and a `path`. A `rust_cfg_test_parse_failed` warning adds the parser's `detail`. An
   `lfs_pointer_source` warning, for a source file whose lines weren't counted because it is a Git
   LFS pointer, adds the file's `role` and the `declared_bytes` of the object. A

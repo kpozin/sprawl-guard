@@ -11,49 +11,6 @@ it, commit `sprawl-guard.toml` and, if you created one, `sprawl-guard.ratchet.to
 release can't change the result of your CI without a commit.
 
 <Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
-
-The workflow downloads the prebuilt binary for `<VERSION>` from its GitHub release, so it needs no
-Rust toolchain or build. Before it runs the binary, `gh attestation verify` confirms that Sprawl
-Guard's release workflow built the archive from that version's tag. If it didn't, the install step
-fails and the check doesn't run.
-
-```yaml title=".github/workflows/sprawl-guard.yml"
-name: Sprawl Guard
-
-on: [pull_request, push]
-
-permissions:
-  contents: read
-
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install Sprawl Guard
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: <VERSION>
-        run: |
-          archive="sprawl-guard-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
-          install_dir="${RUNNER_TEMP}/sprawl-guard"
-          mkdir "${install_dir}"
-          gh release download "v${VERSION}" --repo kpozin/sprawl-guard \
-            --pattern "${archive}" --dir "${install_dir}"
-          gh attestation verify "${install_dir}/${archive}" --repo kpozin/sprawl-guard \
-            --signer-workflow kpozin/sprawl-guard/.github/workflows/release.yml \
-            --source-ref "refs/tags/v${VERSION}"
-          tar -xzf "${install_dir}/${archive}" -C "${install_dir}"
-          echo "${install_dir}" >> "${GITHUB_PATH}"
-      - run: sprawl-guard config upgrade --check
-      - run: sprawl-guard check --format github
-```
-
-On a macOS or Arm Linux runner, replace `x86_64-unknown-linux-gnu` with the target of the matching
-archive on the release page.
-
-  </TabItem>
   <TabItem label="pnpm">
 
 Pin the version in `package.json` first, and commit the updated lockfile:
@@ -145,6 +102,49 @@ jobs:
 ```
 
   </TabItem>
+  <TabItem label="Cargo">
+
+The workflow downloads the prebuilt binary for `<VERSION>` from its GitHub release, so it needs no
+Rust toolchain or build. Before it runs the binary, `gh attestation verify` confirms that Sprawl
+Guard's release workflow built the archive from that version's tag. If it didn't, the install step
+fails and the check doesn't run.
+
+```yaml title=".github/workflows/sprawl-guard.yml"
+name: Sprawl Guard
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Sprawl Guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: <VERSION>
+        run: |
+          archive="sprawl-guard-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          install_dir="${RUNNER_TEMP}/sprawl-guard"
+          mkdir "${install_dir}"
+          gh release download "v${VERSION}" --repo kpozin/sprawl-guard \
+            --pattern "${archive}" --dir "${install_dir}"
+          gh attestation verify "${install_dir}/${archive}" --repo kpozin/sprawl-guard \
+            --signer-workflow kpozin/sprawl-guard/.github/workflows/release.yml \
+            --source-ref "refs/tags/v${VERSION}"
+          tar -xzf "${install_dir}/${archive}" -C "${install_dir}"
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+      - run: sprawl-guard config upgrade --check
+      - run: sprawl-guard check --format github
+```
+
+On a macOS or Arm Linux runner, replace `x86_64-unknown-linux-gnu` with the target of the matching
+archive on the release page.
+
+  </TabItem>
 </Tabs>
 
 The workflow runs two commands:
@@ -169,30 +169,6 @@ To catch failures before CI does, run `sprawl-guard check` in a Git pre-commit h
 with the [pre-commit](https://pre-commit.com/) framework:
 
 <Tabs syncKey="package-manager">
-  <TabItem label="Cargo">
-
-The hook runs whichever `sprawl-guard` is on your `PATH`, so install the version that the CI workflow pins:
-
-```sh
-cargo install sprawl-guard --version <VERSION> --locked
-```
-
-When you change the version in CI, run the command again with the new version. To see which
-version you have, run `sprawl-guard --version`.
-
-```yaml title=".pre-commit-config.yaml"
-repos:
-  - repo: local
-    hooks:
-      - id: sprawl-guard
-        name: Sprawl Guard
-        entry: sprawl-guard check
-        language: system
-        always_run: true
-        pass_filenames: false
-```
-
-  </TabItem>
   <TabItem label="pnpm">
 
 The hook runs the version in `node_modules` that the lockfile pins, so install the project's
@@ -254,6 +230,30 @@ repos:
         entry: sprawl-guard check
         language: python
         additional_dependencies: ["sprawl-guard==<VERSION>"]
+        always_run: true
+        pass_filenames: false
+```
+
+  </TabItem>
+  <TabItem label="Cargo">
+
+The hook runs whichever `sprawl-guard` is on your `PATH`, so install the version that the CI workflow pins:
+
+```sh
+cargo install sprawl-guard --version <VERSION> --locked
+```
+
+When you change the version in CI, run the command again with the new version. To see which
+version you have, run `sprawl-guard --version`.
+
+```yaml title=".pre-commit-config.yaml"
+repos:
+  - repo: local
+    hooks:
+      - id: sprawl-guard
+        name: Sprawl Guard
+        entry: sprawl-guard check
+        language: system
         always_run: true
         pass_filenames: false
 ```
