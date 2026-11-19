@@ -214,7 +214,7 @@ mod tests {
                     tempdir.path(),
                     indoc! {r#"
                         [traversal]
-                        max_file_bytes = 8
+                        max_parsed_code_file_bytes = 8
 
                         [languages.rust]
                         enabled = true
@@ -231,7 +231,7 @@ mod tests {
 
                 assert!(matches!(
                     error,
-                    SprawlError::SourceFileTooLarge { limit: 8, .. }
+                    SprawlError::ParsedCodeFileTooLarge { limit, .. } if limit.into_inner() == 8
                 ));
             }
 

@@ -2,6 +2,8 @@ use std::path::Path;
 
 use toml_edit::DocumentMut;
 
+use crate::config::traversal::{BYTE_LIMIT_KEY, DEPRECATED_BYTE_LIMIT_KEY};
+
 use super::{
     AuthoredConfigPath, ConfigSchemaVersion, LoadOptions, PartialConfig, Result, SprawlError,
     deserialize_config, discover_config, parse_config_value, read_config_text, resolve_config_root,
@@ -59,12 +61,13 @@ pub fn prepare_config_upgrade(options: &LoadOptions) -> Result<Option<PreparedCo
             ConfigUpgrade::Required(migrated)
         }
         ConfigSchemaVersion::V2 => {
+            let has_deprecated_key = has_deprecated_key_v2(&value);
             let partial = deserialize_config::<PartialConfig>(path.as_path(), value)?;
             validate_partial_config(partial)?;
-            if has_current_schema_directive(&contents) {
+            if has_current_schema_directive(&contents) && !has_deprecated_key {
                 ConfigUpgrade::Current
             } else {
-                let migrated = repair_schema_directive(path.as_path(), &contents)?;
+                let migrated = rename_deprecated_keys_v2(path.as_path(), &contents)?;
                 validate_migrated_current_config(path.as_path(), &migrated)?;
                 ConfigUpgrade::Required(migrated)
             }
@@ -88,41 +91,48 @@ fn validate_migrated_current_config(
     validate_partial_config(deserialize_config(path, value)?)
 }
 
-/// Version 1 key renamed in version 2, located by its table path from the document root.
-struct RenamedKeyV1 {
+/// Key renamed in place, located by its table path from the document root.
+struct RenamedKey {
     table: &'static [&'static str],
     from: &'static str,
     to: &'static str,
 }
 
 /// Version 1 keys whose version 2 names differ, outside per-language and per-group tables.
-const RENAMED_ROOT_KEYS_V1: [RenamedKeyV1; 5] = [
-    RenamedKeyV1 {
+const RENAMED_ROOT_KEYS_V1: [RenamedKey; 5] = [
+    RenamedKey {
         table: &["limits"],
         from: DIRECT_FILES_KEY_V1,
         to: DIRECT_FILES_KEY_V2,
     },
-    RenamedKeyV1 {
+    RenamedKey {
         table: &["limits", "max_lines_per_file"],
         from: "included_line_types",
         to: "count_lines",
     },
-    RenamedKeyV1 {
+    RenamedKey {
         table: &["files"],
         from: "exclude",
         to: "extend_exclude",
     },
-    RenamedKeyV1 {
+    RenamedKey {
         table: &["tests"],
         from: "check_path_tests",
         to: "check",
     },
-    RenamedKeyV1 {
+    RenamedKey {
         table: &["traversal"],
         from: "error_policy",
         to: "unreadable_paths",
     },
 ];
+
+/// Version 2 keys that still load under a deprecated name, which `config upgrade` rewrites.
+const DEPRECATED_KEYS_V2: [RenamedKey; 1] = [RenamedKey {
+    table: &["traversal"],
+    from: DEPRECATED_BYTE_LIMIT_KEY,
+    to: BYTE_LIMIT_KEY,
+}];
 
 /// Version 1 name of the per-directory direct-file limit, used at the root, in language groups,
 /// and in path overrides.
@@ -150,11 +160,7 @@ fn migrate_v1_document(path: &Path, contents: &str) -> Result<MigratedAuthoredCo
                 table.remove(key);
             }
         }
-        for renamed in &RENAMED_ROOT_KEYS_V1 {
-            if let Some(table) = table_at(root, renamed.table) {
-                rename_key(table, renamed.from, renamed.to);
-            }
-        }
+        rename_keys(root, &RENAMED_ROOT_KEYS_V1);
         if let Some(line_types) = table_at(root, &["limits", "max_lines_per_file"])
             .and_then(|table| table.get_mut("count_lines"))
         {
@@ -272,8 +278,34 @@ fn drop_implicit_line_type(item: &mut toml_edit::Item) {
     }
 }
 
-fn repair_schema_directive(path: &Path, contents: &str) -> Result<MigratedAuthoredConfigDocument> {
-    rewrite_authored_config(path, contents, |_| {})
+/// Returns whether a version 2 document uses a deprecated key name.
+fn has_deprecated_key_v2(value: &toml::Value) -> bool {
+    DEPRECATED_KEYS_V2.iter().any(|renamed| {
+        renamed
+            .table
+            .iter()
+            .try_fold(value, |value, key| value.get(key))
+            .is_some_and(|table| table.get(renamed.from).is_some())
+    })
+}
+
+/// Rewrites a version 2 document's deprecated keys and schema directive to their current form.
+fn rename_deprecated_keys_v2(
+    path: &Path,
+    contents: &str,
+) -> Result<MigratedAuthoredConfigDocument> {
+    rewrite_authored_config(path, contents, |document| {
+        rename_keys(document.as_table_mut(), &DEPRECATED_KEYS_V2);
+    })
+}
+
+/// Renames each key whose table exists, as [`rename_key`] does.
+fn rename_keys(root: &mut dyn toml_edit::TableLike, keys: &[RenamedKey]) {
+    for renamed in keys {
+        if let Some(table) = table_at(root, renamed.table) {
+            rename_key(table, renamed.from, renamed.to);
+        }
+    }
 }
 
 fn rewrite_authored_config(

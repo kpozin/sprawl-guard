@@ -15,7 +15,7 @@ exclude = ["BUILD.bazel"]
 [dependencies]
 globset.workspace = true
 ignore.workspace = true
-nutype = { workspace = true, features = ["serde"] }
+nutype = { workspace = true, features = ["derive_unchecked", "serde"] }
 proc-macro2.workspace = true
 rayon.workspace = true
 schemars.workspace = true

@@ -602,6 +602,56 @@ mod upgrade {
             assert_eq!(stderr(&output), "");
         }
 
+        mod when_a_current_config_uses_a_deprecated_key {
+            use super::*;
+
+            fn source() -> String {
+                format!(
+                    "{CURRENT_DIRECTIVE}schema_version = 2\n\n[traversal]\n\
+                     # Generated fixtures stay small.\nmax_file_bytes = 4096\n"
+                )
+            }
+
+            #[test]
+            fn check_reports_the_upgrade_without_changing_the_file() {
+                let root = TempDir::new().unwrap();
+                write_file(&root, "sprawl-guard.toml", &source());
+
+                let output = sprawl_guard(&root)
+                    .args(["config", "upgrade", "--check"])
+                    .output()
+                    .unwrap();
+
+                assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+                assert_eq!(read_config(&root), source());
+            }
+
+            #[test]
+            fn upgrade_renames_the_key_and_keeps_its_comment() {
+                let root = TempDir::new().unwrap();
+                write_file(&root, "sprawl-guard.toml", &source());
+
+                let output = sprawl_guard(&root)
+                    .args(["config", "upgrade", "--write"])
+                    .output()
+                    .unwrap();
+
+                assert_exit_code(&output, exit_codes::SUCCESS);
+                assert_eq!(
+                    read_config(&root),
+                    source().replace("max_file_bytes", "max_parsed_code_file_bytes")
+                );
+            }
+
+            #[test]
+            fn upgrade_rejects_both_names_without_changing_the_file() {
+                assert_upgrade_rejects_config(
+                    &format!("{}max_parsed_code_file_bytes = 8192\n", source()),
+                    "duplicate field `max_parsed_code_file_bytes`",
+                );
+            }
+        }
+
         fn assert_upgrade_rejects_config(source: &str, expected_error: &str) {
             let root = TempDir::new().unwrap();
             write_file(&root, "sprawl-guard.toml", source);

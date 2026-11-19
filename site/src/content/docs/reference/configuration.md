@@ -92,16 +92,21 @@ instead of reading rules from the link's target.
 
 ### `[traversal]`
 
-| Field              | Type and default             | Meaning                                                     |
-| ------------------ | ---------------------------- | ----------------------------------------------------------- |
-| `follow_symlinks`  | enum, `"none"`               | `none`, `files`, `directories`, or `files-and-directories`. |
-| `same_file_system` | boolean, `true`              | Stay on the root's filesystem.                              |
-| `max_entries`      | positive integer, `1000000`  | Maximum visited filesystem entries.                         |
-| `max_file_bytes`   | positive integer, `10485760` | Largest source file Sprawl Guard reads.                     |
-| `unreadable_paths` | enum, `"fail"`               | `fail` or `warn` for unreadable paths below the root.       |
+| Field                        | Type and default             | Meaning                                                     |
+| ---------------------------- | ---------------------------- | ----------------------------------------------------------- |
+| `follow_symlinks`            | enum, `"none"`               | `none`, `files`, `directories`, or `files-and-directories`. |
+| `same_file_system`           | boolean, `true`              | Stay on the root's filesystem.                              |
+| `max_entries`                | positive integer, `1000000`  | Maximum visited filesystem entries.                         |
+| `max_parsed_code_file_bytes` | positive integer, `10485760` | Largest source file whose code lines Sprawl Guard counts.   |
+| `unreadable_paths`           | enum, `"fail"`               | `fail` or `warn` for unreadable paths below the root.       |
 
-A source file larger than `max_file_bytes` stops the command with exit code `2`. Exclude large
-generated files instead of raising the limit.
+A source file larger than `max_parsed_code_file_bytes` stops the command with exit code `2`. Exclude
+large generated files instead of raising the limit.
+
+`max_file_bytes` is a deprecated name for `max_parsed_code_file_bytes` and still loads. Run
+`sprawl-guard config upgrade --write` to rename it; setting both names is an error. The
+configuration schema accepts the old name and marks it as deprecated, so editors that use the schema
+show a warning.
 
 ### `[files]`
 

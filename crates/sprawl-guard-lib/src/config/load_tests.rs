@@ -8,7 +8,7 @@ use tokei::LanguageType;
 
 use super::*;
 use crate::config::{
-    ConfigSchemaVersion, LanguageConfig, SourceFileByteLimit, SymlinkTraversal,
+    ConfigSchemaVersion, LanguageConfig, ParsedCodeFileByteLimit, SymlinkTraversal,
     TraversalEntryLimit, UnreadablePathPolicy,
 };
 use crate::{
@@ -565,7 +565,7 @@ mod when_traversal_config_is_partial {
                 follow_symlinks = "files-and-directories"
                 same_file_system = false
                 max_entries = 1234
-                max_file_bytes = 4096
+                max_parsed_code_file_bytes = 4096
                 unreadable_paths = "warn"
             "#},
         )
@@ -583,13 +583,46 @@ mod when_traversal_config_is_partial {
             TraversalEntryLimit::new(1234).unwrap()
         );
         assert_eq!(
-            loaded.config.traversal.max_file_bytes,
-            SourceFileByteLimit::new(4096).unwrap()
+            loaded.config.traversal.max_parsed_code_file_bytes,
+            ParsedCodeFileByteLimit::try_new(4096).unwrap()
         );
         assert_eq!(
             loaded.config.traversal.unreadable_paths,
             UnreadablePathPolicy::Warn
         );
+    }
+
+    mod when_the_parsed_code_byte_limit_uses_its_deprecated_name {
+        use super::*;
+
+        #[test]
+        fn it_loads_the_limit() {
+            let tempdir = tempfile::tempdir().unwrap();
+            fs::write(
+                tempdir.path().join(PRIMARY_CONFIG_FILE),
+                "[traversal]\nmax_file_bytes = 4096\n",
+            )
+            .unwrap();
+
+            let loaded = load_config_fixture(tempdir.path()).unwrap();
+
+            assert_eq!(
+                loaded.config.traversal.max_parsed_code_file_bytes,
+                ParsedCodeFileByteLimit::try_new(4096).unwrap()
+            );
+        }
+
+        #[test]
+        fn the_schema_accepts_it_as_deprecated() {
+            let schema = serde_json::to_value(super::super::authored_config_json_schema()).unwrap();
+            let properties = &schema["definitions"]["PartialTraversalConfig"]["properties"];
+
+            assert_eq!(properties["max_file_bytes"]["deprecated"], true);
+            assert_eq!(
+                properties["max_file_bytes"]["anyOf"],
+                properties["max_parsed_code_file_bytes"]["anyOf"]
+            );
+        }
     }
 }
 
@@ -931,9 +964,9 @@ mod when_config_values_are_invalid {
         assert_config_error_contains(
             indoc! {r#"
                 [traversal]
-                max_file_bytes = 0
+                max_parsed_code_file_bytes = 0
             "#},
-            "traversal max_file_bytes must be greater than zero",
+            "traversal max_parsed_code_file_bytes must be greater than zero",
         );
     }
 

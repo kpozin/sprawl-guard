@@ -11,7 +11,7 @@ use crate::resolved_limits::LimitResolver;
 use crate::rust_cfg::{
     RustCfgTestInfo, RustCfgTestStatus, preprocess_rust_cfg_test, rust_cfg_test_policy_info,
 };
-use crate::source_file::{ensure_source_file_size, read_source_to_string};
+use crate::source_file::{ensure_parsed_code_file_size, read_source_to_string};
 use crate::value::path::resolve_root;
 use crate::{CountLines, CountedLines, LineLimit, RelativePath, Result, SprawlError};
 
@@ -368,7 +368,7 @@ fn count_source(
     absolute_path: &Path,
     count_lines: CountLines,
 ) -> Result<CountedSource> {
-    ensure_source_file_size(absolute_path, config.traversal.max_file_bytes)?;
+    ensure_parsed_code_file_size(absolute_path, config.traversal.max_parsed_code_file_bytes)?;
     let Some(preprocess_info) = rust_cfg_test_policy_info(config, source) else {
         return Ok(CountedSource {
             measurement: normalize_measurement(
@@ -394,7 +394,8 @@ fn count_source(
         });
     }
 
-    let source_text = read_source_to_string(absolute_path, config.traversal.max_file_bytes)?;
+    let source_text =
+        read_source_to_string(absolute_path, config.traversal.max_parsed_code_file_bytes)?;
     let result = preprocess_rust_cfg_test(&source_text);
     let measurement = normalize_measurement(
         absolute_path,

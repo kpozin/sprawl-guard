@@ -3,19 +3,21 @@
 use std::fs;
 use std::path::Path;
 
-use crate::config::SourceFileByteLimit;
+use crate::config::ParsedCodeFileByteLimit;
 use crate::{Result, SprawlError};
 
-/// Ensures a source file is below the configured byte-size limit before content reads.
-pub(crate) fn ensure_source_file_size(path: &Path, limit: SourceFileByteLimit) -> Result<()> {
+/// Ensures a source file is within `traversal.max_parsed_code_file_bytes` before it is read.
+pub(crate) fn ensure_parsed_code_file_size(
+    path: &Path,
+    limit: ParsedCodeFileByteLimit,
+) -> Result<()> {
     let metadata = fs::metadata(path).map_err(|source| SprawlError::ReadFileType {
         path: path.to_path_buf(),
         source,
     })?;
     let size = metadata.len();
-    let limit = limit.get();
-    if size > limit {
-        return Err(SprawlError::SourceFileTooLarge {
+    if size > limit.into_inner() {
+        return Err(SprawlError::ParsedCodeFileTooLarge {
             path: path.to_path_buf(),
             size,
             limit,
@@ -24,9 +26,9 @@ pub(crate) fn ensure_source_file_size(path: &Path, limit: SourceFileByteLimit) -
     Ok(())
 }
 
-/// Reads a source file after applying the shared source byte-size guard.
-pub(crate) fn read_source_to_string(path: &Path, limit: SourceFileByteLimit) -> Result<String> {
-    ensure_source_file_size(path, limit)?;
+/// Reads a source file after checking it against `traversal.max_parsed_code_file_bytes`.
+pub(crate) fn read_source_to_string(path: &Path, limit: ParsedCodeFileByteLimit) -> Result<String> {
+    ensure_parsed_code_file_size(path, limit)?;
     fs::read_to_string(path).map_err(|source| SprawlError::ReadSource {
         path: path.to_path_buf(),
         source,

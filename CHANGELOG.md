@@ -18,6 +18,9 @@ All notable changes to `sprawl-guard` will be documented in this file.
 ### Changed
 
 - Human output headings show their group's total, as in `Files over the line limit (3):`.
+- `[traversal].max_file_bytes` is now `[traversal].max_parsed_code_file_bytes`, since it limits only
+  the files whose code lines are counted. The old name still loads; `config upgrade --check` reports
+  it and `config upgrade --write` renames it.
 
 ## [0.6.0-beta.1] - 2026-11-18
 

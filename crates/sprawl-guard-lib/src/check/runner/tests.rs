@@ -301,7 +301,7 @@ mod when_source_exceeds_the_byte_size_limit {
             tempdir.path(),
             indoc! {r#"
                 [traversal]
-                max_file_bytes = 8
+                max_parsed_code_file_bytes = 8
 
                 [languages.rust]
                 enabled = true
@@ -313,7 +313,7 @@ mod when_source_exceeds_the_byte_size_limit {
 
         assert!(matches!(
             error,
-            crate::SprawlError::SourceFileTooLarge { limit: 8, .. }
+            crate::SprawlError::ParsedCodeFileTooLarge { limit, .. } if limit.into_inner() == 8
         ));
     }
 
@@ -324,7 +324,7 @@ mod when_source_exceeds_the_byte_size_limit {
             tempdir.path(),
             indoc! {r#"
                 [traversal]
-                max_file_bytes = 10
+                max_parsed_code_file_bytes = 10
 
                 [languages.rust]
                 enabled = true

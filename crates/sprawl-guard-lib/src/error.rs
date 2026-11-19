@@ -238,15 +238,17 @@ pub enum SprawlError {
         /// Configured entry limit.
         limit: u32,
     },
-    /// A source file exceeded the configured byte-size limit.
-    #[error("source {path} is too large to count: {size} bytes exceeds limit {limit}")]
-    SourceFileTooLarge {
+    /// A source file was too large for its code lines to be parsed and counted.
+    #[error(
+        "source {path} is too large to count: {size} bytes exceeds traversal.max_parsed_code_file_bytes ({limit})"
+    )]
+    ParsedCodeFileTooLarge {
         /// Source file path.
         path: PathBuf,
         /// File size in bytes.
         size: u64,
-        /// Configured byte-size limit.
-        limit: u64,
+        /// Configured `traversal.max_parsed_code_file_bytes`.
+        limit: crate::config::ParsedCodeFileByteLimit,
     },
     /// A path matched more than one enabled language.
     #[error(

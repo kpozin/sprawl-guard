@@ -1,8 +1,8 @@
 use crate::config::{
     CommonLanguageConfig, Config, ConfigSchemaVersion, FilesConfig, IgnoreConfig, LanguageConfig,
     LanguageGroupsConfig, LanguageLimits, LanguageMode, Limits, MaxDirectFilesPerDirectoryLimits,
-    MaxLinesPerFileLimits, OutputConfig, OutputFormat, RatchetConfig, RustCfgTestExclusion,
-    RustLanguageConfig, SourceFileByteLimit, SymlinkTraversal, TestsConfig, TraversalConfig,
+    MaxLinesPerFileLimits, OutputConfig, OutputFormat, ParsedCodeFileByteLimit, RatchetConfig,
+    RustCfgTestExclusion, RustLanguageConfig, SymlinkTraversal, TestsConfig, TraversalConfig,
     TraversalEntryLimit, UnreadablePathPolicy,
 };
 use crate::{
@@ -15,7 +15,11 @@ const DEFAULT_MAX_NON_TEST_CODE_LINES_PER_FILE: u32 = 400;
 const DEFAULT_MAX_DIRECT_FILES_PER_DIRECTORY: u32 = 10;
 const DEFAULT_MAX_CODE_LINES_PER_TEST_FILE: u32 = 800;
 const DEFAULT_MAX_TRAVERSAL_ENTRIES: u32 = 1_000_000;
-const DEFAULT_MAX_SOURCE_FILE_BYTES: u64 = 10 * 1024 * 1024;
+const DEFAULT_MAX_PARSED_CODE_FILE_BYTES: ParsedCodeFileByteLimit =
+    match ParsedCodeFileByteLimit::try_new(10 * 1024 * 1024) {
+        Ok(limit) => limit,
+        Err(_) => panic!("the default parsed-code file byte limit is positive"),
+    };
 /// Enough findings to show the shape of a problem while keeping the summary on screen.
 const DEFAULT_MAX_FINDINGS: u32 = 50;
 // GitHub's code-review exclusions provide the baseline `*.lock` and `go.sum` excludes:
@@ -64,7 +68,7 @@ pub fn built_in_config() -> Config {
             follow_symlinks: SymlinkTraversal::None,
             same_file_system: true,
             max_entries: TraversalEntryLimit::trusted(DEFAULT_MAX_TRAVERSAL_ENTRIES),
-            max_file_bytes: SourceFileByteLimit::trusted(DEFAULT_MAX_SOURCE_FILE_BYTES),
+            max_parsed_code_file_bytes: DEFAULT_MAX_PARSED_CODE_FILE_BYTES,
             unreadable_paths: UnreadablePathPolicy::Fail,
         },
         files: FilesConfig {

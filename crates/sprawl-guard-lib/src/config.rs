@@ -42,7 +42,7 @@ pub use ratchet::RatchetConfig;
 pub use schema::ConfigSchemaVersion;
 pub use tests::TestsConfig;
 pub use traversal::{
-    SourceFileByteLimit, SourceFileByteLimitError, SymlinkTraversal, TraversalConfig,
+    ParsedCodeFileByteLimit, ParsedCodeFileByteLimitError, SymlinkTraversal, TraversalConfig,
     TraversalEntryLimit, TraversalEntryLimitError, UnreadablePathPolicy,
 };
 pub use types::{AuthoredConfigPath, Config, ConfigSource, ResolvedConfig};

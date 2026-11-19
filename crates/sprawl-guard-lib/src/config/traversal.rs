@@ -1,5 +1,7 @@
 use std::fmt;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU32;
+
+use nutype::nutype;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -16,8 +18,8 @@ pub struct TraversalConfig {
     pub same_file_system: bool,
     /// Maximum number of filesystem entries yielded during source discovery.
     pub max_entries: TraversalEntryLimit,
-    /// Maximum byte size for a source file before line counting.
-    pub max_file_bytes: SourceFileByteLimit,
+    /// Largest source file, in bytes, whose code lines are parsed and counted.
+    pub max_parsed_code_file_bytes: ParsedCodeFileByteLimit,
     /// How unreadable paths below the root affect `check`.
     pub unreadable_paths: UnreadablePathPolicy,
 }
@@ -124,55 +126,62 @@ where
     constructor(u32::deserialize(deserializer)?).map_err(serde::de::Error::custom)
 }
 
-/// Error returned when a source file byte limit is invalid.
+/// Error returned when a parsed-code file byte limit is invalid.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-pub enum SourceFileByteLimitError {
-    /// Source file byte limit must allow non-empty files.
-    #[error("traversal max_file_bytes must be greater than zero")]
+pub enum ParsedCodeFileByteLimitError {
+    /// The limit must allow non-empty files.
+    #[error("traversal max_parsed_code_file_bytes must be greater than zero")]
     Zero,
 }
 
-/// Maximum source file size in bytes before line counting.
-#[derive(Clone, Copy, Debug, Eq, Ord, JsonSchema, PartialEq, PartialOrd, Hash, Serialize)]
-#[serde(transparent)]
-pub struct SourceFileByteLimit(NonZeroU64);
-
-impl SourceFileByteLimit {
-    /// Creates a source file byte limit.
-    pub fn new(value: u64) -> Result<Self, SourceFileByteLimitError> {
-        let Some(value) = NonZeroU64::new(value) else {
-            return Err(SourceFileByteLimitError::Zero);
-        };
-        Ok(Self(value))
-    }
-
-    /// Creates a source file byte limit from a trusted built-in value.
-    pub(crate) const fn trusted(value: u64) -> Self {
-        let Some(value) = NonZeroU64::new(value) else {
-            panic!("trusted source file byte limit must be greater than zero");
-        };
-        Self(value)
-    }
-
-    /// Returns the raw byte limit.
-    pub const fn get(self) -> u64 {
-        self.0.get()
+const fn validate_parsed_code_file_byte_limit(
+    value: &u64,
+) -> Result<(), ParsedCodeFileByteLimitError> {
+    if *value == 0 {
+        Err(ParsedCodeFileByteLimitError::Zero)
+    } else {
+        Ok(())
     }
 }
 
-impl fmt::Display for SourceFileByteLimit {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.get().fmt(formatter)
-    }
-}
+/// Largest file, in bytes, whose code lines are parsed and counted.
+#[nutype(
+    const_fn,
+    validate(with = validate_parsed_code_file_byte_limit, error = ParsedCodeFileByteLimitError),
+    derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Hash, Display, Serialize, Deserialize),
+    derive_unchecked(JsonSchema),
+)]
+pub struct ParsedCodeFileByteLimit(#[schemars(range(min = 1))] u64);
 
-impl<'de> Deserialize<'de> for SourceFileByteLimit {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Self::new(u64::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+/// Key of the parsed-code file byte limit in `[traversal]`.
+pub(super) const BYTE_LIMIT_KEY: &str = "max_parsed_code_file_bytes";
+
+/// Former name of [`BYTE_LIMIT_KEY`], still accepted on load.
+pub(super) const DEPRECATED_BYTE_LIMIT_KEY: &str = "max_file_bytes";
+
+/// Lists the deprecated byte-limit name in the schema, so schema validation accepts
+/// what the loader accepts and editors mark the old name as deprecated.
+///
+/// The serde alias alone is invisible to schemars.
+fn add_deprecated_byte_limit_name(schema: &mut schemars::Schema) {
+    let Some(properties) = schema
+        .get_mut("properties")
+        .and_then(|properties| properties.as_object_mut())
+    else {
+        return;
+    };
+    let Some(mut deprecated) = properties.get(BYTE_LIMIT_KEY).cloned() else {
+        return;
+    };
+    if let Some(property) = deprecated.as_object_mut() {
+        property.insert("deprecated".to_owned(), true.into());
+        property.insert(
+            "description".to_owned(),
+            "Deprecated name of `max_parsed_code_file_bytes`. Run `sprawl-guard config upgrade` to rename it."
+                .into(),
+        );
     }
+    properties.insert(DEPRECATED_BYTE_LIMIT_KEY.to_owned(), deprecated);
 }
 
 pub(super) fn merge_traversal(config: &mut TraversalConfig, partial: PartialTraversalConfig) {
@@ -185,8 +194,8 @@ pub(super) fn merge_traversal(config: &mut TraversalConfig, partial: PartialTrav
     if let Some(value) = partial.max_entries {
         config.max_entries = value;
     }
-    if let Some(value) = partial.max_file_bytes {
-        config.max_file_bytes = value;
+    if let Some(value) = partial.max_parsed_code_file_bytes {
+        config.max_parsed_code_file_bytes = value;
     }
     if let Some(value) = partial.unreadable_paths {
         config.unreadable_paths = value;
@@ -195,10 +204,13 @@ pub(super) fn merge_traversal(config: &mut TraversalConfig, partial: PartialTrav
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(transform = add_deprecated_byte_limit_name)]
 pub(super) struct PartialTraversalConfig {
     pub(super) follow_symlinks: Option<SymlinkTraversal>,
     pub(super) same_file_system: Option<bool>,
     pub(super) max_entries: Option<TraversalEntryLimit>,
-    pub(super) max_file_bytes: Option<SourceFileByteLimit>,
+    /// Largest source file, in bytes, whose code lines are parsed and counted.
+    #[serde(alias = "max_file_bytes")]
+    pub(super) max_parsed_code_file_bytes: Option<ParsedCodeFileByteLimit>,
     pub(super) unreadable_paths: Option<UnreadablePathPolicy>,
 }
