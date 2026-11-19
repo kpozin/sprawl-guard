@@ -130,6 +130,9 @@ fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcom
         Some(format) => format,
         None => check_format_from_config(&loaded.config.output.format),
     };
+    let max_findings = args
+        .max_findings
+        .unwrap_or(loaded.config.output.max_findings);
     let report = match run_check(CheckOptions {
         root: load_options.root.clone(),
         policy,
@@ -149,6 +152,7 @@ fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcom
                     &root,
                     &config_source,
                     &unreadable_paths,
+                    max_findings,
                 ),
             ));
         }
@@ -163,6 +167,7 @@ fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcom
                     &root,
                     &config_source,
                     &unreadable_paths,
+                    max_findings,
                 ),
             ));
         }
@@ -184,7 +189,7 @@ fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcom
     };
     Ok(CommandOutcome::new(
         if report.has_violations() { 1 } else { 0 },
-        check_output::render_check_report(&report, format, quiet)?,
+        check_output::render_check_report(&report, format, quiet, max_findings)?,
         String::new(),
     ))
 }

@@ -6,6 +6,7 @@ use super::common::*;
 
 mod github;
 mod ignore;
+mod max_findings;
 
 mod when_a_check_succeeds {
     use super::*;

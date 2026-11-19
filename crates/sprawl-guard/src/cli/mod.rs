@@ -13,8 +13,8 @@ mod schema;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use sprawl_guard_lib::UnreadablePathPolicy;
 use sprawl_guard_lib::config::LoadOptions;
+use sprawl_guard_lib::{FiniteOrUnlimited, MaxFindings, UnreadablePathPolicy};
 
 use crate::error::{CliError, Result};
 
@@ -114,6 +114,12 @@ struct CheckArgs {
     /// Output format. Defaults to `[output].format` in the configuration, or `human`.
     #[arg(long)]
     format: Option<CheckFormat>,
+
+    /// Most findings the human report lists, or `unlimited`. Group totals and the exit status
+    /// always cover every finding, and JSON and SARIF output list them all. Defaults to
+    /// `[output].max_findings` in the configuration, or 50.
+    #[arg(long, value_name = "N|unlimited")]
+    max_findings: Option<FiniteOrUnlimited<MaxFindings>>,
 
     /// Fail when the ratchet file has stale entries. This is the default.
     #[arg(long, conflicts_with = "no_require_ratchet_current")]

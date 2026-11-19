@@ -181,6 +181,14 @@
           ]
         },
         {
+          "id": "max_findings",
+          "syntax": "--max-findings <N|unlimited>",
+          "help": "Most findings the human report lists, or `unlimited`. Group totals and the exit status always cover every finding, and JSON and SARIF output list them all. Defaults to `[output].max_findings` in the configuration, or 50",
+          "conflicts_with": [],
+          "default_values": [],
+          "possible_values": []
+        },
+        {
           "id": "require_ratchet_current",
           "syntax": "--require-ratchet-current",
           "help": "Fail when the ratchet file has stale entries. This is the default",

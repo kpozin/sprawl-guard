@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::fmt;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, ParseIntError};
+use std::str::FromStr;
 
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -52,6 +53,22 @@ where
         match self {
             Self::Finite(value) => Some(value),
             Self::Unlimited => None,
+        }
+    }
+}
+
+/// Parses command-line text: `unlimited`, or whatever the finite value accepts.
+impl<Value> FromStr for FiniteOrUnlimited<Value>
+where
+    Value: FromStr,
+{
+    type Err = Value::Err;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text == "unlimited" {
+            Ok(Self::Unlimited)
+        } else {
+            text.parse().map(Self::Finite)
         }
     }
 }
@@ -126,6 +143,8 @@ pub enum LimitValueKind {
     Lines,
     /// Maximum count of direct files.
     DirectFiles,
+    /// Maximum count of findings listed in a report.
+    Findings,
 }
 
 impl fmt::Display for LimitValueKind {
@@ -133,6 +152,7 @@ impl fmt::Display for LimitValueKind {
         match self {
             Self::Lines => formatter.write_str("line limit"),
             Self::DirectFiles => formatter.write_str("leaf-file count"),
+            Self::Findings => formatter.write_str("finding cap"),
         }
     }
 }
@@ -227,5 +247,113 @@ impl<'de> Deserialize<'de> for DirectFiles {
         D: Deserializer<'de>,
     {
         Self::new(u32::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Positive number of findings that the human report lists.
+///
+/// Findings past this number are counted in their group's total but not listed, so a large run
+/// keeps its summary in view.
+#[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize)]
+#[serde(transparent)]
+pub struct MaxFindings(NonZeroU32);
+
+impl MaxFindings {
+    /// Creates a finding cap.
+    pub fn new(value: u32) -> Result<Self, LimitValueError> {
+        NonZeroU32::new(value)
+            .map(Self)
+            .ok_or(LimitValueError::Zero {
+                kind: LimitValueKind::Findings,
+            })
+    }
+
+    /// Creates a finding cap from a trusted built-in value.
+    pub(crate) const fn trusted(value: u32) -> Self {
+        let Some(value) = NonZeroU32::new(value) else {
+            panic!("trusted finding cap must be greater than zero");
+        };
+        Self(value)
+    }
+
+    /// Returns the raw count.
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for MaxFindings {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.get().fmt(formatter)
+    }
+}
+
+impl<'de> Deserialize<'de> for MaxFindings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::new(u32::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Error returned when command-line text is not a valid finding cap.
+#[derive(Debug, Eq, PartialEq, thiserror::Error)]
+pub enum ParseMaxFindingsError {
+    /// The text is not a non-negative integer that fits in 32 bits.
+    #[error("expected a positive integer or \"unlimited\"")]
+    NotAnInteger(#[source] ParseIntError),
+    /// The text is zero.
+    #[error(transparent)]
+    Invalid(#[from] LimitValueError),
+}
+
+impl FromStr for MaxFindings {
+    type Err = ParseMaxFindingsError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let value = text.parse().map_err(ParseMaxFindingsError::NotAnInteger)?;
+        Ok(Self::new(value)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod when_parsing_command_line_text {
+        use super::*;
+
+        #[test]
+        fn it_accepts_a_positive_integer() {
+            assert_eq!(
+                "20".parse::<FiniteOrUnlimited<MaxFindings>>(),
+                Ok(FiniteOrUnlimited::Finite(MaxFindings::trusted(20)))
+            );
+        }
+
+        #[test]
+        fn it_accepts_unlimited() {
+            assert_eq!(
+                "unlimited".parse::<FiniteOrUnlimited<MaxFindings>>(),
+                Ok(FiniteOrUnlimited::Unlimited)
+            );
+        }
+
+        #[test]
+        fn it_rejects_zero() {
+            assert_eq!(
+                "0".parse::<MaxFindings>().unwrap_err().to_string(),
+                "finding cap must be greater than zero"
+            );
+        }
+
+        #[test]
+        fn it_rejects_other_text() {
+            assert_eq!(
+                "all".parse::<MaxFindings>().unwrap_err().to_string(),
+                "expected a positive integer or \"unlimited\""
+            );
+        }
     }
 }

@@ -6,7 +6,8 @@ use crate::config::{
     TraversalEntryLimit, UnreadablePathPolicy,
 };
 use crate::{
-    CountLines, DirectFileLimit, DirectFiles, GlobPattern, LanguageId, LineLimit, RatchetFilePath,
+    CountLines, DirectFileLimit, DirectFiles, FiniteOrUnlimited, GlobPattern, LanguageId,
+    LineLimit, MaxFindings, RatchetFilePath,
 };
 use tokei::LanguageType;
 
@@ -15,6 +16,8 @@ const DEFAULT_MAX_DIRECT_FILES_PER_DIRECTORY: u32 = 10;
 const DEFAULT_MAX_CODE_LINES_PER_TEST_FILE: u32 = 800;
 const DEFAULT_MAX_TRAVERSAL_ENTRIES: u32 = 1_000_000;
 const DEFAULT_MAX_SOURCE_FILE_BYTES: u64 = 10 * 1024 * 1024;
+/// Enough findings to show the shape of a problem while keeping the summary on screen.
+const DEFAULT_MAX_FINDINGS: u32 = 50;
 // GitHub's code-review exclusions provide the baseline `*.lock` and `go.sum` excludes:
 // https://docs.github.com/en/copilot/reference/review-excluded-files
 // Exact names cover common lockfiles whose names do not end in `.lock`.
@@ -95,6 +98,7 @@ pub fn built_in_config() -> Config {
         },
         output: OutputConfig {
             format: OutputFormat::Human,
+            max_findings: FiniteOrUnlimited::Finite(MaxFindings::trusted(DEFAULT_MAX_FINDINGS)),
         },
     }
 }

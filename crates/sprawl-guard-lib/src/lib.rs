@@ -45,6 +45,7 @@ pub use value::language::{LanguageId, LanguageIdError};
 pub use value::language_group::{CustomLanguageGroupId, LanguageGroupId, LanguageGroupIdError};
 pub use value::limits::{
     DirectFileLimit, DirectFiles, FiniteOrUnlimited, LimitValueError, LimitValueKind, LineLimit,
+    MaxFindings, ParseMaxFindingsError,
 };
 pub use value::line_types::{
     CountLines, CountLinesError, CountedLines, ExtraLineType, LineCount, LineCountOverflow,

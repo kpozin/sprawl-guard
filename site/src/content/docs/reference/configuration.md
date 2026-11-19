@@ -224,12 +224,20 @@ themselves live in the ratchet file. See
 
 ### `[output]`
 
-| Field    | Type and default | Meaning                                |
-| -------- | ---------------- | -------------------------------------- |
-| `format` | enum, `"human"`  | `human`, `json`, `sarif`, or `github`. |
+| Field          | Type and default                      | Meaning                                                       |
+| -------------- | ------------------------------------- | ------------------------------------------------------------- |
+| `format`       | enum, `"human"`                       | `human`, `json`, `sarif`, or `github`.                        |
+| `max_findings` | positive integer or `"unlimited"`, 50 | Most findings that human and GitHub output list from `check`. |
 
-Only `check` reads `[output].format`, and `check --format` takes precedence. Other commands default
-to human output.
+Only `check` reads `[output]`. `check --format` and `check --max-findings` take precedence. Other
+commands default to human output.
+
+`max_findings` counts violations first, then warnings, then skipped unreadable paths, so a failing
+check always lists why it failed. It also bounds how many files a directory finding names, and how
+many paths the report lists when unreadable paths stop the check. Findings past the cap still count
+toward their group's total, a footer gives how many findings were shown out of the total, and the
+exit status still reflects every violation. Recorded violations within their ratchet ceilings are
+not findings, so they never count. JSON and SARIF output always list every finding.
 
 ## Precedence
 

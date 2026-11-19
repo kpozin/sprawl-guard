@@ -1,24 +1,33 @@
 mod github;
+mod listing;
 mod sarif;
+mod traversal_failure;
 
 use std::path::Path;
 
 use sprawl_guard_lib::CheckReport;
 use sprawl_guard_lib::check::{
-    CheckErrorKind, CheckViolation, CheckWarning, CheckWarningKind, DirectoryDirectFilesViolation,
-    DirectoryViolationKind, FileLinesViolation, FileViolationKind, RatchetViolation,
-    RatchetViolationKind,
+    CheckViolation, CheckWarning, CheckWarningKind, DirectoryDirectFilesViolation,
+    FileLinesViolation, RatchetViolation, RatchetViolationKind,
 };
-use sprawl_guard_lib::{ConfigSource, UnreadablePath, UnreadablePathKind};
+use sprawl_guard_lib::{
+    ConfigSource, FiniteOrUnlimited, MaxFindings, UnreadablePath, UnreadablePathKind,
+};
 
 use super::{CheckFormat, display_relative};
 use crate::error::{CliError, Result};
+use listing::{FindingListing, ViolationGroup, violations_in_display_order};
+pub(super) use traversal_failure::{
+    render_check_traversal_failure_github, render_check_traversal_failure_human,
+    render_traversal_failure_human, render_traversal_failure_json,
+};
 
 #[cfg(test)]
 fn missing_directory_ratchet(
     group: sprawl_guard_lib::LanguageGroupId,
     ratchet: u32,
 ) -> CheckViolation {
+    use sprawl_guard_lib::check::DirectoryViolationKind;
     use sprawl_guard_lib::{
         DirectoryRatchetStaleMissingViolation, RatchetCount, RatchetStaleMissingViolation,
     };
@@ -33,16 +42,22 @@ fn missing_directory_ratchet(
     ))
 }
 
+/// Tells the reader how to see what the finding cap left out.
+const SEE_ALL_HINT: &str = "Use --max-findings unlimited to see all.";
+
 pub(super) fn render_check_report(
     report: &CheckReport,
     format: CheckFormat,
     quiet: bool,
+    max_findings: FiniteOrUnlimited<MaxFindings>,
 ) -> Result<String> {
+    let listing = FindingListing::new(report, quiet, max_findings);
     match format {
-        CheckFormat::Human => Ok(human_check_report(report, quiet)),
+        CheckFormat::Human => Ok(human_check_report(report, quiet, listing)),
         CheckFormat::Github => Ok(github::github_check_report(
-            &human_check_report(report, quiet),
+            &human_check_report(report, quiet, listing),
             report,
+            listing.violations,
         )),
         CheckFormat::Json => serde_json::to_string_pretty(report)
             .map(|output| format!("{output}\n"))
@@ -53,136 +68,59 @@ pub(super) fn render_check_report(
     }
 }
 
-pub(super) fn traversal_failure_json_value(
-    root: &Path,
-    config_source: &ConfigSource,
-    unreadable_paths: &[UnreadablePath],
-) -> serde_json::Value {
-    serde_json::json!({
-        "status": "error",
-        "root": root.display().to_string(),
-        "config_source": config_source,
-        "coverage": {
-            "kind": "partial",
-            "unreadable_paths": unreadable_paths,
-        },
-        "warnings": [],
-        "error": {
-            "kind": CheckErrorKind::TraversalFailed,
-            "message": format!("could not read {} path(s)", unreadable_paths.len()),
-        },
-        "violations": [],
-    })
-}
-
-pub(super) fn render_traversal_failure_json(
-    root: &Path,
-    config_source: &ConfigSource,
-    unreadable_paths: &[UnreadablePath],
-) -> Result<String> {
-    serde_json::to_string_pretty(&traversal_failure_json_value(
-        root,
-        config_source,
-        unreadable_paths,
-    ))
-    .map(|output| format!("{output}\n"))
-    .map_err(|source| CliError::RenderJson { source })
-}
-
-pub(super) fn render_traversal_failure_human(
-    root: &Path,
-    unreadable_paths: &[UnreadablePath],
-) -> String {
-    traversal_failure_human(root, unreadable_paths)
-}
-
-pub(super) fn render_check_traversal_failure_human(
-    root: &Path,
-    config_source: &ConfigSource,
-    unreadable_paths: &[UnreadablePath],
-) -> String {
-    let mut output = config_source_notice(config_source, root);
-    output.push_str(&traversal_failure_human(root, unreadable_paths));
-    output
-}
-
-/// Renders the traversal failure report for GitHub output, as plain log text on stderr.
-pub(super) fn render_check_traversal_failure_github(
-    root: &Path,
-    config_source: &ConfigSource,
-    unreadable_paths: &[UnreadablePath],
-) -> String {
-    github::plain_log_text(&render_check_traversal_failure_human(
-        root,
-        config_source,
-        unreadable_paths,
-    ))
-}
-
-fn traversal_failure_human(root: &Path, unreadable_paths: &[UnreadablePath]) -> String {
-    let mut output = String::new();
-    output.push_str(&format!(
-        "Could not read {} path(s) under {}:\n\n",
-        unreadable_paths.len(),
-        root.display()
-    ));
-    for unreadable_path in unreadable_paths {
-        output.push_str("  ");
-        output.push_str(&unreadable_path_message(unreadable_path));
-        output.push('\n');
-    }
-    output
-}
-
-fn human_check_report(report: &CheckReport, quiet: bool) -> String {
+fn human_check_report(report: &CheckReport, quiet: bool, listing: FindingListing) -> String {
     let mut output = String::new();
     if quiet && !report.has_violations() {
         return output;
     }
     write_config_source_notice(&mut output, report);
     if !quiet {
-        write_warnings(&mut output, report);
+        write_warnings(&mut output, report, listing.warnings);
     }
-    if !report.has_violations() {
+    if report.has_violations() {
+        write_violation_groups(&mut output, report, listing);
+    } else {
         if report.selected_paths().is_all() {
             output.push_str("No sprawl-guard violations found.\n");
         } else {
             output.push_str("No sprawl-guard violations found in the selected paths.\n");
         }
         write_scan_summary(&mut output, report);
-        write_unreadable_paths(&mut output, report);
-        return output;
     }
-
-    write_violation_group(
-        &mut output,
-        "Files over the line limit:",
-        report,
-        FileViolationKind::FileLines,
-    );
-    write_violation_group(
-        &mut output,
-        "Test files over the line limit:",
-        report,
-        FileViolationKind::TestFileLines,
-    );
-    write_directory_violation_group(
-        &mut output,
-        "Directories with too many direct files:",
-        report,
-        DirectoryViolationKind::DirectoryDirectFiles,
-    );
-    write_directory_violation_group(
-        &mut output,
-        "Test directories with too many direct files:",
-        report,
-        DirectoryViolationKind::TestDirectoryDirectFiles,
-    );
-    write_ratchet_violation_group(&mut output, report);
     if !quiet {
-        write_unreadable_paths(&mut output, report);
+        write_unreadable_paths(&mut output, report, listing.unreadable_paths);
     }
+    write_truncation_footer(&mut output, listing.listed(), listing.total);
     output
+}
+
+/// Says how many findings the report lists, when the cap left some out.
+fn write_truncation_footer(output: &mut String, listed: usize, total: usize) {
+    if listed < total {
+        start_section(output);
+        output.push_str(&format!(
+            "Showing {listed} of {total} findings. {SEE_ALL_HINT}\n"
+        ));
+    }
+}
+
+/// Separates a new section from earlier output with one blank line.
+fn start_section(output: &mut String) {
+    if !output.is_empty() && !output.ends_with("\n\n") {
+        output.push('\n');
+    }
+}
+
+/// Starts a section whose heading shows how many findings it has, listed or not.
+fn write_section_heading(output: &mut String, heading: &str, total: usize) {
+    start_section(output);
+    output.push_str(&format!("{heading} ({total}):\n\n"));
+}
+
+/// Names how many of a section's findings the cap left out, if any.
+fn unlisted_message(total: usize, listed: usize) -> Option<String> {
+    let unlisted = total - listed;
+    (unlisted > 0).then(|| format!("  … and {unlisted} more\n"))
 }
 
 fn write_config_source_notice(output: &mut String, report: &CheckReport) {
@@ -233,16 +171,18 @@ pub(super) fn plural<'word>(count: u32, singular: &'word str, plural: &'word str
     if count == 1 { singular } else { plural }
 }
 
-fn write_warnings(output: &mut String, report: &CheckReport) {
-    if report.warnings().is_empty() {
+fn write_warnings(output: &mut String, report: &CheckReport, listed: usize) {
+    let warnings = report.warnings();
+    if warnings.is_empty() {
         return;
     }
-    output.push_str("Warnings:\n\n");
-    for warning in report.warnings() {
+    write_section_heading(output, "Warnings", warnings.len());
+    for warning in &warnings[..listed] {
         output.push_str("  ");
         output.push_str(&warning_message(warning));
         output.push('\n');
     }
+    output.extend(unlisted_message(warnings.len(), listed));
     output.push('\n');
 }
 
@@ -256,19 +196,18 @@ fn warning_message(warning: &CheckWarning) -> String {
     }
 }
 
-fn write_unreadable_paths(output: &mut String, report: &CheckReport) {
-    if report.unreadable_paths().is_empty() {
+fn write_unreadable_paths(output: &mut String, report: &CheckReport, listed: usize) {
+    let unreadable_paths = report.unreadable_paths();
+    if unreadable_paths.is_empty() {
         return;
     }
-    if !output.is_empty() && !output.ends_with("\n\n") {
-        output.push('\n');
-    }
-    output.push_str("Skipped unreadable paths:\n\n");
-    for unreadable_path in report.unreadable_paths() {
+    write_section_heading(output, "Skipped unreadable paths", unreadable_paths.len());
+    for unreadable_path in &unreadable_paths[..listed] {
         output.push_str("  ");
         output.push_str(&unreadable_path_message(unreadable_path));
         output.push('\n');
     }
+    output.extend(unlisted_message(unreadable_paths.len(), listed));
 }
 
 /// Describes one unreadable path on a single line: what failed, where, and the backend detail.
@@ -297,23 +236,36 @@ fn unreadable_path_kind_message(kind: UnreadablePathKind) -> &'static str {
     }
 }
 
-fn write_violation_group(
-    output: &mut String,
-    header: &str,
-    report: &CheckReport,
-    kind: FileViolationKind,
-) {
-    let violations = report
-        .violations()
-        .iter()
-        .filter_map(|violation| match violation {
-            CheckViolation::FileLines(violation) if violation.kind == kind => Some(violation),
-            CheckViolation::FileLines(_)
-            | CheckViolation::DirectoryDirectFiles(_)
-            | CheckViolation::Ratchet(_) => None,
-        })
-        .collect::<Vec<_>>();
-    write_non_empty_violation_group(output, header, violations, violation_message);
+/// Writes each violation group, listing the violations that `listing` allows in display order.
+fn write_violation_groups(output: &mut String, report: &CheckReport, listing: FindingListing) {
+    let violations = violations_in_display_order(report);
+    let mut remaining = listing.violations;
+    for violations in violations.chunk_by(|a, b| ViolationGroup::of(a) == ViolationGroup::of(b)) {
+        let group = ViolationGroup::of(violations[0]);
+        let listed = violations.len().min(remaining);
+        remaining -= listed;
+        write_section_heading(output, group.heading(), violations.len());
+        for violation in &violations[..listed] {
+            output.push_str(&violation_entry(violation, listing.directory_files));
+        }
+        if let Some(message) = unlisted_message(violations.len(), listed) {
+            output.push_str(&message);
+            output.push('\n');
+        }
+        if group == ViolationGroup::StaleRatchet {
+            output.push_str("Run `sprawl-guard tighten --write` to lower or remove them.\n");
+        }
+    }
+}
+
+fn violation_entry(violation: &CheckViolation, directory_files: usize) -> String {
+    match violation {
+        CheckViolation::FileLines(violation) => violation_message(violation),
+        CheckViolation::DirectoryDirectFiles(violation) => {
+            directory_violation_message(violation, directory_files)
+        }
+        CheckViolation::Ratchet(violation) => ratchet_violation_message(violation),
+    }
 }
 
 fn violation_message(violation: &FileLinesViolation) -> String {
@@ -333,70 +285,6 @@ pub(super) fn ceiling_message(ceiling: Option<impl std::fmt::Display>) -> String
     ceiling
         .map(|ceiling| format!(", ceiling {ceiling}"))
         .unwrap_or_default()
-}
-
-fn write_directory_violation_group(
-    output: &mut String,
-    header: &str,
-    report: &CheckReport,
-    kind: DirectoryViolationKind,
-) {
-    let violations = report
-        .violations()
-        .iter()
-        .filter_map(|violation| match violation {
-            CheckViolation::DirectoryDirectFiles(violation) if violation.kind == kind => {
-                Some(violation)
-            }
-            CheckViolation::DirectoryDirectFiles(_)
-            | CheckViolation::FileLines(_)
-            | CheckViolation::Ratchet(_) => None,
-        })
-        .collect::<Vec<_>>();
-    write_non_empty_violation_group(output, header, violations, directory_violation_message);
-}
-
-fn write_non_empty_violation_group<T>(
-    output: &mut String,
-    header: &str,
-    violations: Vec<&T>,
-    violation_message: impl Fn(&T) -> String,
-) {
-    if violations.is_empty() {
-        return;
-    }
-
-    if !output.is_empty() && !output.ends_with("\n\n") {
-        output.push('\n');
-    }
-    output.push_str(header);
-    output.push_str("\n\n");
-    for violation in violations {
-        output.push_str(&violation_message(violation));
-    }
-}
-
-fn write_ratchet_violation_group(output: &mut String, report: &CheckReport) {
-    let violations = report
-        .violations()
-        .iter()
-        .filter_map(|violation| match violation {
-            CheckViolation::Ratchet(violation) => Some(violation),
-            CheckViolation::FileLines(_) | CheckViolation::DirectoryDirectFiles(_) => None,
-        })
-        .collect::<Vec<_>>();
-    if violations.is_empty() {
-        return;
-    }
-
-    if !output.is_empty() && !output.ends_with("\n\n") {
-        output.push('\n');
-    }
-    output.push_str("Stale ratchet entries:\n\n");
-    for violation in violations {
-        output.push_str(&ratchet_violation_message(violation));
-    }
-    output.push_str("Run `sprawl-guard tighten --write` to lower or remove them.\n");
 }
 
 fn ratchet_violation_message(violation: &RatchetViolation) -> String {
@@ -434,14 +322,25 @@ fn ratchet_kind_message(kind: RatchetViolationKind) -> (&'static str, &'static s
     }
 }
 
-fn directory_violation_message(violation: &DirectoryDirectFilesViolation) -> String {
+/// Describes a directory with too many direct files, naming up to `listed_files` of them.
+fn directory_violation_message(
+    violation: &DirectoryDirectFilesViolation,
+    listed_files: usize,
+) -> String {
     let files = violation
         .files
         .iter()
+        .take(listed_files)
         .map(|file| format!("    {}\n", display_relative(file.as_str())))
         .collect::<String>();
+    let unlisted = violation.files.len().saturating_sub(listed_files);
+    let unlisted = if unlisted > 0 {
+        format!("    … and {unlisted} more. {SEE_ALL_HINT}\n")
+    } else {
+        String::new()
+    };
     format!(
-        "  {}: {} direct files (limit {}{}, group: {})\n{files}\n",
+        "  {}: {} direct files (limit {}{}, group: {})\n{files}{unlisted}\n",
         display_relative(violation.path.as_str()),
         violation.actual,
         violation.limit,
@@ -454,6 +353,7 @@ fn directory_violation_message(violation: &DirectoryDirectFilesViolation) -> Str
 mod tests {
     use indoc::indoc;
     use serde_json::json;
+    use sprawl_guard_lib::check::FileViolationKind;
     use sprawl_guard_lib::{
         CheckViolation, CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
         DetectedLanguageCount, DiagnosticDetail, DirectFiles, DirectoryDirectFilesViolation,
@@ -465,6 +365,19 @@ mod tests {
     };
 
     use super::*;
+
+    /// Renders the human report under `max_findings`, as `render_check_report` does.
+    fn render_human(
+        report: &CheckReport,
+        quiet: bool,
+        max_findings: FiniteOrUnlimited<MaxFindings>,
+    ) -> String {
+        human_check_report(
+            report,
+            quiet,
+            FindingListing::new(report, quiet, max_findings),
+        )
+    }
 
     fn report_root() -> sprawl_guard_lib::ReportRoot {
         sprawl_guard_lib::ReportRoot::trusted("/repo")
@@ -567,15 +480,15 @@ mod tests {
                 violation(FileViolationKind::TestFileLines, "tests/integration.rs"),
             ]);
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert!(output.ends_with(indoc! {"
-                Files over the line limit:
+                Files over the line limit (1):
 
                   src/lib.rs: 3 lines (limit 2)
                     language: Rust, counting code
 
-                Test files over the line limit:
+                Test files over the line limit (1):
 
                   tests/integration.rs: 3 lines (limit 2)
                     language: Rust, counting code
@@ -603,17 +516,17 @@ mod tests {
                 ],
             );
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert!(output.ends_with(indoc! {"
-                Directories with too many direct files:
+                Directories with too many direct files (1):
 
                   src: 3 direct files (limit 2, group: source)
                     src/a.rs
                     src/b.rs
                     src/c.rs
 
-                Test directories with too many direct files:
+                Test directories with too many direct files (1):
 
                   tests: 3 direct files (limit 2, group: source)
                     tests/a.rs
@@ -637,14 +550,14 @@ mod tests {
                 ],
             );
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert_eq!(
                 output,
                 indoc! {"
                     Configuration: built-in defaults (no sprawl-guard.toml in /repo)
 
-                    Stale ratchet entries:
+                    Stale ratchet entries (2):
 
                       src: directory
                         no current violation (ceiling 4)
@@ -681,7 +594,7 @@ mod tests {
                 ))],
             );
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert!(output.contains("now 2 direct files (ceiling 3, limit unlimited)\n"));
             assert!(output.contains("group: documentation\n"));
@@ -714,10 +627,10 @@ mod tests {
                 ))],
             );
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert!(output.ends_with(indoc! {"
-                Stale ratchet entries:
+                Stale ratchet entries (1):
 
                   src/lib.rs: file
                     now 5 lines (ceiling 6, limit 2)
@@ -735,7 +648,7 @@ mod tests {
                 ..violation(FileViolationKind::FileLines, "src/lib.rs")
             }]);
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert!(output.contains("  src/lib.rs: 3 lines (limit 1, ceiling 2)\n"));
         }
@@ -757,14 +670,14 @@ mod tests {
                 )],
             );
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert!(output.contains("  src: 3 direct files (limit 1, ceiling 2, group: source)\n"));
         }
 
         #[test]
         fn it_reports_success_when_there_are_no_violations() {
-            let output = human_check_report(&report_with(vec![]), false);
+            let output = render_human(&report_with(vec![]), false, FiniteOrUnlimited::Unlimited);
 
             assert_eq!(
                 output,
@@ -792,7 +705,7 @@ mod tests {
                 vec![],
             );
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert!(output.ends_with(concat!(
                 "Checked 3 source files in 2 directories across 1 language.\n",
@@ -804,14 +717,14 @@ mod tests {
         fn it_includes_warnings_before_the_status() {
             let report = report_with_rust_cfg_warning();
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert_eq!(
                 output,
                 indoc! {"
                     Configuration: built-in defaults (no sprawl-guard.toml in /repo)
 
-                    Warnings:
+                    Warnings (1):
 
                       src/lib.rs: could not parse Rust to leave out cfg(test) code, so all of it was counted: expected identifier
 
@@ -825,7 +738,7 @@ mod tests {
         fn it_prints_nothing_for_a_passing_check_when_quiet() {
             let report = report_with_rust_cfg_warning();
 
-            let output = human_check_report(&report, true);
+            let output = render_human(&report, true, FiniteOrUnlimited::Unlimited);
 
             assert_eq!(output, "");
         }
@@ -848,7 +761,7 @@ mod tests {
                 vec![],
             );
 
-            let output = human_check_report(&report, false);
+            let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
 
             assert_eq!(
                 output,
@@ -858,11 +771,175 @@ mod tests {
                     No sprawl-guard violations found.
                     Checked 3 source files in 2 directories across 1 language.
 
-                    Skipped unreadable paths:
+                    Skipped unreadable paths (1):
 
                       failed to read directory at generated: permission denied
                 "}
             );
+        }
+    }
+
+    mod when_findings_exceed_the_cap {
+        use super::*;
+
+        fn cap(value: u32) -> FiniteOrUnlimited<MaxFindings> {
+            FiniteOrUnlimited::Finite(MaxFindings::new(value).unwrap())
+        }
+
+        fn unreadable_path(path: &str) -> UnreadablePath {
+            UnreadablePath {
+                kind: UnreadablePathKind::ReadDirFailed,
+                severity: UnreadablePathSeverity::Warning,
+                path: Some(RelativePath::new(path).unwrap()),
+                detail: DiagnosticDetail::new("permission denied"),
+            }
+        }
+
+        fn report_with_every_section() -> CheckReport {
+            CheckReport::partial(
+                report_root(),
+                ConfigSource::BuiltIn,
+                counter_info(),
+                scan_summary(),
+                vec![rust_cfg_warning()],
+                NonEmptyUnreadablePaths::new(vec![
+                    unreadable_path("generated"),
+                    unreadable_path("vendor"),
+                ])
+                .unwrap(),
+                vec![CheckViolation::FileLines(violation(
+                    FileViolationKind::FileLines,
+                    "src/lib.rs",
+                ))],
+            )
+        }
+
+        #[test]
+        fn it_prints_warnings_then_violations_then_unreadable_paths() {
+            let output = render_human(&report_with_every_section(), false, cap(3));
+
+            assert!(output.ends_with(indoc! {"
+                Warnings (1):
+
+                  src/lib.rs: could not parse Rust to leave out cfg(test) code, so all of it was counted: expected identifier
+
+                Files over the line limit (1):
+
+                  src/lib.rs: 3 lines (limit 2)
+                    language: Rust, counting code
+
+                Skipped unreadable paths (2):
+
+                  failed to read directory at generated: permission denied
+                  … and 1 more
+
+                Showing 3 of 4 findings. Use --max-findings unlimited to see all.
+            "}));
+        }
+
+        #[test]
+        fn it_lists_violations_before_warnings() {
+            let output = render_human(&report_with_every_section(), false, cap(1));
+
+            assert!(output.contains(indoc! {"
+                Warnings (1):
+
+                  … and 1 more
+
+                Files over the line limit (1):
+
+                  src/lib.rs: 3 lines (limit 2)
+            "}));
+        }
+
+        #[test]
+        fn it_annotates_a_violation_that_warnings_would_have_crowded_out() {
+            let output = render_check_report(
+                &report_with_every_section(),
+                CheckFormat::Github,
+                false,
+                cap(1),
+            )
+            .unwrap();
+
+            assert_eq!(output.matches("\n::error ").count(), 1);
+            assert!(output.contains("::error file=src/lib.rs,"));
+        }
+
+        #[test]
+        fn it_names_up_to_the_cap_of_a_directory_s_files() {
+            let report = CheckReport::complete(
+                report_root(),
+                ConfigSource::BuiltIn,
+                counter_info(),
+                scan_summary(),
+                vec![],
+                vec![CheckViolation::DirectoryDirectFiles(directory_violation(
+                    DirectoryViolationKind::DirectoryDirectFiles,
+                    "src",
+                ))],
+            );
+
+            let output = render_human(&report, false, cap(2));
+
+            assert!(output.contains(concat!(
+                "  src: 3 direct files (limit 2, group: source)\n",
+                "    src/a.rs\n",
+                "    src/b.rs\n",
+                "    … and 1 more. Use --max-findings unlimited to see all.\n\n",
+            )));
+        }
+
+        #[test]
+        fn it_ends_a_passing_report_with_the_footer() {
+            let report = CheckReport::partial(
+                report_root(),
+                ConfigSource::BuiltIn,
+                counter_info(),
+                scan_summary(),
+                vec![],
+                NonEmptyUnreadablePaths::new(vec![
+                    unreadable_path("generated"),
+                    unreadable_path("vendor"),
+                ])
+                .unwrap(),
+                vec![],
+            );
+
+            let output = render_human(&report, false, cap(1));
+
+            assert!(output.ends_with(indoc! {"
+                Checked 3 source files in 2 directories across 1 language.
+
+                Skipped unreadable paths (2):
+
+                  failed to read directory at generated: permission denied
+                  … and 1 more
+
+                Showing 1 of 2 findings. Use --max-findings unlimited to see all.
+            "}));
+        }
+
+        #[test]
+        fn it_leaves_out_findings_that_quiet_hides() {
+            let output = render_human(&report_with_every_section(), true, cap(1));
+
+            assert!(!output.contains("Showing"));
+        }
+
+        #[test]
+        fn it_counts_the_violations_listed_in_display_order() {
+            let report = report_with(vec![
+                violation(FileViolationKind::TestFileLines, "tests/it.rs"),
+                violation(FileViolationKind::FileLines, "src/lib.rs"),
+            ]);
+
+            let listed = violations_in_display_order(&report)
+                .into_iter()
+                .take(FindingListing::new(&report, false, cap(1)).violations)
+                .collect::<Vec<_>>();
+
+            assert_eq!(listed, vec![&report.violations()[1]]);
         }
     }
 

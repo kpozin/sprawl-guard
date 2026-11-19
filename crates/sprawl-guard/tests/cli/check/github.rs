@@ -24,7 +24,7 @@ fn assert_human_report_then_annotation(stdout: &str, file: &str) {
     let report = report
         .strip_suffix(&format!("\n::{token}::"))
         .expect("output resumes workflow commands before the annotation");
-    assert!(report.contains("Files over the line limit:\n\n  src/lib.rs: 2 lines (limit 1)"));
+    assert!(report.contains("Files over the line limit (1):\n\n  src/lib.rs: 2 lines (limit 1)"));
     assert_eq!(
         annotation,
         format!("::error file={file},line=1,{ANNOTATION_MESSAGE}")

@@ -197,13 +197,22 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
 
 - Human output groups failures under "Files over the line limit", "Test files over the line limit",
   "Directories with too many direct files", "Test directories with too many direct files", and
-  "Stale ratchet entries". Each failure reads like `src/big.rs: 700 lines (limit 400)`, or
+  "Stale ratchet entries". Each heading shows the group's total, as in
+  `Files over the line limit (3):`. Each failure reads like `src/big.rs: 700 lines (limit 400)`, or
   `src/big.rs: 700 lines (limit 400, ceiling 650)` when the file grew above its ratchet ceiling.
   Paths are relative to the root and never quoted; control characters in them are escaped.
+- Human output lists at most 50 findings: violations first, then warnings, then skipped unreadable
+  paths, so a failing check always shows why it failed. A group cut short ends with
+  `… and N more`, and a footer such as `Showing 50 of 1312 findings.` names
+  `--max-findings unlimited`. A directory with too many direct files names at most that many of
+  them. When unreadable paths stop the check, its report on stderr lists at most that many paths.
+  Set the cap with `check --max-findings <N|unlimited>` or `[output].max_findings`; the flag takes
+  precedence.
 - JSON output is a structured report with the root, selected paths, where the configuration came
   from, the line counter, coverage, warnings, and violations.
 - SARIF output follows SARIF 2.1.0 and covers check results.
-- GitHub output prints the human report, then one GitHub Actions `::error` annotation per violation.
+- GitHub output prints the human report, then one GitHub Actions `::error` annotation for each
+  violation the report lists.
   - The human report, and the report of unreadable paths on stderr, sit between
     `::stop-commands::` and its resume line, so that file names in them can't act as workflow
     commands.

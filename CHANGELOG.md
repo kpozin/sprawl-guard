@@ -4,6 +4,21 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `check` lists at most 50 findings in human and GitHub output, so a large first run keeps its
+  summary on screen. Set the cap with `--max-findings <N|unlimited>` or `[output].max_findings`.
+  Violations take the listed slots before warnings and skipped unreadable paths. Group headings show
+  their totals, a group cut short ends with `… and N more`, and a footer gives how many findings
+  were shown out of the total. The cap also bounds the files a directory finding names and the
+  paths listed when unreadable paths stop the check. GitHub annotations cover only the listed
+  violations. The exit status still reflects every violation, and JSON and SARIF output list every
+  finding.
+
+### Changed
+
+- Human output headings show their group's total, as in `Files over the line limit (3):`.
+
 ## [0.6.0-beta.1] - 2026-11-18
 
 ### Added

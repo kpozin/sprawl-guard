@@ -15,6 +15,7 @@ use sprawl_guard_lib::CheckReport;
 use sprawl_guard_lib::check::CheckViolation;
 
 use super::sarif::{Finding, finding};
+use super::violations_in_display_order;
 
 /// The line that file annotations point at. A size limit applies to the whole file, and GitHub
 /// shows an annotation in a diff only when it names a line.
@@ -34,13 +35,18 @@ enum FilePaths {
     OutsideWorkspace,
 }
 
-/// Renders the human report as plain log text, followed by one `::error` workflow command per
-/// violation.
-pub(super) fn github_check_report(human_report: &str, report: &CheckReport) -> String {
+/// Renders the human report as plain log text, followed by one `::error` workflow command for
+/// each of the first `listed` violations in display order, which are the ones the report lists.
+pub(super) fn github_check_report(
+    human_report: &str,
+    report: &CheckReport,
+    listed: usize,
+) -> String {
     let root = Path::new(report.root());
     let workspace =
         env::var_os(GITHUB_WORKSPACE).and_then(|path| Path::new(&path).canonicalize().ok());
-    plain_log_text(human_report) + &annotations(report, &file_paths(root, workspace.as_deref()))
+    plain_log_text(human_report)
+        + &annotations(report, &file_paths(root, workspace.as_deref()), listed)
 }
 
 /// Prints text, such as a report that names repository files, so that the runner shows it without
@@ -72,10 +78,10 @@ fn fenced(text: &str, token: &str) -> String {
     format!("::stop-commands::{token}\n{text}{newline}::{token}::\n")
 }
 
-fn annotations(report: &CheckReport, file_paths: &FilePaths) -> String {
-    report
-        .violations()
-        .iter()
+fn annotations(report: &CheckReport, file_paths: &FilePaths, listed: usize) -> String {
+    violations_in_display_order(report)
+        .into_iter()
+        .take(listed)
         .map(|violation| annotation(file_paths, violation))
         .collect()
 }
@@ -155,7 +161,11 @@ mod tests {
 
     /// Renders annotations for a check whose root is the workspace.
     fn root_annotations(report: &CheckReport) -> String {
-        annotations(report, &FilePaths::Prefixed(String::new()))
+        annotations(
+            report,
+            &FilePaths::Prefixed(String::new()),
+            report.violations().len(),
+        )
     }
 
     fn file_report(kind: FileViolationKind, path: &str) -> CheckReport {
@@ -259,7 +269,8 @@ mod tests {
             );
 
             assert!(
-                annotations(&report, &file_paths).starts_with("::error file=tools/app/src/lib.rs,")
+                annotations(&report, &file_paths, 1)
+                    .starts_with("::error file=tools/app/src/lib.rs,")
             );
         }
 
@@ -281,7 +292,7 @@ mod tests {
             let file_paths = file_paths(Path::new("/elsewhere"), Some(Path::new("/workspace")));
 
             assert_eq!(
-                annotations(&report, &file_paths),
+                annotations(&report, &file_paths, 1),
                 "::error title=sprawl-guard/file-lines::\
                  src/lib.rs has 3 lines (counting code), over the limit of 2.\n"
             );
