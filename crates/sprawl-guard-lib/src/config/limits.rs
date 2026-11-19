@@ -1,6 +1,13 @@
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
+use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::value::byte_size::{
+    ConfiguredByteLimit, UNLIMITED, byte_count_schemas, deserialize_byte_limit,
+};
+use crate::value::file_bytes::FileByteLimit;
+use crate::value::limits::FiniteOrUnlimited;
 use crate::{CountLines, DirectFileLimit, LineLimit, MaxBytesPerFile};
 
 /// Limits applied to source files, to direct files per directory, and to the size of every file.
@@ -55,7 +62,7 @@ pub(super) fn merge_limits(config: &mut Limits, partial: PartialLimits) {
             value,
         );
     }
-    if let Some(value) = partial.max_bytes_per_file {
+    if let Some(ConfiguredMaxBytesPerFile(value)) = partial.max_bytes_per_file {
         config.max_bytes_per_file = value;
     }
 }
@@ -77,7 +84,7 @@ pub(super) fn merge_max_direct_files_per_directory_limits(
 pub(super) struct PartialLimits {
     max_lines_per_file: Option<PartialMaxLinesPerFileLimits>,
     max_direct_files_per_directory: Option<PartialMaxDirectFilesPerDirectoryLimits>,
-    max_bytes_per_file: Option<MaxBytesPerFile>,
+    max_bytes_per_file: Option<ConfiguredMaxBytesPerFile>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -93,4 +100,44 @@ struct PartialMaxLinesPerFileLimits {
 pub(super) struct PartialMaxDirectFilesPerDirectoryLimits {
     production: Option<DirectFileLimit>,
     test: Option<DirectFileLimit>,
+}
+
+/// `max_bytes_per_file` as configuration writes it: a number of bytes, a size with a unit, or
+/// `"unlimited"`.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ConfiguredMaxBytesPerFile(pub(super) MaxBytesPerFile);
+
+impl<'de> Deserialize<'de> for ConfiguredMaxBytesPerFile {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let limit = match deserialize_byte_limit(deserializer)? {
+            ConfiguredByteLimit::Bytes(bytes) => FiniteOrUnlimited::Finite(
+                FileByteLimit::try_new(bytes).map_err(serde::de::Error::custom)?,
+            ),
+            ConfiguredByteLimit::Unlimited => FiniteOrUnlimited::Unlimited,
+        };
+        Ok(Self(limit))
+    }
+}
+
+impl JsonSchema for ConfiguredMaxBytesPerFile {
+    fn schema_name() -> Cow<'static, str> {
+        "MaxBytesPerFile".into()
+    }
+
+    /// Distinct from the ID of [`MaxBytesPerFile`]'s own schema, so a schema holding both keeps
+    /// two definitions rather than letting one replace the other.
+    fn schema_id() -> Cow<'static, str> {
+        concat!(module_path!(), "::ConfiguredMaxBytesPerFile").into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        let [count, size] = byte_count_schemas();
+        json_schema!({
+            "description": "Largest size of one file: a positive number of bytes, a size such as \"10 MB\" or \"1.5 GiB\", or \"unlimited\".",
+            "anyOf": [count, size, { "type": "string", "const": UNLIMITED }]
+        })
+    }
 }

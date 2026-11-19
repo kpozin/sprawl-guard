@@ -22,6 +22,11 @@ All notable changes to `sprawl-guard` will be documented in this file.
   byte limit. `update` adds entries and `tighten` lowers or removes them. Stale entries are
   reported as `file_bytes_stale`. Earlier versions reject a ratchet file with this table.
   `update --import` doesn't add byte entries and keeps the existing ones.
+- Byte limits in configuration accept a size with a unit, such as `"10 MB"` or `"1.5 GiB"`, as
+  well as a number of bytes. This applies to `max_bytes_per_file` in `[limits]` and
+  `[[overrides]]` and to `[traversal].max_parsed_code_file_bytes`. `kB`, `MB`, `GB`, and `TB` are
+  powers of 1000, and `KiB`, `MiB`, `GiB`, and `TiB` are powers of 1024. Units are case-sensitive,
+  so `"10M"` and `"10 mb"` are errors that list the accepted units.
 - `explain` reports the size and byte limit of a file, with the overrides that set the limit, as
   `file_bytes` in JSON output. For a source file too large to count, it reports why its lines are
   not counted instead of failing.

@@ -3,6 +3,7 @@ use std::fmt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize};
 
+use super::limits::ConfiguredMaxBytesPerFile;
 use crate::{DirectFileLimit, GlobPattern, LineLimit, MaxBytesPerFile};
 
 /// Error returned when an override reason is invalid.
@@ -215,7 +216,9 @@ impl<'de> Deserialize<'de> for OverrideLimits {
         Self::new(
             max_lines_per_file.into(),
             max_direct_files_per_directory.into(),
-            partial.max_bytes_per_file,
+            partial
+                .max_bytes_per_file
+                .map(|ConfiguredMaxBytesPerFile(limit)| limit),
         )
         .map_err(serde::de::Error::custom)
     }
@@ -226,7 +229,7 @@ impl<'de> Deserialize<'de> for OverrideLimits {
 struct PartialOverrideLimits {
     max_lines_per_file: Option<PartialOverrideMaxLinesPerFileLimits>,
     max_direct_files_per_directory: Option<PartialOverrideMaxDirectFilesPerDirectoryLimits>,
-    max_bytes_per_file: Option<MaxBytesPerFile>,
+    max_bytes_per_file: Option<ConfiguredMaxBytesPerFile>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]

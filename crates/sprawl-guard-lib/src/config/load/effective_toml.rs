@@ -171,6 +171,23 @@ mod tests {
             }
         }
 
+        mod when_a_byte_limit_is_the_largest_size {
+            use super::*;
+
+            #[test]
+            fn it_prints_it_as_an_integer() {
+                let config = effective_config(indoc! {r#"
+                    [limits]
+                    max_bytes_per_file = "9223372036854775807 B"
+                "#});
+
+                assert_eq!(
+                    config["limits"]["max_bytes_per_file"].as_integer(),
+                    Some(i64::MAX)
+                );
+            }
+        }
+
         mod when_a_language_uses_its_bundled_paths {
             use super::*;
 

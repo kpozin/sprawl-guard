@@ -592,6 +592,27 @@ mod when_traversal_config_is_partial {
         );
     }
 
+    mod when_the_parsed_code_byte_limit_has_a_unit {
+        use super::*;
+
+        #[test]
+        fn it_loads_the_limit_in_bytes() {
+            let tempdir = tempfile::tempdir().unwrap();
+            fs::write(
+                tempdir.path().join(PRIMARY_CONFIG_FILE),
+                "[traversal]\nmax_parsed_code_file_bytes = \"4 KiB\"\n",
+            )
+            .unwrap();
+
+            let loaded = load_config_fixture(tempdir.path()).unwrap();
+
+            assert_eq!(
+                loaded.config.traversal.max_parsed_code_file_bytes,
+                ParsedCodeFileByteLimit::try_new(4096).unwrap()
+            );
+        }
+    }
+
     mod when_the_parsed_code_byte_limit_uses_its_deprecated_name {
         use super::*;
 
@@ -968,6 +989,61 @@ mod when_config_values_are_invalid {
                 max_parsed_code_file_bytes = 0
             "#},
             "traversal max_parsed_code_file_bytes must be greater than zero",
+        );
+    }
+
+    #[test]
+    fn it_rejects_a_zero_size_with_a_unit() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [traversal]
+                max_parsed_code_file_bytes = "0 MB"
+            "#},
+            "traversal max_parsed_code_file_bytes must be greater than zero",
+        );
+    }
+
+    #[test]
+    fn it_rejects_an_unlimited_parsed_code_byte_limit() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [traversal]
+                max_parsed_code_file_bytes = "unlimited"
+            "#},
+            "expected a positive integer or a size such as \"10 MB\"",
+        );
+    }
+
+    #[test]
+    fn it_names_the_accepted_units_for_an_unknown_unit() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [limits]
+                max_bytes_per_file = "10M"
+            "#},
+            "\"M\" isn't a unit; use B, kB, MB, GB or TB for powers of 1000, or KiB, MiB, GiB or TiB for powers of 1024",
+        );
+    }
+
+    #[test]
+    fn it_rejects_a_size_larger_than_a_toml_integer() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [limits]
+                max_bytes_per_file = "9223372036854775808 B"
+            "#},
+            "\"9223372036854775808 B\" is larger than 9223372036854775807 bytes",
+        );
+    }
+
+    #[test]
+    fn it_rejects_a_negative_byte_limit() {
+        assert_config_error_contains(
+            indoc! {r#"
+                [limits]
+                max_bytes_per_file = -1
+            "#},
+            "expected a positive integer or a size such as \"10 MB\"",
         );
     }
 

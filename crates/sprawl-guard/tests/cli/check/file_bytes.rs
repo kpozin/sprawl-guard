@@ -169,6 +169,50 @@ mod when_an_override_changes_the_default {
     }
 }
 
+mod when_limits_are_sizes_with_units {
+    use super::*;
+
+    /// Writes a default of 1 kB, which is 1000 bytes, and 1 KiB, which is 1024 bytes, for assets.
+    fn write_unit_config(root: &TempDir) {
+        write_config(
+            root,
+            indoc! {r#"
+                [limits]
+                max_bytes_per_file = "1 kB"
+
+                [[overrides]]
+                paths = ["assets/**"]
+                max_bytes_per_file = "1 KiB"
+                reason = "asset budget"
+            "#},
+        );
+    }
+
+    #[test]
+    fn it_reports_files_over_each_limit_in_bytes() {
+        let root = TempDir::new().unwrap();
+        write_unit_config(&root);
+        write_file_of_size(&root, "assets/at_limit.bin", 1_024);
+        write_file_of_size(&root, "assets/over_limit.bin", 1_025);
+        write_file_of_size(&root, "docs/at_limit.txt", 1_000);
+        write_file_of_size(&root, "docs/over_limit.txt", 1_001);
+
+        let (output, report) = run_check_json(&root);
+
+        assert_exit_code(&output, exit_codes::CHECK_FAILURE);
+        assert_eq!(
+            violations_of_kind(&report, "file_bytes")
+                .iter()
+                .map(|violation| (violation["path"].clone(), violation["limit"].clone()))
+                .collect::<Vec<_>>(),
+            vec![
+                (json!("assets/over_limit.bin"), json!(1_024)),
+                (json!("docs/over_limit.txt"), json!(1_000)),
+            ]
+        );
+    }
+}
+
 mod when_the_ratchet_has_a_byte_entry {
     use super::*;
 

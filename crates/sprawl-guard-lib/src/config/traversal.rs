@@ -1,10 +1,13 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::num::NonZeroU32;
 
 use nutype::nutype;
 
-use schemars::JsonSchema;
+use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize};
+
+use crate::value::byte_size::{byte_count_schemas, deserialize_byte_count};
 
 /// Filesystem traversal settings.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -153,6 +156,42 @@ const fn validate_parsed_code_file_byte_limit(
 )]
 pub struct ParsedCodeFileByteLimit(#[schemars(range(min = 1))] u64);
 
+/// `max_parsed_code_file_bytes` as configuration writes it: a positive number of bytes or a size
+/// string.
+#[derive(Debug)]
+pub(super) struct ConfiguredParsedCodeFileByteLimit(ParsedCodeFileByteLimit);
+
+impl<'de> Deserialize<'de> for ConfiguredParsedCodeFileByteLimit {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        ParsedCodeFileByteLimit::try_new(deserialize_byte_count(deserializer)?)
+            .map(Self)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+impl JsonSchema for ConfiguredParsedCodeFileByteLimit {
+    fn schema_name() -> Cow<'static, str> {
+        "ParsedCodeFileByteLimit".into()
+    }
+
+    /// Distinct from the ID of [`ParsedCodeFileByteLimit`]'s own schema, so a schema holding both
+    /// keeps two definitions rather than letting one replace the other.
+    fn schema_id() -> Cow<'static, str> {
+        concat!(module_path!(), "::ConfiguredParsedCodeFileByteLimit").into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        let [count, size] = byte_count_schemas();
+        json_schema!({
+            "description": "Largest file whose code lines are parsed and counted: a positive number of bytes or a size such as \"10 MiB\".",
+            "anyOf": [count, size]
+        })
+    }
+}
+
 /// Key of the parsed-code file byte limit in `[traversal]`.
 pub(super) const BYTE_LIMIT_KEY: &str = "max_parsed_code_file_bytes";
 
@@ -195,7 +234,7 @@ pub(super) fn merge_traversal(config: &mut TraversalConfig, partial: PartialTrav
     if let Some(value) = partial.max_entries {
         config.max_entries = value;
     }
-    if let Some(value) = partial.max_parsed_code_file_bytes {
+    if let Some(ConfiguredParsedCodeFileByteLimit(value)) = partial.max_parsed_code_file_bytes {
         config.max_parsed_code_file_bytes = value;
     }
     if let Some(value) = partial.unreadable_paths {
@@ -212,6 +251,6 @@ pub(super) struct PartialTraversalConfig {
     pub(super) max_entries: Option<TraversalEntryLimit>,
     /// Largest source file, in bytes, whose code lines are parsed and counted.
     #[serde(alias = "max_file_bytes")]
-    pub(super) max_parsed_code_file_bytes: Option<ParsedCodeFileByteLimit>,
+    pub(super) max_parsed_code_file_bytes: Option<ConfiguredParsedCodeFileByteLimit>,
     pub(super) unreadable_paths: Option<UnreadablePathPolicy>,
 }

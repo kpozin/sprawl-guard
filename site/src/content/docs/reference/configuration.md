@@ -55,14 +55,20 @@ after the upgrade, so error messages name the v2 keys.
 
 ### `[limits]`
 
-| Field                | Type and default                               | Meaning                       |
-| -------------------- | ---------------------------------------------- | ----------------------------- |
-| `max_bytes_per_file` | positive integer or `"unlimited"`, `unlimited` | Largest size of any one file. |
+| Field                | Type and default                   | Meaning                       |
+| -------------------- | ---------------------------------- | ----------------------------- |
+| `max_bytes_per_file` | size or `"unlimited"`, `unlimited` | Largest size of any one file. |
 
 `max_bytes_per_file` applies to every file that `check` visits, not only source files: images,
 archives, generated data, and files of disabled or excluded languages count too. Files skipped by
 ignore files, by `[files].extend_exclude`, and the configuration and ratchet files are not checked.
 Set a default here and use `[[overrides]]` to raise or lower it for particular paths.
+
+A size is a positive number of bytes, such as `500000`, or a string with a unit, such as `"500 kB"`
+or `"1.5 GiB"`. The units `B`, `kB`, `MB`, `GB`, and `TB` are powers of 1000, and `KiB`, `MiB`,
+`GiB`, and `TiB` are powers of 1024. Units are case-sensitive. A size must come to a whole number
+of bytes, have at most 12 digits after the decimal point, and be at most 9223372036854775807 bytes,
+the largest TOML integer. Output and the ratchet file give sizes in bytes.
 
 A file that Git LFS stores is measured by the size its pointer declares, so `check` gives the same
 result whether or not Git LFS has downloaded the file. Sprawl Guard doesn't count the lines of a
@@ -107,13 +113,13 @@ instead of reading rules from the link's target.
 
 ### `[traversal]`
 
-| Field                        | Type and default             | Meaning                                                     |
-| ---------------------------- | ---------------------------- | ----------------------------------------------------------- |
-| `follow_symlinks`            | enum, `"none"`               | `none`, `files`, `directories`, or `files-and-directories`. |
-| `same_file_system`           | boolean, `true`              | Stay on the root's filesystem.                              |
-| `max_entries`                | positive integer, `1000000`  | Maximum visited filesystem entries.                         |
-| `max_parsed_code_file_bytes` | positive integer, `10485760` | Largest source file whose code lines Sprawl Guard counts.   |
-| `unreadable_paths`           | enum, `"fail"`               | `fail` or `warn` for gaps in what `check` could analyze.    |
+| Field                        | Type and default                     | Meaning                                                     |
+| ---------------------------- | ------------------------------------ | ----------------------------------------------------------- |
+| `follow_symlinks`            | enum, `"none"`                       | `none`, `files`, `directories`, or `files-and-directories`. |
+| `same_file_system`           | boolean, `true`                      | Stay on the root's filesystem.                              |
+| `max_entries`                | positive integer, `1000000`          | Maximum visited filesystem entries.                         |
+| `max_parsed_code_file_bytes` | [size](#limits), `10485760` (10 MiB) | Largest source file whose code lines Sprawl Guard counts.   |
+| `unreadable_paths`           | enum, `"fail"`                       | `fail` or `warn` for gaps in what `check` could analyze.    |
 
 Sprawl Guard doesn't count the lines of a source file larger than `max_parsed_code_file_bytes`.
 `check` lists the file and keeps checking everything else. Exclude large generated files instead of
@@ -227,7 +233,7 @@ production = 20
 | `max_lines_per_file.test`                   | optional positive integer                  | Test file limit.                                   |
 | `max_direct_files_per_directory.production` | optional positive integer or `"unlimited"` | Production direct-file limit.                      |
 | `max_direct_files_per_directory.test`       | optional positive integer or `"unlimited"` | Test direct-file limit.                            |
-| `max_bytes_per_file`                        | optional positive integer or `"unlimited"` | Byte limit for any matching file.                  |
+| `max_bytes_per_file`                        | optional [size](#limits) or `"unlimited"`  | Byte limit for any matching file.                  |
 
 Each override must set at least one limit. Matching entries apply in order, and later entries
 replace only the fields they set.
@@ -241,7 +247,7 @@ reason = "Upstream layout"
 
 [[overrides]]
 paths = ["assets/**"]
-max_bytes_per_file = 500000
+max_bytes_per_file = "500 kB"
 reason = "Image budget"
 ```
 

@@ -68,6 +68,38 @@ describe("published schemas", () => {
       assert.ok(validate(config), JSON.stringify(validate.errors));
     });
 
+    describe("when a byte limit is written", () => {
+      /** Returns a configuration that sets every byte limit to `value`. */
+      function withByteLimits(value: unknown, parsedCodeValue: unknown = value) {
+        return {
+          schema_version: CONFIG_SCHEMA_VERSION,
+          limits: { max_bytes_per_file: value },
+          traversal: { max_parsed_code_file_bytes: parsedCodeValue },
+          overrides: [{ paths: ["assets/**"], reason: "Assets", max_bytes_per_file: value }],
+        };
+      }
+
+      for (const value of [500000, "512 B", "10 MB", "10MB", "1.5 GiB", "2 kB", "1 TiB"]) {
+        test(`accepts ${JSON.stringify(value)}`, () => {
+          assert.ok(validate(withByteLimits(value)), JSON.stringify(validate.errors));
+        });
+      }
+
+      test('accepts "unlimited" for max_bytes_per_file', () => {
+        assert.ok(validate(withByteLimits("unlimited", 4096)), JSON.stringify(validate.errors));
+      });
+
+      test('rejects "unlimited" for max_parsed_code_file_bytes', () => {
+        assert.equal(validate(withByteLimits(4096, "unlimited")), false);
+      });
+
+      for (const value of [0, -1, 1.5, "10", "10M", "10 mb", "10 KB", "10  MB", "1e3 B", "1. MB"]) {
+        test(`rejects ${JSON.stringify(value)}`, () => {
+          assert.equal(validate(withByteLimits(value)), false);
+        });
+      }
+    });
+
     describe("when a configuration is invalid", () => {
       for (const [name, config] of Object.entries({
         "has no schema version": { limits: {} },
