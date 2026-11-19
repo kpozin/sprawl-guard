@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,14 +28,18 @@ import {
   type NpmPublicationRequest,
   type NpmReleasePackages,
   type PackResult,
-  type PublishArchiveResult,
   type PublishNpmPackagesResult,
-  type RemoteNpmDistTagInspection,
-  type RemotePackageIntegrityInspection,
   type SuccessfulPackResult,
   type ValidationResult,
   releasePackageList,
 } from "./npm-publication/model.ts";
+import {
+  inspectRemoteDistTag,
+  inspectRemoteIntegrity,
+  parseJson,
+  publishArchive,
+  runCommand,
+} from "./npm-publication/commands.ts";
 import {
   packPublication,
   publishNpmPublicationRequests,
@@ -47,17 +50,14 @@ import {
   NPM_ARCHIVE_PATH_SCHEMA,
   NPM_PACKAGE_INTEGRITY_SCHEMA,
   NPM_PACKAGE_NAME_SCHEMA,
-  NPM_REGISTRY_URL,
   PACKAGE_RELATIVE_PATH_SCHEMA,
   parsePackageRelativePaths,
   type AbsoluteDirectoryPath,
   type NpmArchivePath,
-  type NpmPackageIntegrity,
   type PackageRelativePath,
 } from "./npm-publication/values.ts";
 import {
   archiveIntegrity,
-  validateArchiveIntegrity,
   validatePackedPackageManifest,
   validatePackedPaths,
   validatePnpmVersion,
@@ -101,17 +101,6 @@ const REGISTRY_VISIBILITY_INTERVAL_MILLISECONDS = 2_000;
 const WORKSPACE_ROOT_DIRECTORY = ABSOLUTE_DIRECTORY_PATH_SCHEMA.parse(
   path.resolve(fileURLToPath(new URL("..", import.meta.url))),
 );
-const NPM_NOT_FOUND_CODE = "E404";
-const TRANSIENT_NPM_FAILURE_PATTERN =
-  /(?:EAI_AGAIN|ECONNRESET|ETIMEDOUT|ERR_SOCKET_TIMEOUT|E429|E50[0234]|HTTP (?:408|429|5\d\d))/u;
-const NPM_COMMAND_MAXIMUM_OUTPUT_BYTES = 1_048_576;
-const NPM_READ_COMMAND_TIMEOUT_MILLISECONDS = 30_000;
-const NPM_PUBLISH_COMMAND_TIMEOUT_MILLISECONDS = 600_000;
-
-type NpmCommandResult =
-  | { readonly kind: "ok"; readonly stdout: string }
-  | { readonly kind: "failed"; readonly detail: string };
-
 type NpmPublicationCandidateManifest = z.infer<
   typeof NPM_PUBLICATION_CANDIDATE_SCHEMA
 >;
@@ -590,140 +579,6 @@ function verifyArchiveExecutableMode(
         kind: "invalid",
         detail: `${executablePath} is not executable in ${archivePath}`,
       };
-}
-
-function inspectRemoteIntegrity(packageName: NpmPackageName): RemotePackageIntegrityInspection {
-  const viewed = runCommand("npm", [
-    "view",
-    `${packageName}@${PACKAGE_VERSION}`,
-    "dist.integrity",
-    "--json",
-    "--registry",
-    NPM_REGISTRY_URL,
-  ]);
-  if (viewed.kind === "failed") {
-    if (viewed.detail.includes(NPM_NOT_FOUND_CODE)) {
-      return { kind: "ok", integrity: { kind: "absent" } };
-    }
-    return TRANSIENT_NPM_FAILURE_PATTERN.test(viewed.detail)
-      ? { kind: "transient_failure", detail: viewed.detail }
-      : { kind: "permanent_failure", detail: viewed.detail };
-  }
-  const parsed = NPM_PACKAGE_INTEGRITY_SCHEMA.safeParse(parseJson(viewed.stdout));
-  return parsed.success
-    ? {
-        kind: "ok",
-        integrity: { kind: "present", integrity: parsed.data },
-      }
-    : {
-        kind: "permanent_failure",
-        detail: `npm view returned invalid integrity: ${z.prettifyError(parsed.error)}`,
-      };
-}
-
-function inspectRemoteDistTag(
-  packageName: NpmPackageName,
-  npmDistTag: NpmDistTag,
-): RemoteNpmDistTagInspection {
-  const viewed = runCommand("npm", [
-    "view",
-    `${packageName}@${npmDistTag}`,
-    "version",
-    "--json",
-    "--registry",
-    NPM_REGISTRY_URL,
-  ]);
-  if (viewed.kind === "failed") {
-    if (viewed.detail.includes(NPM_NOT_FOUND_CODE)) {
-      return { kind: "ok", remote: { kind: "absent" } };
-    }
-    return TRANSIENT_NPM_FAILURE_PATTERN.test(viewed.detail)
-      ? { kind: "transient_failure", detail: viewed.detail }
-      : { kind: "permanent_failure", detail: viewed.detail };
-  }
-  const parsed = PUBLIC_PACKAGE_VERSION_SCHEMA.safeParse(parseJson(viewed.stdout));
-  return parsed.success
-    ? {
-        kind: "ok",
-        remote: { kind: "present", version: parsed.data },
-      }
-    : {
-        kind: "permanent_failure",
-        detail: `npm view returned invalid dist-tag version: ${z.prettifyError(parsed.error)}`,
-      };
-}
-
-/** Returns the npm arguments that publish one archive directly on the selected channel. */
-export function npmPublishArguments(
-  archivePath: NpmArchivePath,
-  npmDistTag: NpmDistTag,
-): readonly string[] {
-  return [
-    "publish",
-    archivePath,
-    "--access",
-    "public",
-    "--ignore-scripts",
-    "--tag",
-    npmDistTag,
-    "--registry",
-    NPM_REGISTRY_URL,
-  ];
-}
-
-function publishArchive(
-  archivePath: NpmArchivePath,
-  expectedIntegrity: NpmPackageIntegrity,
-  npmDistTag: NpmDistTag,
-): PublishArchiveResult {
-  const integrityValidation = validateArchiveIntegrity(archivePath, expectedIntegrity);
-  if (integrityValidation.kind === "invalid") {
-    return { kind: "failed", detail: integrityValidation.detail };
-  }
-  // Inherit the terminal so a local interactive login can show npm's browser approval prompt.
-  const result = spawnSync("npm", npmPublishArguments(archivePath, npmDistTag), {
-    stdio: "inherit",
-    timeout: NPM_PUBLISH_COMMAND_TIMEOUT_MILLISECONDS,
-  });
-  return result.status === 0
-    ? { kind: "ok" }
-    : {
-        kind: "failed",
-        detail:
-          result.error?.message
-          ?? `npm publish exited with status ${String(result.status)}`,
-      };
-}
-
-function parseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function runCommand(
-  command: "npm" | "pnpm" | "tar",
-  args: readonly string[],
-  cwd?: AbsoluteDirectoryPath,
-): NpmCommandResult {
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: NPM_COMMAND_MAXIMUM_OUTPUT_BYTES,
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: NPM_READ_COMMAND_TIMEOUT_MILLISECONDS,
-  });
-  if (result.status === 0) {
-    return { kind: "ok", stdout: result.stdout };
-  }
-  return {
-    kind: "failed",
-    detail: [result.stdout, result.stderr, result.error?.message]
-      .filter((value): value is string => value !== undefined && value.length > 0)
-      .join("\n"),
-  };
 }
 
 function productionOperations(

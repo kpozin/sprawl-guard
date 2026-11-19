@@ -6,7 +6,6 @@ import { describe, it } from "node:test";
 import { gunzipSync, gzipSync } from "node:zlib";
 import {
   npmPublicationRequests,
-  npmPublishArguments,
   prepareNpmPublicationCandidate,
   verifyNpmPublicationCandidate,
 } from "./publish-npm-packages.ts";
@@ -15,6 +14,7 @@ import {
   reconcileNpmPackageIntegrity,
   releasePackageList,
 } from "./npm-publication/model.ts";
+import { npmPublishArguments } from "./npm-publication/commands.ts";
 import {
   PACKAGE_VERSION,
   RUNTIME_PACKAGE_DEFINITIONS,

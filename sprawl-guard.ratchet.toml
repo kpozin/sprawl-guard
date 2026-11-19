@@ -4,12 +4,12 @@ schema_version = 1
 [[files]]
 path = "npm/scripts/publish-cargo-crates.ts"
 role = "production"
-max_lines = 959
+max_lines = 958
 
 [[files]]
 path = "npm/scripts/publish-npm-packages.ts"
 role = "production"
-max_lines = 763
+max_lines = 635
 
 [[files]]
 path = "npm/scripts/set-public-version.ts"
@@ -19,12 +19,12 @@ max_lines = 650
 [[files]]
 path = "npm/scripts/stage-publish-payloads.ts"
 role = "production"
-max_lines = 496
+max_lines = 492
 
 [[files]]
 path = "npm/scripts/verify-packed-files.ts"
 role = "production"
-max_lines = 410
+max_lines = 407
 
 [[directories]]
 path = "crates/sprawl-guard-lib/src"
