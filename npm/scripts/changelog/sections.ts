@@ -50,15 +50,12 @@ export function versionHeadingPrefix(version: PublicPackageVersion): string {
   return `${SECTION_HEADING_PREFIX}[${version}]`;
 }
 
-/** Returns the version of the first release heading, which the changelog lists newest first. */
-export function latestRelease(lines: readonly string[]): PublicPackageVersion | undefined {
-  for (const line of proseLines(lines)) {
+/** Returns the version of every release heading, newest first, as the changelog lists them. */
+export function releases(lines: readonly string[]): readonly PublicPackageVersion[] {
+  return proseLines(lines).flatMap((line) => {
     const version = PUBLIC_PACKAGE_VERSION_SCHEMA.safeParse(SECTION_NAME_PATTERN.exec(line)?.[1]);
-    if (version.success) {
-      return version.data;
-    }
-  }
-  return undefined;
+    return version.success ? [version.data] : [];
+  });
 }
 
 /**

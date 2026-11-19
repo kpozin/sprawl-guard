@@ -4,148 +4,68 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
-## [0.6.0-beta.3] - 2026-11-19
+This release adds byte limits on file sizes and publishes Sprawl Guard on PyPI. Before upgrading,
+check your configuration globs: `*` no longer crosses directories.
 
 ### Added
 
-- `[limits].max_bytes_per_lfs_object` limits the content size of files that `.gitattributes`
-  assigns to Git LFS with `filter=lfs`: the size a pointer declares when Git LFS hasn't downloaded
-  the file, and the size on disk when it has, so results match either way unless a Git LFS
-  extension transforms the file. It is unlimited by default, accepts a size with a unit, and is
-  available in `[[overrides]]`. Human output lists these files under
-  `Git LFS objects over the byte limit`. JSON output reports them as `lfs_object_bytes` violations,
-  SARIF output under the `sprawl-guard/lfs-object-bytes` rule, and GitHub output as annotations on
-  the file. `explain` reports the file's `storage`, and fails when a `.gitattributes` that decides
-  it can't be read.
-- `check` reads `.gitattributes` in the root, its subdirectories, and the directories above it up
-  to the top of the Git work tree, and reports one it can't read as a `read_git_attributes_failed`
-  gap covering its directory.
+- `[limits].max_bytes_per_file` limits the size of every file that `check` visits, source or not,
+  such as images and archives. `[limits].max_bytes_per_lfs_object` limits files that
+  `.gitattributes` assigns to Git LFS instead, at their full size whether or not Git LFS has
+  downloaded them. Both are unlimited by default, accept a size with a unit, such as `"10 MB"` or
+  `"1.5 GiB"`, and can be set in `[[overrides]]`.
+  - Files over a limit are reported in every output format, as `file_bytes` and `lfs_object_bytes`
+    violations in JSON output.
+  - The ratchet file's new `[[file_sizes]]` table records the accepted size of a file over its
+    limit. `update` adds entries and `tighten` lowers or removes them. Sprawl Guard 0.5 and
+    earlier can't read a ratchet file with this table, so upgrade every copy that checks the
+    repository together.
+  - `explain` reports a file's size, its byte limit, and the overrides that set the limit.
+  - `check` doesn't count the lines of a source file that is a Git LFS pointer, and reports it as a
+    warning instead.
+- Sprawl Guard is on PyPI as `sprawl-guard`, so Python projects can install it with uv, pip, or
+  pipx and pin it in their lockfile.
+- `check` lists at most 50 findings in human and GitHub output, so a large first run keeps its
+  summary on screen. Change the cap with `--max-findings <N|unlimited>` or
+  `[output].max_findings`. The exit status still reflects every violation, and JSON and SARIF
+  output list every finding.
+- `check` warns when it skips a path given on the command line because the path is hidden or
+  ignored.
 
 ### Changed
 
-- `[limits].max_bytes_per_file` limits only files that Git stores. Files that `.gitattributes`
-  assigns to Git LFS are exempt from it, so assets moved to Git LFS on purpose are no longer
-  flagged.
-- `[[file_sizes]]` ratchet entries require the file's `storage`: `git` or `lfs`. Stale Git LFS
-  entries are reported as `lfs_object_bytes_stale`. A ratchet file from 0.6.0-beta.2 with
-  `[[file_sizes]]` entries no longer loads. Back it up, delete those entries, and run `update`.
-  `update` records current sizes rather than the old ceilings, so review the new byte ceilings
-  before committing them.
-- `check` finds Git LFS files through `.gitattributes` instead of by reading every small file, so
-  a small file that Git stores and that can't be opened is no longer reported as an unreadable
-  path. A Git LFS pointer that `.gitattributes` doesn't assign to Git LFS is measured at its size
-  on disk.
 - In configuration globs, `*` and `?` no longer match `/`. `src/*.rs` matched `src/a/b.rs` before
   and now matches only files directly in `src`. Use `**` to cross directories: write `vendor/**`
-  where `vendor/*` was meant to cover a whole tree, and `**/*.generated.ts` where
-  `*.generated.ts` was meant to match at any depth. `**` crosses directories only as a whole path
-  component, so write `src/**/*.rs` where `src/**.rs` was used. The bundled patterns already use
-  `**`.
-
-### Removed
-
-- JSON output no longer reports `measured_from` and `pointer_bytes` for file sizes.
+  where `vendor/*` was meant to cover a whole tree, and `**/*.generated.ts` where `*.generated.ts`
+  was meant to match at any depth. `**` crosses directories only as a whole path component, so
+  write `src/**/*.rs` where `src/**.rs` was used. The bundled patterns already use `**`.
+- `check` no longer stops at the first file it can't analyze, such as a source file too large to
+  count or one it can't read. It reports every such gap along with every violation. Under
+  `[traversal].unreadable_paths = "fail"`, gaps make `check` exit `2`; under `"warn"`, they are
+  warnings. In JSON output, `status` is `error` in that case, `coverage` lists the gaps, and the
+  `error` object is gone.
+- `[traversal].max_file_bytes` is now `[traversal].max_parsed_code_file_bytes`. The old name still
+  loads; `sprawl-guard config upgrade --write` renames it.
+- Human output headings show their group's total, as in `Files over the line limit (3):`.
 
 ### Fixed
 
-- `check` with a file path no longer judges that file's directory by a count of the selected files
-  alone. Before, a directory over its direct-file limit passed, and a directory with a ratchet
-  entry was reported stale. A directory's direct files are now checked only when the directory
-  itself is selected.
-- Rust `cfg(test)` exclusion removes exactly the excluded item when non-ASCII text precedes the
-  item's end on the same line. Before, leftover bytes could turn the rest of the file into one
-  string literal and miscount it.
-- A production Rust file that starts with a UTF-8 byte order mark counts the same as one without
-  it.
-- A zero or negative `max_direct_files_per_directory` or `[output].max_findings` is rejected with
-  the rule it breaks, such as `direct-file count must be greater than zero`. Before, the error
-  named an internal type.
+- `check` with a file path no longer passes a directory over its direct-file limit, or reports its
+  ratchet entry as stale, because only some of its files were selected.
+- Rust test-code exclusion no longer miscounts a file when non-ASCII text precedes the end of an
+  excluded item on the same line.
+- A Rust file that starts with a byte order mark counts the same as one without it.
 - A configuration that sets one language under two spellings, such as `[languages.rust]` and
   `[languages.Rust]`, is rejected. Before, one of the two tables was dropped without a message.
-- `check` warns when the scan skips a path given on the command line because the path is hidden
-  or an ignore file excludes it. Before, `check .github/script.py` passed without checking the
-  file and without saying so. JSON output reports a `selected_path_skipped` warning, and SARIF
-  output a warning notification.
-- With `[ignore].skip_hidden = false`, the scan leaves out `.git`. Before, it checked Git's own
-  objects against byte limits and counted them toward `traversal.max_entries`.
-- SARIF output percent-encodes file paths, so a path with a space, `#` or `%` is a valid URI. When
-  `GITHUB_WORKSPACE` is set and the root is inside it, each path starts with the root's place in
-  the workspace, as `--format github` paths do, so code scanning finds files checked with
-  `--root`. When the root is outside the workspace, or the workspace does not exist, results
-  carry no file location, as GitHub annotations already did. A result
-  about a directory no longer names line 1.
-- The npm package runs its WebAssembly build on Linux with glibc older than 2.35. Before, it
-  started the native binary, which failed to load with `version 'GLIBC_2.35' not found`.
-- The npm package's WebAssembly build reads `GITHUB_WORKSPACE`, so `--format github` annotations
-  and SARIF paths include the root's place in the workspace, as the native builds do.
-
-## [0.6.0-beta.2] - 2026-11-19
-
-### Added
-
-- `check` lists at most 50 findings in human and GitHub output, so a large first run keeps its
-  summary on screen. Set the cap with `--max-findings <N|unlimited>` or `[output].max_findings`.
-  Analysis gaps that fail the check take the listed slots first, then violations, then warnings.
-  Group headings show their totals, a group cut short ends with `… and N more`, and a footer gives
-  how many findings were shown out of the total. The cap also bounds the files a directory finding
-  names. GitHub annotations cover only the listed findings. The exit status still reflects every
-  violation, and JSON and SARIF output list every finding.
-- `[limits].max_bytes_per_file` limits the size of every file that `check` visits, source or not,
-  such as images and archives. It is unlimited by default, and `[[overrides]]` can set it for
-  particular paths. Human output lists files over the limit under `Files over the byte limit`.
-  JSON output reports them as `file_bytes` violations, SARIF output under the
-  `sprawl-guard/file-bytes` rule, and GitHub output as annotations on the file.
-- The ratchet file has a `[[file_sizes]]` table that records the accepted size of a file over its
-  byte limit. `update` adds entries and `tighten` lowers or removes them. Stale entries are
-  reported as `file_bytes_stale`. Earlier versions reject a ratchet file with this table.
-  `update --import` doesn't add byte entries and keeps the existing ones.
-- Byte limits in configuration accept a size with a unit, such as `"10 MB"` or `"1.5 GiB"`, as
-  well as a number of bytes. This applies to `max_bytes_per_file` in `[limits]` and
-  `[[overrides]]` and to `[traversal].max_parsed_code_file_bytes`. `kB`, `MB`, `GB`, and `TB` are
-  powers of 1000, and `KiB`, `MiB`, `GiB`, and `TiB` are powers of 1024. Units are case-sensitive,
-  so `"10M"` and `"10 mb"` are errors that list the accepted units.
-- `explain` reports the size and byte limit of a file, with the overrides that set the limit, as
-  `file_bytes` in JSON output. For a source file too large to count, it reports why its lines are
-  not counted instead of failing.
-- Byte limits, `[[file_sizes]]` ceilings, and `explain` measure a file that Git LFS stores by the
-  size its pointer declares, so results don't depend on whether Git LFS has downloaded the file.
-  JSON output marks such a size with `"measured_from": "lfs_pointer"` and the pointer's own size in
-  `pointer_bytes`; other sizes have `"measured_from": "on_disk"`. Human, SARIF, and GitHub messages
-  name the pointer. Pointers with the current or the legacy `hawser.github.com` version URL are
-  recognized. `check` doesn't count the lines of a source file that is a pointer: it reports an
-  `lfs_pointer_source` warning with the file's `role` and `declared_bytes`, and keeps the line
-  ceiling for that role. A file smaller than 1 KiB that can't be opened is now reported as an
-  unreadable path, since `check` can't tell whether it is a pointer.
-
-### Changed
-
-- Human output headings show their group's total, as in `Files over the line limit (3):`.
-- SARIF and GitHub messages for a stale ratchet entry whose path is gone or no longer checked end
-  with `and it is no longer measured` instead of `and it was not found`.
-- `[traversal].max_file_bytes` is now `[traversal].max_parsed_code_file_bytes`, since it limits only
-  the files whose code lines are counted. The old name still loads; `config upgrade --check` reports
-  it and `config upgrade --write` renames it.
-- `check` no longer stops at a source file too large to count, at a source file that fails to read
-  (now an unreadable path of kind `read_file_failed`), or at another unreadable path. It reports
-  every such gap along with every violation, in every output format. Under
-  `[traversal].unreadable_paths = "fail"` the gaps make the check exit `2`; under `"warn"` they are
-  warnings, so a file too large to count no longer exits `2` there.
-  - The JSON report's `status` is `error` in that case, `coverage` lists `uncounted_files` next to
-    `unreadable_paths`, and the `error` object is gone.
-  - SARIF output reports gaps as tool execution notifications and sets `executionSuccessful`.
-  - GitHub output annotates gaps with `::error` or `::warning`, and prints the report on stdout.
-  - A file too large to count, or one inside an unreadable directory, keeps its ratchet ceiling:
-    `check` doesn't report it as stale and `tighten` doesn't remove it.
-  - `update` and `tighten` still refuse to write after an unreadable path.
-
-## [0.6.0-beta.1] - 2026-11-18
-
-### Added
-
-- Sprawl Guard is on PyPI as `sprawl-guard`, so Python projects can install it with uv, pip, or
-  pipx and pin it in their lockfile. Each wheel holds only the native binary, for macOS, Windows on
-  x64, Linux on x64 and Arm with glibc 2.35 or newer, and Linux on x64 with musl. The release
-  workflow publishes the wheels through PyPI trusted publishing, with attestations.
+- Configuration errors for a zero or negative count name the rule it breaks instead of an internal
+  type.
+- With `[ignore].skip_hidden = false`, the scan now leaves out `.git`.
+- SARIF output gives valid file locations for paths with spaces or special characters, and for
+  repositories checked with `--root` inside a GitHub Actions workspace.
+- The npm package runs on older Linux releases, such as Red Hat Enterprise Linux 9, by falling back
+  to its WebAssembly build. Before, it failed to start there.
+- The npm package's WebAssembly build places GitHub annotations and SARIF paths in the workspace as
+  the native builds do.
 
 ## [0.5.3] - 2026-11-18
 
@@ -163,26 +83,6 @@ All notable changes to `sprawl-guard` will be documented in this file.
   didn't start on older systems, and the x64 binary printed a glibc warning on every run.
 - On Node.js 22, the npm package no longer prints Node's "WASI is an experimental feature" warning
   on every run when it falls back to the WebAssembly build.
-
-### Known issues
-
-- The Linux musl binary, which npm installs on Alpine, is many times slower than the glibc binary
-  when it checks files on several threads.
-
-## [0.5.2-beta.1] - 2026-11-18
-
-### Fixed
-
-- On Node.js 22, the npm package no longer prints Node's "WASI is an experimental feature" warning
-  on every run when it falls back to the WebAssembly build.
-
-## [0.5.2-beta.0] - 2026-11-18
-
-### Fixed
-
-- The prebuilt Linux glibc binaries, in the npm packages and the release archives, now run on glibc
-  2.35 and newer, as in Ubuntu 22.04 and Debian 12. Before, the Arm binary needed glibc 2.39 and
-  didn't start on older systems, and the x64 binary printed a glibc warning on every run.
 
 ### Known issues
 
@@ -285,14 +185,21 @@ Version 0.3.1 was tagged but never published. This release contains the changes 
 
 ## [0.3.0] - 2026-11-14
 
-This release renames configuration keys, ratchet keys, and machine-readable output to match the
-documentation's vocabulary. Configurations written for 0.2.0 (schema version 1) still upgrade with
-`sprawl-guard config upgrade --write`, and upgrading from 0.2.0 also brings the changes listed under
-0.3.0-dev.0. Configuration and ratchet files written for 0.3.0-dev.0 keep their schema versions and
-need the renames below applied by hand.
+This release renames commands, configuration keys, ratchet keys, and machine-readable output to
+match the documentation's vocabulary. After upgrading, run `sprawl-guard config upgrade --write`,
+rename the ratchet keys listed below in your ratchet file, and replace the `baseline` and `ratchet`
+commands with `update` and `tighten`.
 
 ### Changed
 
+- `update` replaces `baseline` and adds newly discovered ratchet entries without raising existing
+  ceilings by default. `tighten` replaces `ratchet` for lowering and removing entries.
+- The production and test direct-file limits both default to 10 files.
+- Common dependency lockfiles are excluded from source discovery by default.
+- `init` creates configuration without scanning the repository.
+- Source scans use only in-root ignore policy and consistent dot-name hidden-file filtering.
+- Ratchet operations reject incomplete scans, including malformed or symlinked ignore policy.
+- The WASI fallback runs the CLI directly and preserves its exit status.
 - Configuration keys:
   - `max_leaf_files_per_directory` is now `max_direct_files_per_directory`, at the root, in
     language groups, and in `[[overrides]]`.
@@ -346,6 +253,11 @@ need the renames below applied by hand.
 
 ### Added
 
+- A JSON Schema for ratchet files, and editor directives that point configuration and ratchet TOML
+  files at their schemas.
+- Configuration upgrades that preserve authored comments and formatting, with a read-only CI check.
+- Ratchet change previews with before-and-after ceilings; complete TOML remains available.
+- Requested scan scope and configuration provenance in inspection output.
 - The JSON `summary` reports `ratchet_entries`, and a passing human check prints how many ratchet
   entries remain.
 - An agent skill, `skills/sprawl-guard/SKILL.md`, tells coding agents how to run the check and fix
@@ -365,36 +277,6 @@ need the renames below applied by hand.
 
 - The `*_increased` JSON ratchet kinds and the `sprawl-guard/ratchet-increase` SARIF rule. A
   violation that grew above its ceiling is reported only by its limit violation.
-- The staged-snapshot preparation hook. To check before you commit, run
-  `sprawl-guard check` in a pre-commit hook, as described in "Run in CI".
-
-## [0.3.0-dev.0] - 2026-10-22
-
-This development release changes command names and source-selection behavior. Run
-`sprawl-guard config upgrade` after upgrading, and replace `baseline` and `ratchet` commands with
-`update` and `tighten`.
-
-### Added
-
-- Versioned JSON Schemas and editor directives for both configuration and ratchet TOML files.
-- Configuration upgrades that preserve authored comments and formatting, with a read-only CI check.
-- Ratchet change previews with before-and-after ceilings; complete TOML remains available.
-- Requested scan scope and configuration provenance in inspection output.
-- An optional staged-snapshot preparation hook.
-
-### Changed
-
-- Production and test directory fan-out both default to 10 files.
-- Common dependency lockfiles are excluded from source discovery by default.
-- `update` replaces `baseline` and adds newly discovered ratchet entries without raising existing
-  ceilings by default. `tighten` replaces `ratchet` for lowering and removing entries.
-- `init` creates configuration without scanning the repository.
-- Source scans use only in-root ignore policy and consistent dot-name hidden-file filtering.
-- Ratchet operations reject incomplete scans, including malformed or symlinked ignore policy.
-- The WASI fallback runs the CLI directly and preserves its exit status.
-
-### Removed
-
 - Configuration include fragments; all `[[overrides]]` entries now live in the root configuration.
 - The no-op `--color` option and the silent traversal-depth limit.
 
@@ -402,21 +284,8 @@ This development release changes command names and source-selection behavior. Ru
 
 ### Added
 
-- Versioned JSON Schema output for configuration files, distributed through the CLI,
-  documentation site, and npm wrapper.
-
-### Changed
-
-- Successful checks now summarize the files, directories, and languages scanned.
-- Resolved configuration output can be limited to detected and explicitly configured languages.
-- Baseline and ratchet help text now distinguishes creating ceilings from lowering them, and
-  ratchet files name LOC ceilings `max_loc`.
-
-## [0.2.0-dev.0] - 2026-08-03
-
-### Added
-
-- Versioned configuration and ratchet schemas.
+- Versioned configuration and ratchet schemas, with JSON Schema output for configuration files
+  distributed through the CLI, documentation site, and npm wrapper.
 - Repository-defined language groups for directory fan-out limits and ratchets.
 - Language path customization through include, additional, and exclude globs.
 - Configurable inclusion of code, comments, and blank lines in file line limits.
@@ -424,6 +293,10 @@ This development release changes command names and source-selection behavior. Ru
 ### Changed
 
 - All bundled languages are enabled by default.
+- Successful checks now summarize the files, directories, and languages scanned.
+- Resolved configuration output can be limited to detected and explicitly configured languages.
+- Baseline and ratchet help text now distinguishes creating ceilings from lowering them, and
+  ratchet files name LOC ceilings `max_loc`.
 
 ## [0.1.0] - 2026-07-23
 
