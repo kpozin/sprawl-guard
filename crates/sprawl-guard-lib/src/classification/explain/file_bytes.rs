@@ -7,8 +7,9 @@ use serde::Serialize;
 
 use crate::config::Config;
 use crate::resolved_limits::LimitResolver;
+use crate::source_file::measure_file_size;
 use crate::value::path::resolve_root;
-use crate::{FileBytes, ResolvedFileBytesLimit, Result, SprawlError};
+use crate::{MeasuredFileSize, ResolvedFileBytesLimit, Result, SprawlError};
 
 use super::super::types::PathClassification;
 
@@ -28,10 +29,7 @@ pub enum FileSize {
     /// The file does not exist, so only its limit is known.
     NotFound,
     /// The file exists and has this size.
-    Measured {
-        /// Size of the file on disk.
-        bytes: FileBytes,
-    },
+    Measured(MeasuredFileSize),
 }
 
 /// Explains the byte limit for the path that `classification` describes.
@@ -48,10 +46,8 @@ pub fn explain_file_bytes(
         return Ok(None);
     };
     let absolute_path = resolve_root(root)?.join(path.to_path_buf());
-    let size = match absolute_path.metadata() {
-        Ok(metadata) => FileSize::Measured {
-            bytes: FileBytes::new(metadata.len()),
-        },
+    let size = match measure_file_size(&absolute_path) {
+        Ok(size) => FileSize::Measured(size),
         Err(source) if source.kind() == ErrorKind::NotFound => FileSize::NotFound,
         Err(source) => {
             return Err(SprawlError::ReadFileType {

@@ -9,9 +9,7 @@ use super::*;
 use crate::check::report::{CheckViolation, DirectoryViolationKind, RatchetViolationKind};
 use crate::config::Config;
 use crate::test_support::{load_config, write_config, write_rust_enabled_config};
-use crate::{
-    CheckStatus, CheckWarningKind, DirectoryDirectFilesViolation, RatchetViolation, RelativePath,
-};
+use crate::{CheckStatus, DirectoryDirectFilesViolation, RatchetViolation, RelativePath};
 
 fn write_ratchet(root: &Path, contents: &str) {
     fs::write(root.join("sprawl-guard.ratchet.toml"), contents).unwrap();
@@ -912,13 +910,11 @@ mod when_rust_cfg_test_preprocessing_fails {
 
         let report = check_root(tempdir.path()).unwrap();
 
-        assert_eq!(report.warnings().len(), 1);
-        assert_eq!(
-            report.warnings()[0].kind,
-            CheckWarningKind::RustCfgTestParseFailed
-        );
-        assert_eq!(report.warnings()[0].path.as_str(), "src/lib.rs");
-        assert!(!report.warnings()[0].detail.is_empty());
+        let [CheckWarning::RustCfgTestParseFailed { path, detail }] = report.warnings() else {
+            panic!("expected one cfg(test) warning: {:?}", report.warnings());
+        };
+        assert_eq!(path.as_str(), "src/lib.rs");
+        assert!(!detail.is_empty());
         assert_eq!(report.status(), CheckStatus::Failed);
         let violation = single_failed_file_violation(&report, FileViolationKind::FileLines);
         assert_eq!(violation.measurement.actual().get(), 2);
@@ -945,11 +941,10 @@ mod when_rust_cfg_test_preprocessing_fails {
                 crate::LineCount::new(1),
             ),
         );
-        assert_eq!(counted.warnings.len(), 1);
-        assert_eq!(
-            counted.warnings[0].kind,
-            CheckWarningKind::RustCfgTestParseFailed,
-        );
+        assert!(matches!(
+            counted.warnings.as_slice(),
+            [CheckWarning::RustCfgTestParseFailed { .. }]
+        ));
     }
 }
 

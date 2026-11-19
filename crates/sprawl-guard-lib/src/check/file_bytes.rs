@@ -1,6 +1,5 @@
 //! Checks every byte-limited file's size against its limit and its ratchet ceiling.
 
-use std::fs;
 use std::path::Path;
 
 use rayon::prelude::*;
@@ -8,7 +7,8 @@ use rayon::prelude::*;
 use crate::classification::{
     ByteLimitedFile, UnreadablePath, UnreadablePathKind, UnreadablePathSeverity,
 };
-use crate::{DiagnosticDetail, FileByteLimit, FileBytes};
+use crate::source_file::measure_file_size;
+use crate::{DiagnosticDetail, FileByteLimit, MeasuredFileSize};
 
 use super::ratchet::{MeasuredRatchets, RatchetCurrentPolicy, RatchetState};
 use super::report::{
@@ -39,8 +39,7 @@ pub(super) fn check_file_bytes(
     let sizes = files
         .into_par_iter()
         .map(|file| {
-            let size = fs::metadata(root.join(file.path.as_str()))
-                .map(|metadata| FileBytes::new(metadata.len()));
+            let size = measure_file_size(&root.join(file.path.as_str()));
             (file, size)
         })
         .collect::<Vec<_>>();
@@ -48,11 +47,11 @@ pub(super) fn check_file_bytes(
     for (file, size) in sizes {
         measured.record_file_size(&file.path);
         match size {
-            Ok(actual) => {
+            Ok(size) => {
                 let ceiling = ratchet.and_then(|ratchet| ratchet.file_size_ceiling(&file.path));
                 findings.violations.extend(file_bytes_violation(
                     file,
-                    actual,
+                    size,
                     ceiling,
                     current_policy,
                 ));
@@ -75,16 +74,18 @@ pub(super) fn check_file_bytes(
 /// within its limit, is stale.
 fn file_bytes_violation(
     file: ByteLimitedFile,
-    actual: FileBytes,
+    size: MeasuredFileSize,
     ceiling: Option<FileByteLimit>,
     current_policy: RatchetCurrentPolicy,
 ) -> Option<CheckViolation> {
+    let actual = size.bytes;
     let exceeded = file.limit.is_exceeded_by(actual);
     let violation = |ratchet| {
         CheckViolation::FileBytes(FileBytesViolation {
             kind: FileBytesViolationKind::FileBytes,
             path: file.path.clone(),
             actual,
+            measured_from: size.source,
             limit: file.limit,
             ratchet,
         })

@@ -8,7 +8,9 @@ use sprawl_guard_lib::{
     SourceResolvedLimits,
 };
 
-use super::check_output::{byte_size, ceiling_message, plural, unreadable_path_message};
+use super::check_output::{
+    byte_size, ceiling_message, plural, size_source_note, unreadable_path_message,
+};
 use super::display_relative;
 
 /// Everything `explain` reports about one path.
@@ -44,7 +46,11 @@ pub(super) fn explain_message(explanation: &PathExplanation) -> String {
 fn file_bytes_message(file_bytes: &FileBytesExplanation) -> String {
     let size = match file_bytes.size {
         FileSize::NotFound => "not found".to_owned(),
-        FileSize::Measured { bytes } => byte_size(bytes.into_inner()),
+        FileSize::Measured(size) => format!(
+            "{}{}",
+            byte_size(size.bytes.into_inner()),
+            size_source_note(size.source)
+        ),
     };
     format!(
         "  size: {size}, limit {}",
@@ -178,6 +184,15 @@ fn source_message(explanation: &SourceExplanation) -> String {
                 byte_size(max_parsed_code_file_bytes.into_inner()),
                 resolved_limits.file.value,
                 resolved_limits.file.count_lines
+            ));
+            push_source_limits(&mut lines, resolved_limits);
+        }
+        SourceExplanation::LfsPointer {
+            resolved_limits, ..
+        } => {
+            lines.push(format!(
+                "  lines: not counted, the file is a Git LFS pointer; limit {}, counting {}",
+                resolved_limits.file.value, resolved_limits.file.count_lines
             ));
             push_source_limits(&mut lines, resolved_limits);
         }

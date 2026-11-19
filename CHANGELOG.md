@@ -25,6 +25,15 @@ All notable changes to `sprawl-guard` will be documented in this file.
 - `explain` reports the size and byte limit of a file, with the overrides that set the limit, as
   `file_bytes` in JSON output. For a source file too large to count, it reports why its lines are
   not counted instead of failing.
+- Byte limits, `[[file_sizes]]` ceilings, and `explain` measure a file that Git LFS stores by the
+  size its pointer declares, so results don't depend on whether Git LFS has downloaded the file.
+  JSON output marks such a size with `"measured_from": "lfs_pointer"` and the pointer's own size in
+  `pointer_bytes`; other sizes have `"measured_from": "on_disk"`. Human, SARIF, and GitHub messages
+  name the pointer. Pointers with the current or the legacy `hawser.github.com` version URL are
+  recognized. `check` doesn't count the lines of a source file that is a pointer: it reports an
+  `lfs_pointer_source` warning with the file's `role` and `declared_bytes`, and keeps the line
+  ceiling for that role. A file smaller than 1 KiB that can't be opened is now reported as an
+  unreadable path, since `check` can't tell whether it is a pointer.
 
 ### Changed
 

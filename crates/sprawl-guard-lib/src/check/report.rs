@@ -10,7 +10,7 @@ use crate::classification::{SourceKind, UnreadablePath};
 use crate::code_line_counter::LineMeasurement;
 use crate::rust_cfg::RustCfgTestWarning;
 use crate::{
-    ConfigSource, DiagnosticDetail, DirectFiles, LanguageGroupId, LanguageId, LineLimit,
+    ConfigSource, DiagnosticDetail, DirectFiles, FileBytes, LanguageGroupId, LanguageId, LineLimit,
     RelativePath,
 };
 
@@ -188,6 +188,21 @@ impl CheckReport {
         self.coverage.uncounted_files()
     }
 
+    /// Returns whether `check` left the lines of the source file at `path` uncounted, because the
+    /// file was too large or a Git LFS pointer.
+    pub fn lines_uncounted(&self, path: &RelativePath, role: SourceKind) -> bool {
+        self.uncounted_files()
+            .iter()
+            .any(|file| file.path == *path && file.kind.role() == role)
+            || self.warnings.iter().any(|warning| {
+                matches!(
+                    warning,
+                    CheckWarning::LfsPointerSource { path: pointer, role: pointer_role, .. }
+                        if pointer == path && *pointer_role == role
+                )
+            })
+    }
+
     /// Returns the violations found by this run.
     pub fn violations(&self) -> &[CheckViolation] {
         &self.violations
@@ -293,13 +308,24 @@ pub struct CounterInfo {
 
 /// Non-fatal check warning included in human and machine-readable output.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct CheckWarning {
-    /// Stable warning kind for machine consumers.
-    pub kind: CheckWarningKind,
-    /// Repository-relative path affected by the warning.
-    pub path: RelativePath,
-    /// Backend or parser detail suitable for display.
-    pub detail: DiagnosticDetail,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CheckWarning {
+    /// Rust parsing failed, so cfg(test) preprocessing fell back to the original source.
+    RustCfgTestParseFailed {
+        /// Repository-relative path of the Rust source.
+        path: RelativePath,
+        /// Parser detail suitable for display.
+        detail: DiagnosticDetail,
+    },
+    /// The source file is a Git LFS pointer, so its lines were not counted.
+    LfsPointerSource {
+        /// Repository-relative path of the source.
+        path: RelativePath,
+        /// Role of the source, whose line limit went unchecked.
+        role: SourceKind,
+        /// Size of the object that the pointer declares.
+        declared_bytes: FileBytes,
+    },
 }
 
 impl CheckWarning {
@@ -307,20 +333,18 @@ impl CheckWarning {
         path: RelativePath,
         warning: RustCfgTestWarning,
     ) -> Self {
-        Self {
-            kind: CheckWarningKind::RustCfgTestParseFailed,
+        Self::RustCfgTestParseFailed {
             path,
             detail: warning.detail,
         }
     }
-}
 
-/// Stable warning categories emitted by checks.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CheckWarningKind {
-    /// Rust parsing failed, so cfg(test) preprocessing fell back to original source.
-    RustCfgTestParseFailed,
+    /// Returns the repository-relative path that the warning is about.
+    pub fn path(&self) -> &RelativePath {
+        match self {
+            Self::RustCfgTestParseFailed { path, .. } | Self::LfsPointerSource { path, .. } => path,
+        }
+    }
 }
 
 /// One violation in a check report.

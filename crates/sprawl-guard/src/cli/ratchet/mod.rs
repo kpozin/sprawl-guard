@@ -151,7 +151,7 @@ fn current_violation_report(
     Ok(report)
 }
 
-/// Adds the previous ceilings of files whose lines `report` could not count, so that tightening
+/// Adds the previous ceilings of files whose lines `report` did not count, so that tightening
 /// keeps them instead of removing them as no longer violating.
 fn keep_uncounted_ceilings(
     current: &mut RatchetFile,
@@ -162,12 +162,7 @@ fn keep_uncounted_ceilings(
         previous
             .files
             .iter()
-            .filter(|entry| {
-                report
-                    .uncounted_files()
-                    .iter()
-                    .any(|file| file.path == entry.path && file.kind.role() == entry.role)
-            })
+            .filter(|entry| report.lines_uncounted(&entry.path, entry.role))
             .cloned(),
     );
     current.sort();

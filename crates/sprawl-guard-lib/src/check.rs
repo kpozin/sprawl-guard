@@ -9,7 +9,7 @@ mod runner;
 pub(crate) use ratchet::RatchetState;
 pub use report::{
     AnalysisCoverage, AnalysisGaps, CheckReport, CheckStatus, CheckViolation, CheckWarning,
-    CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, CounterInfo, DetectedLanguageCount,
+    CheckedDirectoryCount, CheckedFileCount, CounterInfo, DetectedLanguageCount,
     DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
     DirectoryRatchetStaleMissingViolation, DirectoryViolationKind,
     FileBytesRatchetStaleMeasuredViolation, FileBytesRatchetStaleMissingViolation,

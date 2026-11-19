@@ -2,6 +2,7 @@
 
 use nutype::nutype;
 use schemars::JsonSchema;
+use serde::Serialize;
 
 use super::limits::FiniteOrUnlimited;
 
@@ -18,6 +19,30 @@ impl FileBytes {
     pub fn as_limit(self) -> Option<FileByteLimit> {
         FileByteLimit::try_new(self.into_inner()).ok()
     }
+}
+
+/// Size of a file that its byte limit is checked against, and where that size came from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct MeasuredFileSize {
+    /// Size checked against the limit.
+    pub bytes: FileBytes,
+    /// Where the size came from.
+    #[serde(flatten)]
+    pub source: FileSizeSource,
+}
+
+/// Where a measured file size came from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "measured_from", rename_all = "snake_case")]
+pub enum FileSizeSource {
+    /// The size of the file on disk.
+    OnDisk,
+    /// The size a Git LFS pointer declares for the file it stands in for, so that a checkout
+    /// with and without LFS content measure the same.
+    LfsPointer {
+        /// Size of the pointer file itself on disk.
+        pointer_bytes: FileBytes,
+    },
 }
 
 /// Error returned when a file byte limit is invalid.

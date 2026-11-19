@@ -180,9 +180,12 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
 
 - **A file's size** is shown next to its byte limit and the overrides that set that limit, as in
   `size: 1500 bytes (1.5 kB), limit 1000 bytes (1.0 kB)`. JSON reports them as `file_bytes`, with
-  the `limit` and a `size` whose `state` is `measured` or `not_found`.
+  the `limit` and a `size` whose `state` is `measured` or `not_found`. A measured `size` has the
+  same `measured_from` field as a `file_bytes` violation.
 - **A source file too large to count** is reported as not counted, with its size and
   `[traversal].max_parsed_code_file_bytes`, instead of failing.
+- **A source file that is a Git LFS pointer** is reported as not counted. JSON reports
+  `"state": "lfs_pointer"`.
 - **A path that doesn't exist** is classified by its name, so you can see where a planned file
   would land. JSON reports `state: "not_found"` instead of `state: "measured"`.
 - **A directory** gets one entry per kind and language group of source files directly inside it,
@@ -304,7 +307,12 @@ The report fields are:
   `test_file_lines`, `file_bytes`, `directory_direct_files`, or `test_directory_direct_files`, or,
   for a stale ratchet entry, one of these kinds followed by `_stale`. A file or directory
   violation's `ratchet` field holds its ratchet ceiling when it grew above one, and is `null` when
-  the ratchet file has no entry for it.
+  the ratchet file has no entry for it. Only a `file_bytes` violation has `measured_from`: it is
+  `on_disk`, or `lfs_pointer` for a file that Git LFS stores, in which case `actual` is the size the
+  pointer declares and `pointer_bytes` is the size of the pointer itself. Each warning has a `kind`
+  and a `path`. A `rust_cfg_test_parse_failed` warning adds the parser's `detail`. An
+  `lfs_pointer_source` warning, for a source file whose lines weren't counted because it is a Git
+  LFS pointer, adds the file's `role` and the `declared_bytes` of the object.
 
 When a path can't be read or a source file is too large to count, every format still prints the
 full report. Other errors print only a message on stderr, so check the exit code before parsing

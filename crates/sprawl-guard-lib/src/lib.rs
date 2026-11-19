@@ -16,7 +16,7 @@ mod value;
 
 pub use check::{
     AnalysisCoverage, AnalysisGaps, CheckOptions, CheckReport, CheckStatus, CheckViolation,
-    CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount,
+    CheckWarning, CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount,
     DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
     DirectoryRatchetStaleMissingViolation, DirectoryViolationKind,
     FileBytesRatchetStaleMeasuredViolation, FileBytesRatchetStaleMissingViolation,
@@ -41,7 +41,9 @@ pub use resolved_limits::{
     ResolvedFileLinesLimit, SourceResolvedLimits,
 };
 pub use rust_cfg::{ExcludedItemCount, RustCfgTestInfo, RustCfgTestStatus};
-pub use value::file_bytes::{FileByteLimit, FileByteLimitError, FileBytes, MaxBytesPerFile};
+pub use value::file_bytes::{
+    FileByteLimit, FileByteLimitError, FileBytes, FileSizeSource, MaxBytesPerFile, MeasuredFileSize,
+};
 pub use value::glob::{GlobPattern, GlobPatternError};
 pub use value::language::{LanguageId, LanguageIdError};
 pub use value::language_group::{CustomLanguageGroupId, LanguageGroupId, LanguageGroupIdError};

@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 use sprawl_guard_lib::{CheckReport, CheckStatus, RelativePath, UnreadablePathSeverity};
 
-use super::gap_notices;
+use super::{gap_notices, size_source_note};
 use sprawl_guard_lib::check::{
     CheckViolation, DirectoryDirectFilesViolation, DirectoryViolationKind, FileBytesViolation,
     FileLinesViolation, FileViolationKind, RatchetViolation, RatchetViolationKind,
@@ -159,9 +159,10 @@ fn file_bytes_finding(violation: &FileBytesViolation) -> Finding {
     Finding {
         rule_id: FILE_BYTES_RULE_ID,
         message: format!(
-            "{} has {} bytes, over the limit of {}{}.",
+            "{} has {} bytes{}, over the limit of {}{}.",
             violation.path,
             violation.actual,
+            size_source_note(violation.measured_from),
             violation.limit,
             ceiling_message(violation.ratchet)
         ),
@@ -374,11 +375,10 @@ pub(super) mod tests {
         RatchetStaleMissingViolation, RatchetViolation,
     };
     use sprawl_guard_lib::{
-        CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
-        DetectedLanguageCount, DiagnosticDetail, DirectFiles,
-        DirectoryRatchetStaleMeasuredViolation, FileRatchetStaleMeasuredViolation, LanguageGroupId,
-        LanguageId, LineCount, LineLimit, RatchetCount, RatchetEntryCount, RatchetLimit,
-        RelativePath, ScanSummary,
+        CheckWarning, CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount,
+        DiagnosticDetail, DirectFiles, DirectoryRatchetStaleMeasuredViolation,
+        FileRatchetStaleMeasuredViolation, LanguageGroupId, LanguageId, LineCount, LineLimit,
+        RatchetCount, RatchetEntryCount, RatchetLimit, RelativePath, ScanSummary,
     };
 
     use super::*;
@@ -550,8 +550,7 @@ pub(super) mod tests {
                     version: "14.0.0",
                 },
                 scan_summary(),
-                vec![CheckWarning {
-                    kind: CheckWarningKind::RustCfgTestParseFailed,
+                vec![CheckWarning::RustCfgTestParseFailed {
                     path: RelativePath::new("src/lib.rs").unwrap(),
                     detail: DiagnosticDetail::new("expected identifier"),
                 }],

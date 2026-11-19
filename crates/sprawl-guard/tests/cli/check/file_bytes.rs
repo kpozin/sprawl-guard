@@ -56,6 +56,7 @@ mod when_only_the_default_limit_is_set {
                     "kind": "file_bytes",
                     "path": "assets/logo.png",
                     "actual": 20,
+                    "measured_from": "on_disk",
                     "limit": LIMIT,
                     "ratchet": null,
                 })],

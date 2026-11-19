@@ -7,6 +7,7 @@ use super::common::*;
 mod file_bytes;
 mod github;
 mod ignore;
+mod lfs_pointers;
 mod max_findings;
 
 mod when_a_check_succeeds {
@@ -616,11 +617,7 @@ mod when_sarif_output_is_requested {
         write_rust_file_limit_config(&root, 1);
         write_rust_source_with_function_count(&root, "src/lib.rs", 2);
 
-        let output = sprawl_guard(&root)
-            .args(["check", "--format", "sarif"])
-            .output()
-            .unwrap();
-        let sarif = serde_json::from_str::<serde_json::Value>(&stdout(&output)).unwrap();
+        let (output, sarif) = run_json(&root, &["check", "--format", "sarif"]);
 
         assert_exit_code(&output, exit_codes::CHECK_FAILURE);
         assert_eq!(

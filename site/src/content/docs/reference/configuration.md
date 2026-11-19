@@ -64,6 +64,10 @@ archives, generated data, and files of disabled or excluded languages count too.
 ignore files, by `[files].extend_exclude`, and the configuration and ratchet files are not checked.
 Set a default here and use `[[overrides]]` to raise or lower it for particular paths.
 
+A file that Git LFS stores is measured by the size its pointer declares, so `check` gives the same
+result whether or not Git LFS has downloaded the file. Sprawl Guard doesn't count the lines of a
+source file that is still a pointer, and reports it as a warning instead.
+
 ### `[limits.max_lines_per_file]`
 
 | Field         | Type and default        | Meaning                                               |

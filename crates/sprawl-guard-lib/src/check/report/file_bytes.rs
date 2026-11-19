@@ -2,7 +2,7 @@
 
 use serde::Serialize;
 
-use crate::{FileByteLimit, FileBytes, RelativePath};
+use crate::{FileByteLimit, FileBytes, FileSizeSource, RelativePath};
 
 /// A file, source or not, that is larger than its byte limit.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -11,8 +11,11 @@ pub struct FileBytesViolation {
     pub kind: FileBytesViolationKind,
     /// Repository-relative file path.
     pub path: RelativePath,
-    /// Size of the file on disk.
+    /// Size of the file: its size on disk, or the size its Git LFS pointer declares.
     pub actual: FileBytes,
+    /// Where `actual` came from.
+    #[serde(flatten)]
+    pub measured_from: FileSizeSource,
     /// Byte limit that applies to the file.
     pub limit: FileByteLimit,
     /// Ceiling recorded for this file in the ratchet file, which the file grew above.

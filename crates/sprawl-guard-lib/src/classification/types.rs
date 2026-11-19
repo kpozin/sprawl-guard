@@ -208,6 +208,13 @@ pub enum SourceExplanation {
         /// Configured `traversal.max_parsed_code_file_bytes`, which the file is larger than.
         max_parsed_code_file_bytes: ParsedCodeFileByteLimit,
     },
+    /// Existing source that is a Git LFS pointer, so `check` does not count its lines.
+    LfsPointer {
+        /// Included source classification.
+        source: ClassifiedSource,
+        /// Resolved file and directory limits used by `check`.
+        resolved_limits: SourceResolvedLimits,
+    },
 }
 
 impl SourceExplanation {
@@ -236,7 +243,8 @@ impl SourceExplanation {
         match self {
             Self::NotFound { source }
             | Self::Measured { source, .. }
-            | Self::Uncounted { source, .. } => source,
+            | Self::Uncounted { source, .. }
+            | Self::LfsPointer { source, .. } => source,
         }
     }
 
@@ -249,6 +257,9 @@ impl SourceExplanation {
             }
             | Self::Uncounted {
                 resolved_limits, ..
+            }
+            | Self::LfsPointer {
+                resolved_limits, ..
             } => Some(resolved_limits),
         }
     }
@@ -256,7 +267,7 @@ impl SourceExplanation {
     /// Returns the line measurement for a source whose lines were counted.
     pub fn measurement(&self) -> Option<&LineMeasurement> {
         match self {
-            Self::NotFound { .. } | Self::Uncounted { .. } => None,
+            Self::NotFound { .. } | Self::Uncounted { .. } | Self::LfsPointer { .. } => None,
             Self::Measured { measurement, .. } => Some(measurement),
         }
     }
@@ -266,6 +277,7 @@ impl SourceExplanation {
         match self {
             Self::NotFound { .. }
             | Self::Uncounted { .. }
+            | Self::LfsPointer { .. }
             | Self::Measured {
                 rust_cfg_test: None,
                 ..

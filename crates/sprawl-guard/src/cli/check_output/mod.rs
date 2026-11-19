@@ -3,12 +3,12 @@ mod github;
 mod listing;
 mod sarif;
 
-pub(super) use file_bytes::byte_size;
+pub(super) use file_bytes::{byte_size, size_source_note};
 use std::path::Path;
 
 use sprawl_guard_lib::check::{
-    CheckViolation, CheckWarning, CheckWarningKind, DirectoryDirectFilesViolation,
-    FileLinesViolation, RatchetViolation, RatchetViolationKind,
+    CheckViolation, CheckWarning, DirectoryDirectFilesViolation, FileLinesViolation,
+    RatchetViolation, RatchetViolationKind,
 };
 use sprawl_guard_lib::{CheckReport, CheckStatus};
 use sprawl_guard_lib::{
@@ -199,11 +199,13 @@ fn write_warnings(output: &mut String, report: &CheckReport, listed: usize) {
 }
 
 fn warning_message(warning: &CheckWarning) -> String {
-    match warning.kind {
-        CheckWarningKind::RustCfgTestParseFailed => format!(
-            "{}: could not parse Rust to leave out cfg(test) code, so all of it was counted: {}",
-            display_relative(warning.path.as_str()),
-            warning.detail
+    let path = display_relative(warning.path().as_str());
+    match warning {
+        CheckWarning::RustCfgTestParseFailed { detail, .. } => format!(
+            "{path}: could not parse Rust to leave out cfg(test) code, so all of it was counted: {detail}"
+        ),
+        CheckWarning::LfsPointerSource { declared_bytes, .. } => format!(
+            "{path}: Git LFS pointer to a {declared_bytes}-byte object, so its lines were not counted"
         ),
     }
 }
@@ -432,13 +434,12 @@ mod tests {
     use serde_json::json;
     use sprawl_guard_lib::check::FileViolationKind;
     use sprawl_guard_lib::{
-        AnalysisCoverage, CheckViolation, CheckWarning, CheckWarningKind, CheckedDirectoryCount,
-        CheckedFileCount, DetectedLanguageCount, DiagnosticDetail, DirectFiles,
-        DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
-        DirectoryViolationKind, FileLinesViolation, FileRatchetStaleMeasuredViolation,
-        LanguageGroupId, LineCount, LineLimit, RatchetCount, RatchetEntryCount, RatchetLimit,
-        RatchetStaleMeasuredViolation, RatchetViolation, RelativePath, ScanSummary,
-        UnreadablePathSeverity,
+        AnalysisCoverage, CheckViolation, CheckWarning, CheckedDirectoryCount, CheckedFileCount,
+        DetectedLanguageCount, DiagnosticDetail, DirectFiles, DirectoryDirectFilesViolation,
+        DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind, FileLinesViolation,
+        FileRatchetStaleMeasuredViolation, LanguageGroupId, LineCount, LineLimit, RatchetCount,
+        RatchetEntryCount, RatchetLimit, RatchetStaleMeasuredViolation, RatchetViolation,
+        RelativePath, ScanSummary, UnreadablePathSeverity,
     };
 
     use super::*;
@@ -529,8 +530,7 @@ mod tests {
     }
 
     fn rust_cfg_warning() -> CheckWarning {
-        CheckWarning {
-            kind: CheckWarningKind::RustCfgTestParseFailed,
+        CheckWarning::RustCfgTestParseFailed {
             path: RelativePath::new("src/lib.rs").unwrap(),
             detail: DiagnosticDetail::new("expected identifier"),
         }

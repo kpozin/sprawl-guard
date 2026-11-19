@@ -97,14 +97,21 @@ fn measure_existing_source(
     let limits = LimitResolver::new(config)?;
     let resolved_limits = limits.source_limits(&source)?;
     let max_parsed_code_file_bytes = config.traversal.max_parsed_code_file_bytes;
-    if let ParsedCodeFileSize::TooLarge(_) =
-        parsed_code_file_size(absolute_path, max_parsed_code_file_bytes)?
-    {
-        return Ok(SourceExplanation::Uncounted {
-            source,
-            resolved_limits,
-            max_parsed_code_file_bytes,
-        });
+    match parsed_code_file_size(absolute_path, max_parsed_code_file_bytes)? {
+        ParsedCodeFileSize::WithinLimit => {}
+        ParsedCodeFileSize::TooLarge(_) => {
+            return Ok(SourceExplanation::Uncounted {
+                source,
+                resolved_limits,
+                max_parsed_code_file_bytes,
+            });
+        }
+        ParsedCodeFileSize::LfsPointer(_) => {
+            return Ok(SourceExplanation::LfsPointer {
+                source,
+                resolved_limits,
+            });
+        }
     }
     let measurement = measure_source(
         config,

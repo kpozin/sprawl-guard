@@ -18,7 +18,7 @@ use crate::source_file::{
     ParsedCodeFileSize, ensure_parsed_code_file_size, parsed_code_file_size, read_source_to_string,
 };
 use crate::value::path::resolve_root;
-use crate::{CountLines, DiagnosticDetail, RelativePath, Result, SprawlError};
+use crate::{CountLines, DiagnosticDetail, FileBytes, RelativePath, Result, SprawlError};
 
 use super::directory_direct_files::directory_direct_files_checks;
 use super::file_bytes::{FileBytesFindings, check_file_bytes};
@@ -177,6 +177,18 @@ fn check_with_counter_mode(
                 measured_ratchets.record_uncounted_file(&file.path, file.kind);
                 uncounted_files.push(file);
             }
+            SourceOutcome::LfsPointer {
+                kind,
+                path,
+                declared,
+            } => {
+                measured_ratchets.record_uncounted_file(&path, kind);
+                warnings.push(CheckWarning::LfsPointerSource {
+                    path,
+                    role: kind.role(),
+                    declared_bytes: declared,
+                });
+            }
             SourceOutcome::Unreadable { kind, path, detail } => {
                 measured_ratchets.record_uncounted_file(&path, kind);
                 unreadable_paths.push(UnreadablePath {
@@ -231,6 +243,13 @@ pub(super) enum SourceOutcome {
     Counted(SourceCheck),
     /// The file is too large to count, so its line limit went unchecked.
     Uncounted(UncountedFile),
+    /// The file is a Git LFS pointer, so its line limit went unchecked.
+    LfsPointer {
+        kind: FileViolationKind,
+        path: RelativePath,
+        /// Size of the object that the pointer declares.
+        declared: FileBytes,
+    },
     /// The file failed to read, so its line limit went unchecked.
     Unreadable {
         kind: FileViolationKind,
@@ -294,14 +313,24 @@ fn check_readable_source(
     let config = inputs.config;
     let absolute_path = inputs.root.join(source.path.to_path_buf());
     let byte_limit = config.traversal.max_parsed_code_file_bytes;
-    if let ParsedCodeFileSize::TooLarge(size) = parsed_code_file_size(&absolute_path, byte_limit)? {
-        return Ok(SourceOutcome::Uncounted(UncountedFile {
-            kind,
-            severity: inputs.gap_severity,
-            path: source.path,
-            size,
-            limit: byte_limit,
-        }));
+    match parsed_code_file_size(&absolute_path, byte_limit)? {
+        ParsedCodeFileSize::WithinLimit => {}
+        ParsedCodeFileSize::TooLarge(size) => {
+            return Ok(SourceOutcome::Uncounted(UncountedFile {
+                kind,
+                severity: inputs.gap_severity,
+                path: source.path,
+                size,
+                limit: byte_limit,
+            }));
+        }
+        ParsedCodeFileSize::LfsPointer(declared) => {
+            return Ok(SourceOutcome::LfsPointer {
+                kind,
+                path: source.path,
+                declared,
+            });
+        }
     }
     let limit = inputs.limits.file_lines_limit(&source);
     let CountedSource {
