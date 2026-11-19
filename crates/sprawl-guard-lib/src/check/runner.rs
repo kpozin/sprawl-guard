@@ -4,16 +4,21 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
-use crate::classification::{ClassifiedSource, SourceKind, discover_sources_report};
+use crate::classification::{
+    ClassifiedSource, SourceKind, UnreadablePath, UnreadablePathKind, UnreadablePathSeverity,
+    discover_sources_report,
+};
 use crate::code_line_counter::{CodeLineCounter, LineMeasurement, TokeiCodeLineCounter};
 use crate::config::{Config, ResolvedConfig, UnreadablePathPolicy};
 use crate::resolved_limits::LimitResolver;
 use crate::rust_cfg::{
     RustCfgTestInfo, RustCfgTestStatus, preprocess_rust_cfg_test, rust_cfg_test_policy_info,
 };
-use crate::source_file::{ensure_parsed_code_file_size, read_source_to_string};
+use crate::source_file::{
+    ParsedCodeFileSize, ensure_parsed_code_file_size, parsed_code_file_size, read_source_to_string,
+};
 use crate::value::path::resolve_root;
-use crate::{CountLines, CountedLines, LineLimit, RelativePath, Result, SprawlError};
+use crate::{CountLines, DiagnosticDetail, RelativePath, Result, SprawlError};
 
 use super::directory_direct_files::directory_direct_files_checks;
 use super::ratchet::{
@@ -21,17 +26,19 @@ use super::ratchet::{
     file_violations_with_ratchet, stale_missing_ratchets,
 };
 use super::report::{
-    AnalysisCoverage, CheckContext, CheckReport, CheckViolation, CheckWarning, CounterInfo,
-    DirectoryViolationKind, FileLinesViolation, FileViolationKind, NonEmptyUnreadablePaths,
-    ReportRoot,
+    AnalysisCoverage, CheckContext, CheckReport, CheckWarning, CounterInfo, FileLinesViolation,
+    FileViolationKind, RatchetEntryCount, ReportRoot, UncountedFile,
 };
-use super::report::{RatchetEntryCount, RatchetViolationKind};
 
 mod selected_paths;
+mod source_check;
 mod summary;
+mod violation_order;
 
 pub use selected_paths::{NonEmptyCheckPaths, SelectedPaths};
+pub(super) use source_check::{FileMeasurement, SourceCheck};
 use summary::summarize_scan;
+use violation_order::sort_violations;
 
 /// Inputs for running `sprawl-guard check`.
 pub struct CheckOptions<'config> {
@@ -52,8 +59,9 @@ pub struct CheckOptions<'config> {
     pub require_ratchet_current: Option<bool>,
     /// Override `[traversal].unreadable_paths` for this check.
     ///
-    /// `None` uses config. `Some(Warn)` permits exploratory local checks to return partial analysis
-    /// without failing solely because of descendant unreadable paths.
+    /// `None` uses config. The check reports unreadable paths and uncounted files either way;
+    /// `Some(Fail)` gives the report [`CheckStatus::Error`](super::CheckStatus::Error) when there
+    /// are any, and `Some(Warn)` lets it pass or fail on its violations alone.
     pub unreadable_paths: Option<UnreadablePathPolicy>,
 }
 
@@ -112,16 +120,11 @@ fn check_with_counter_mode(
         false => RatchetCurrentPolicy::AllowStale,
     };
     let limit_resolver = LimitResolver::new(config)?;
-    let discovery = discover_sources_report(
-        &root,
-        config,
-        selected_paths.paths(),
-        options.unreadable_paths,
-    )?;
-    let coverage = match NonEmptyUnreadablePaths::new(discovery.unreadable_paths) {
-        Some(unreadable_paths) => AnalysisCoverage::Partial { unreadable_paths },
-        None => AnalysisCoverage::Complete,
-    };
+    let gap_policy = options
+        .unreadable_paths
+        .unwrap_or(config.traversal.unreadable_paths);
+    let discovery =
+        discover_sources_report(&root, config, selected_paths.paths(), Some(gap_policy))?;
     let directory_checks = directory_direct_files_checks(&limit_resolver, &discovery.sources)?;
     let summary = summarize_scan(
         &discovery.sources,
@@ -130,19 +133,44 @@ fn check_with_counter_mode(
             .as_ref()
             .map_or(RatchetEntryCount::new(0), RatchetState::entry_count),
     );
-    let source_checks = check_sources(&root, config, &limit_resolver, counter, discovery.sources)?;
+    let sources = SourceCheckInputs {
+        root: &root,
+        config,
+        limits: &limit_resolver,
+        gap_severity: gap_policy.into(),
+    };
+    let source_outcomes = check_sources(&sources, counter, discovery.sources)?;
     let mut violations = Vec::new();
     let mut warnings = Vec::new();
+    let mut uncounted_files = Vec::new();
+    let mut unreadable_paths = discovery.unreadable_paths;
     let mut measured_ratchets = MeasuredRatchets::default();
 
-    for mut source_check in source_checks {
-        warnings.append(source_check.warnings_mut());
-        measured_ratchets.record_file(&source_check.measurement());
-        violations.extend(file_violations_with_ratchet(
-            &ratchet,
-            ratchet_current_policy,
-            source_check,
-        ));
+    for source_outcome in source_outcomes {
+        match source_outcome {
+            SourceOutcome::Counted(mut source_check) => {
+                warnings.append(source_check.warnings_mut());
+                measured_ratchets.record_file(&source_check.measurement());
+                violations.extend(file_violations_with_ratchet(
+                    &ratchet,
+                    ratchet_current_policy,
+                    source_check,
+                ));
+            }
+            SourceOutcome::Uncounted(file) => {
+                measured_ratchets.record_uncounted_file(&file.path, file.kind);
+                uncounted_files.push(file);
+            }
+            SourceOutcome::Unreadable { kind, path, detail } => {
+                measured_ratchets.record_uncounted_file(&path, kind);
+                unreadable_paths.push(UnreadablePath {
+                    kind: UnreadablePathKind::ReadFileFailed,
+                    severity: sources.gap_severity,
+                    path: Some(path),
+                    detail,
+                });
+            }
+        }
     }
     for directory_check in directory_checks {
         measured_ratchets.record_directory(&directory_check.measurement());
@@ -160,7 +188,8 @@ fn check_with_counter_mode(
         ));
     }
 
-    violations.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
+    sort_violations(&mut violations);
+    unreadable_paths.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
     Ok(CheckReport::new(
         CheckContext::new(
             ReportRoot::from_resolved_path(&root),
@@ -171,162 +200,98 @@ fn check_with_counter_mode(
             backend: counter.backend_id(),
             version: counter.backend_version(),
         },
-        coverage,
+        AnalysisCoverage::new(unreadable_paths, uncounted_files),
         summary,
         warnings,
         violations,
     ))
 }
 
-impl CheckViolation {
-    fn sort_key(&self) -> ViolationSortKey<'_> {
-        match self {
-            Self::FileLines(violation) => {
-                ViolationSortKey::new(file_violation_sort_order(violation.kind), &violation.path)
-            }
-            Self::DirectoryDirectFiles(violation) => ViolationSortKey::new(
-                directory_violation_sort_order(violation.kind),
-                &violation.path,
-            ),
-            Self::Ratchet(violation) => ViolationSortKey::new(
-                ratchet_violation_sort_order(violation.kind()),
-                violation.path(),
-            ),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-struct ViolationSortKey<'path> {
-    kind_order: u8,
-    path: &'path RelativePath,
-}
-
-impl<'path> ViolationSortKey<'path> {
-    fn new(kind_order: u8, path: &'path RelativePath) -> Self {
-        Self { kind_order, path }
-    }
-}
-
-fn file_violation_sort_order(kind: FileViolationKind) -> u8 {
-    match kind {
-        FileViolationKind::FileLines => 0,
-        FileViolationKind::TestFileLines => 1,
-    }
-}
-
-fn directory_violation_sort_order(kind: DirectoryViolationKind) -> u8 {
-    match kind {
-        DirectoryViolationKind::DirectoryDirectFiles => 2,
-        DirectoryViolationKind::TestDirectoryDirectFiles => 3,
-    }
-}
-
-fn ratchet_violation_sort_order(kind: RatchetViolationKind) -> u8 {
-    match kind {
-        RatchetViolationKind::FileLinesStale => 4,
-        RatchetViolationKind::TestFileLinesStale => 5,
-        RatchetViolationKind::DirectoryDirectFilesStale => 6,
-        RatchetViolationKind::TestDirectoryDirectFilesStale => 7,
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct FileMeasurement {
-    pub(super) kind: FileViolationKind,
-    pub(super) path: RelativePath,
-    pub(super) lines: LineMeasurement,
-    pub(super) limit: LineLimit,
-}
-
-impl FileMeasurement {
-    /// Returns the aggregate selected by the resolved included line types.
-    pub(super) const fn current_lines(&self) -> CountedLines {
-        self.lines.actual()
-    }
-}
-
-pub(super) enum SourceCheck {
-    WithinLimit {
-        measurement: FileMeasurement,
-        warnings: Vec<CheckWarning>,
-    },
-    Exceeded {
-        measurement: FileMeasurement,
-        violation: FileLinesViolation,
-        warnings: Vec<CheckWarning>,
+/// What one source file's check produced.
+pub(super) enum SourceOutcome {
+    /// The file's lines were counted and checked against its line limit.
+    Counted(SourceCheck),
+    /// The file is too large to count, so its line limit went unchecked.
+    Uncounted(UncountedFile),
+    /// The file failed to read, so its line limit went unchecked.
+    Unreadable {
+        kind: FileViolationKind,
+        path: RelativePath,
+        detail: DiagnosticDetail,
     },
 }
 
-impl SourceCheck {
-    pub(super) fn measurement(&self) -> FileMeasurement {
-        match self {
-            Self::WithinLimit { measurement, .. } | Self::Exceeded { measurement, .. } => {
-                measurement.clone()
-            }
-        }
-    }
-
-    pub(super) fn warnings_mut(&mut self) -> &mut Vec<CheckWarning> {
-        match self {
-            Self::WithinLimit { warnings, .. } | Self::Exceeded { warnings, .. } => warnings,
-        }
-    }
-
-    pub(super) fn violation_mut(&mut self) -> Option<&mut FileLinesViolation> {
-        match self {
-            Self::WithinLimit { .. } => None,
-            Self::Exceeded { violation, .. } => Some(violation),
-        }
-    }
-
-    pub(super) fn has_violation(&self) -> bool {
-        matches!(self, Self::Exceeded { .. })
-    }
-
-    pub(super) fn into_violation(self) -> Option<FileLinesViolation> {
-        match self {
-            Self::WithinLimit { .. } => None,
-            Self::Exceeded { violation, .. } => Some(violation),
-        }
-    }
+/// Settings shared by every source file's check.
+struct SourceCheckInputs<'inputs> {
+    root: &'inputs Path,
+    config: &'inputs Config,
+    limits: &'inputs LimitResolver<'inputs>,
+    /// Severity of an uncounted file, from `traversal.unreadable_paths`.
+    gap_severity: UnreadablePathSeverity,
 }
 
 fn check_sources(
-    root: &Path,
-    config: &Config,
-    limits: &LimitResolver<'_>,
+    inputs: &SourceCheckInputs<'_>,
     counter: &(impl CodeLineCounter + Sync),
     sources: Vec<ClassifiedSource>,
-) -> Result<Vec<SourceCheck>> {
+) -> Result<Vec<SourceOutcome>> {
     // File content reads are bounded by Rayon worker count and sorted after
     // collection, so scanning stays parallel without leaking scheduler order
     // into reports.
     sources
         .into_par_iter()
-        .map(|source| check_source(root, config, limits, counter, source))
+        .map(|source| check_source(inputs, counter, source))
         .collect::<Result<Vec<_>>>()
 }
 
+/// Checks one source file, turning a failure to read it into a gap in the analysis.
 fn check_source(
-    root: &Path,
-    config: &Config,
-    limits: &LimitResolver<'_>,
+    inputs: &SourceCheckInputs<'_>,
     counter: &(impl CodeLineCounter + Sync),
     source: ClassifiedSource,
-) -> Result<SourceCheck> {
-    let absolute_path = root.join(source.path.to_path_buf());
-    let limit = limits.file_lines_limit(&source);
+) -> Result<SourceOutcome> {
+    let kind = match source.kind {
+        SourceKind::Production => FileViolationKind::FileLines,
+        SourceKind::Test => FileViolationKind::TestFileLines,
+    };
+    let path = source.path.clone();
+    match check_readable_source(inputs, counter, source, kind) {
+        Err(SprawlError::ReadSource { source, .. } | SprawlError::ReadFileType { source, .. }) => {
+            Ok(SourceOutcome::Unreadable {
+                kind,
+                path,
+                detail: DiagnosticDetail::new(source.to_string()),
+            })
+        }
+        outcome => outcome,
+    }
+}
+
+fn check_readable_source(
+    inputs: &SourceCheckInputs<'_>,
+    counter: &(impl CodeLineCounter + Sync),
+    source: ClassifiedSource,
+    kind: FileViolationKind,
+) -> Result<SourceOutcome> {
+    let config = inputs.config;
+    let absolute_path = inputs.root.join(source.path.to_path_buf());
+    let byte_limit = config.traversal.max_parsed_code_file_bytes;
+    if let ParsedCodeFileSize::TooLarge(size) = parsed_code_file_size(&absolute_path, byte_limit)? {
+        return Ok(SourceOutcome::Uncounted(UncountedFile {
+            kind,
+            severity: inputs.gap_severity,
+            path: source.path,
+            size,
+            limit: byte_limit,
+        }));
+    }
+    let limit = inputs.limits.file_lines_limit(&source);
     let CountedSource {
         measurement: lines,
         warnings,
         ..
     } = count_source(config, counter, &source, &absolute_path, limit.count_lines)?;
     let actual = lines.actual();
-    let kind = match source.kind {
-        SourceKind::Production => FileViolationKind::FileLines,
-        SourceKind::Test => FileViolationKind::TestFileLines,
-    };
     let measurement = FileMeasurement {
         kind,
         path: source.path.clone(),
@@ -335,13 +300,13 @@ fn check_source(
     };
 
     if actual.get() <= limit.value.get() {
-        return Ok(SourceCheck::WithinLimit {
+        return Ok(SourceOutcome::Counted(SourceCheck::WithinLimit {
             measurement,
             warnings,
-        });
+        }));
     }
 
-    Ok(SourceCheck::Exceeded {
+    Ok(SourceOutcome::Counted(SourceCheck::Exceeded {
         measurement,
         violation: FileLinesViolation {
             kind,
@@ -352,7 +317,7 @@ fn check_source(
             ratchet: None,
         },
         warnings,
-    })
+    }))
 }
 
 struct CountedSource {
@@ -368,7 +333,6 @@ fn count_source(
     absolute_path: &Path,
     count_lines: CountLines,
 ) -> Result<CountedSource> {
-    ensure_parsed_code_file_size(absolute_path, config.traversal.max_parsed_code_file_bytes)?;
     let Some(preprocess_info) = rust_cfg_test_policy_info(config, source) else {
         return Ok(CountedSource {
             measurement: normalize_measurement(
@@ -424,12 +388,16 @@ pub(crate) struct SourceMeasurement {
 }
 
 /// Measures one classified source with the production counter and check semantics.
+///
+/// A file larger than `traversal.max_parsed_code_file_bytes` is an error here, since there is
+/// no measurement to return.
 pub(crate) fn measure_source(
     config: &Config,
     source: &ClassifiedSource,
     absolute_path: &Path,
     count_lines: CountLines,
 ) -> Result<SourceMeasurement> {
+    ensure_parsed_code_file_size(absolute_path, config.traversal.max_parsed_code_file_bytes)?;
     let counted = count_source(
         config,
         &TokeiCodeLineCounter,

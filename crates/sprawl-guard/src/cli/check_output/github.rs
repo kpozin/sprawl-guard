@@ -1,4 +1,4 @@
-//! GitHub Actions annotations for check violations.
+//! GitHub Actions annotations for check violations and analysis gaps.
 //!
 //! GitHub Actions reads [workflow commands] from a step's output. Each `::error` line becomes an
 //! annotation on the workflow run, and one that names a file also appears beside that file in a
@@ -11,11 +11,12 @@ use std::env;
 use std::hash::{BuildHasher, Hasher};
 use std::path::{Component, Path};
 
-use sprawl_guard_lib::CheckReport;
 use sprawl_guard_lib::check::CheckViolation;
+use sprawl_guard_lib::{CheckReport, RelativePath, UnreadablePathSeverity};
 
+use super::listing::FindingListing;
 use super::sarif::{Finding, finding};
-use super::violations_in_display_order;
+use super::{GapNotice, gap_notices, violations_in_display_order};
 
 /// The line that file annotations point at. A size limit applies to the whole file, and GitHub
 /// shows an annotation in a diff only when it names a line.
@@ -35,18 +36,19 @@ enum FilePaths {
     OutsideWorkspace,
 }
 
-/// Renders the human report as plain log text, followed by one `::error` workflow command for
-/// each of the first `listed` violations in display order, which are the ones the report lists.
+/// Renders the human report as plain log text, followed by one workflow command for each
+/// violation and analysis gap that the human report lists: `::error` for violations and failing
+/// gaps, `::warning` for gaps that do not fail the check.
 pub(super) fn github_check_report(
     human_report: &str,
     report: &CheckReport,
-    listed: usize,
+    listing: FindingListing,
 ) -> String {
     let root = Path::new(report.root());
     let workspace =
         env::var_os(GITHUB_WORKSPACE).and_then(|path| Path::new(&path).canonicalize().ok());
     plain_log_text(human_report)
-        + &annotations(report, &file_paths(root, workspace.as_deref()), listed)
+        + &annotations(report, &file_paths(root, workspace.as_deref()), listing)
 }
 
 /// Prints text, such as a report that names repository files, so that the runner shows it without
@@ -78,12 +80,14 @@ fn fenced(text: &str, token: &str) -> String {
     format!("::stop-commands::{token}\n{text}{newline}::{token}::\n")
 }
 
-fn annotations(report: &CheckReport, file_paths: &FilePaths, listed: usize) -> String {
-    violations_in_display_order(report)
+fn annotations(report: &CheckReport, file_paths: &FilePaths, listing: FindingListing) -> String {
+    let violations = violations_in_display_order(report)
         .into_iter()
-        .take(listed)
-        .map(|violation| annotation(file_paths, violation))
-        .collect()
+        .take(listing.violations)
+        .map(|violation| annotation(file_paths, violation));
+    let gaps = gap_notices(report, listing.unreadable_paths, listing.uncounted_files)
+        .map(|gap| gap_annotation(file_paths, &gap));
+    violations.chain(gaps).collect()
 }
 
 /// Decides how annotations name files under `root`.
@@ -110,28 +114,51 @@ fn file_paths(root: &Path, workspace: Option<&Path>) -> FilePaths {
     )
 }
 
+/// Renders the `file` and `line` properties of an annotation about `file`, or nothing when there
+/// is no file or GitHub could not place it.
+fn file_property(file_paths: &FilePaths, file: Option<&RelativePath>) -> String {
+    match (file, file_paths) {
+        (Some(file), FilePaths::Prefixed(prefix)) => format!(
+            "file={},line={FILE_ANNOTATION_LINE},",
+            escape_property(&format!("{prefix}{file}"))
+        ),
+        (Some(_), FilePaths::OutsideWorkspace) | (None, _) => String::new(),
+    }
+}
+
 /// Renders one violation's workflow command.
 ///
 /// Only file violations name a file, and only when GitHub can place it. Other annotations appear
 /// on the workflow run alone.
 fn annotation(file_paths: &FilePaths, violation: &CheckViolation) -> String {
     let Finding { rule_id, message } = finding(violation);
-    let file = match (violation, file_paths) {
-        (CheckViolation::FileLines(violation), FilePaths::Prefixed(prefix)) => format!(
-            "file={},line={FILE_ANNOTATION_LINE},",
-            escape_property(&format!("{prefix}{}", violation.path))
-        ),
-        (CheckViolation::FileLines(_), FilePaths::OutsideWorkspace)
-        | (CheckViolation::DirectoryDirectFiles(_) | CheckViolation::Ratchet(_), _) => {
-            String::new()
-        }
+    let file = match violation {
+        CheckViolation::FileLines(violation) => Some(&violation.path),
+        CheckViolation::DirectoryDirectFiles(_) | CheckViolation::Ratchet(_) => None,
     };
+    let file = file_property(file_paths, file);
     format!(
         "::error {file}title={}::{}\n",
         escape_property(rule_id),
         escape_data(&message)
     )
 }
+
+/// Renders one analysis gap's workflow command, naming its file when GitHub can place it.
+fn gap_annotation(file_paths: &FilePaths, gap: &GapNotice<'_>) -> String {
+    let command = match gap.severity {
+        UnreadablePathSeverity::Error => "error",
+        UnreadablePathSeverity::Warning => "warning",
+    };
+    format!(
+        "::{command} {}title={GAP_TITLE}::{}\n",
+        file_property(file_paths, gap.file),
+        escape_data(&gap.message)
+    )
+}
+
+/// Title of annotations for analysis gaps.
+const GAP_TITLE: &str = "sprawl-guard/incomplete-analysis";
 
 /// Escapes a workflow command's message, as the GitHub Actions toolkit does.
 fn escape_data(value: &str) -> String {
@@ -164,7 +191,16 @@ mod tests {
         annotations(
             report,
             &FilePaths::Prefixed(String::new()),
-            report.violations().len(),
+            unlimited(report),
+        )
+    }
+
+    /// Lists every finding of the report.
+    fn unlimited(report: &CheckReport) -> FindingListing {
+        FindingListing::new(
+            report,
+            false,
+            sprawl_guard_lib::FiniteOrUnlimited::Unlimited,
         )
     }
 
@@ -269,7 +305,7 @@ mod tests {
             );
 
             assert!(
-                annotations(&report, &file_paths, 1)
+                annotations(&report, &file_paths, unlimited(&report))
                     .starts_with("::error file=tools/app/src/lib.rs,")
             );
         }
@@ -292,7 +328,7 @@ mod tests {
             let file_paths = file_paths(Path::new("/elsewhere"), Some(Path::new("/workspace")));
 
             assert_eq!(
-                annotations(&report, &file_paths, 1),
+                annotations(&report, &file_paths, unlimited(&report)),
                 "::error title=sprawl-guard/file-lines::\
                  src/lib.rs has 3 lines (counting code), over the limit of 2.\n"
             );

@@ -16,9 +16,11 @@ use crate::{
 
 use super::runner::SelectedPaths;
 
+mod coverage;
 mod ratchet;
 mod summary;
 
+pub use coverage::{AnalysisCoverage, AnalysisGaps, UncountedFile};
 pub use ratchet::{
     DirectoryRatchetStaleMeasuredViolation, DirectoryRatchetStaleMissingViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, RatchetLimit,
@@ -29,11 +31,11 @@ pub use summary::{
     CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount, RatchetEntryCount, ScanSummary,
 };
 
-/// Successful result of one `sprawl-guard check` run.
+/// Result of one `sprawl-guard check` run that finished.
 ///
-/// This type represents completed check analysis only. Operational failures,
-/// including fail-mode unreadable paths, are returned as errors instead of
-/// being embedded in the report.
+/// A finished run reports every violation it found, along with any paths or files it could not
+/// analyze. Run-level failures, such as invalid configuration or an unreadable root, are errors
+/// instead.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckReport {
     root: ReportRoot,
@@ -105,20 +107,20 @@ impl CheckReport {
         )
     }
 
-    /// Creates a partial check report from non-empty unreadable paths.
-    pub fn partial(
+    /// Creates a check report of the whole root with the given coverage.
+    pub fn with_coverage(
         root: ReportRoot,
         config_source: ConfigSource,
         counter: CounterInfo,
         summary: ScanSummary,
         warnings: Vec<CheckWarning>,
-        unreadable_paths: NonEmptyUnreadablePaths,
+        coverage: AnalysisCoverage,
         violations: Vec<CheckViolation>,
     ) -> Self {
         Self::new(
             CheckContext::new(root, SelectedPaths::All, config_source),
             counter,
-            AnalysisCoverage::Partial { unreadable_paths },
+            coverage,
             summary,
             warnings,
             violations,
@@ -126,8 +128,12 @@ impl CheckReport {
     }
 
     /// Returns the derived check status for this report.
+    ///
+    /// Gaps that fail the check outrank violations, because the violations may be incomplete.
     pub fn status(&self) -> CheckStatus {
-        if self.has_violations() {
+        if self.coverage.has_error() {
+            CheckStatus::Error
+        } else if self.has_violations() {
             CheckStatus::Failed
         } else {
             CheckStatus::Passed
@@ -171,10 +177,12 @@ impl CheckReport {
 
     /// Returns the paths below the root that could not be read during discovery.
     pub fn unreadable_paths(&self) -> &[UnreadablePath] {
-        match &self.coverage {
-            AnalysisCoverage::Complete => &[],
-            AnalysisCoverage::Partial { unreadable_paths } => unreadable_paths.as_slice(),
-        }
+        self.coverage.unreadable_paths()
+    }
+
+    /// Returns the source files whose lines were not counted because they are too large.
+    pub fn uncounted_files(&self) -> &[UncountedFile] {
+        self.coverage.uncounted_files()
     }
 
     /// Returns the violations found by this run.
@@ -259,47 +267,16 @@ pub enum ReportRootError {
     },
 }
 
-/// Whether a check result covered all paths or returned partial analysis.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum AnalysisCoverage {
-    /// All required paths were discovered and measured.
-    Complete,
-    /// Analysis continued past paths that could not be read.
-    Partial {
-        /// Non-empty list of unreadable paths explaining why analysis is partial.
-        unreadable_paths: NonEmptyUnreadablePaths,
-    },
-}
-
-/// Non-empty unreadable path collection.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-#[serde(transparent)]
-pub struct NonEmptyUnreadablePaths(Vec<UnreadablePath>);
-
-impl NonEmptyUnreadablePaths {
-    /// Creates a non-empty collection, or `None` when `paths` is empty.
-    pub fn new(paths: Vec<UnreadablePath>) -> Option<Self> {
-        if paths.is_empty() {
-            return None;
-        }
-        Some(Self(paths))
-    }
-
-    /// Returns the unreadable paths as a slice.
-    pub fn as_slice(&self) -> &[UnreadablePath] {
-        &self.0
-    }
-}
-
 /// Overall check status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CheckStatus {
-    /// No violations were found.
+    /// No violations were found, and every gap, if any, only warns.
     Passed,
-    /// One or more violations were found.
+    /// One or more violations were found, and every gap, if any, only warns.
     Failed,
+    /// Some paths or files could not be analyzed under `traversal.unreadable_paths = "fail"`.
+    Error,
 }
 
 /// Line-counting backend metadata included in stable machine-readable output.
@@ -341,14 +318,6 @@ impl CheckWarning {
 pub enum CheckWarningKind {
     /// Rust parsing failed, so cfg(test) preprocessing fell back to original source.
     RustCfgTestParseFailed,
-}
-
-/// Stable operational error categories emitted by checks.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CheckErrorKind {
-    /// Recoverable unreadable paths were collected in fail mode.
-    TraversalFailed,
 }
 
 /// One violation in a check report.

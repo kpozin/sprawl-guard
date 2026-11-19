@@ -1,7 +1,10 @@
 mod edit;
 mod import;
 mod preview;
+mod refusal;
 mod scope;
+
+pub(super) use refusal::render_refusal;
 
 use std::path::PathBuf;
 
@@ -9,7 +12,7 @@ use sprawl_guard_lib::check::check_without_ratchet;
 use sprawl_guard_lib::config::load_resolved_config;
 use sprawl_guard_lib::{
     CheckOptions, CheckReport, CheckViolation, DirectoryRatchet, FileRatchet, LineLimit,
-    RatchetFile, RatchetSchemaVersion, UnreadablePathPolicy,
+    RatchetFile, RatchetSchemaVersion, SprawlError, UnreadablePathPolicy,
 };
 
 use super::{ProjectArgs, RatchetFormat, TightenArgs, UpdateArgs};
@@ -87,7 +90,9 @@ pub(super) fn execute_tighten(default_root: PathBuf, args: TightenArgs) -> Resul
     let (scope, measured_paths) = tighten_scope(&context.root, &args.paths, &previous)?;
     let current = if args.paths.is_empty() || !measured_paths.is_empty() {
         let report = current_violation_report(&context, measured_paths)?;
-        ratchet_from_report(&report, None)
+        let mut current = ratchet_from_report(&report, None);
+        keep_uncounted_ceilings(&mut current, &previous, &report);
+        current
     } else {
         RatchetFile::default()
     };
@@ -121,17 +126,51 @@ impl RatchetCommandContext {
     }
 }
 
+/// Checks the selected paths without the ratchet file, for a command that writes it.
+///
+/// Fails when any path could not be read: a ceiling written from that run would drop the entries
+/// of every file below it.
 fn current_violation_report(
     context: &RatchetCommandContext,
     paths: Vec<PathBuf>,
 ) -> Result<CheckReport> {
-    Ok(check_without_ratchet(CheckOptions {
+    let report = check_without_ratchet(CheckOptions {
         root: context.root.clone(),
         policy: context.loaded.resolved_config(),
         paths,
         require_ratchet_current: Some(false),
         unreadable_paths: Some(UnreadablePathPolicy::Fail),
-    })?)
+    })?;
+    if !report.unreadable_paths().is_empty() {
+        return Err(SprawlError::TraversalFailed {
+            root: PathBuf::from(report.root()),
+            unreadable_paths: report.unreadable_paths().to_vec(),
+        }
+        .into());
+    }
+    Ok(report)
+}
+
+/// Adds the previous ceilings of files whose lines `report` could not count, so that tightening
+/// keeps them instead of removing them as no longer violating.
+fn keep_uncounted_ceilings(
+    current: &mut RatchetFile,
+    previous: &RatchetFile,
+    report: &CheckReport,
+) {
+    current.files.extend(
+        previous
+            .files
+            .iter()
+            .filter(|entry| {
+                report
+                    .uncounted_files()
+                    .iter()
+                    .any(|file| file.path == entry.path && file.kind.role() == entry.role)
+            })
+            .cloned(),
+    );
+    current.sort();
 }
 
 fn ratchet_from_report(report: &CheckReport, import: Option<&import::Suppressions>) -> RatchetFile {

@@ -63,7 +63,7 @@ mod when_github_output_is_requested {
         use super::*;
 
         #[test]
-        fn it_stops_workflow_commands_around_the_report_on_stderr() {
+        fn it_stops_workflow_commands_around_the_report_and_annotates_the_gap() {
             let root = TempDir::new().unwrap();
             write_rust_file_limit_config(&root, 1);
             write_file(&root, "##[error]forged/.ignore", "!{lib.rs\n");
@@ -74,12 +74,16 @@ mod when_github_output_is_requested {
                 .unwrap();
 
             assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
-            assert_eq!(stdout(&output), "");
-            let stderr = stderr(&output);
-            let (stop, rest) = stderr.split_once('\n').unwrap();
+            assert_eq!(stderr(&output), "");
+            let stdout = stdout(&output);
+            let (stop, rest) = stdout.split_once('\n').unwrap();
             let token = stop.strip_prefix("::stop-commands::").unwrap();
-            assert!(rest.contains("##[error]forged/.ignore"), "{stderr}");
-            assert!(rest.ends_with(&format!("\n::{token}::\n")), "{stderr}");
+            let (report, annotations) = rest.split_once(&format!("\n::{token}::\n")).unwrap();
+            assert!(report.contains("##[error]forged/.ignore"), "{stdout}");
+            assert!(
+                annotations.starts_with("::error title=sprawl-guard/incomplete-analysis::"),
+                "{stdout}"
+            );
         }
     }
 

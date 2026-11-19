@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use sprawl_guard_lib::check::check as run_check;
 use sprawl_guard_lib::config::{OutputFormat, load_resolved_config};
-use sprawl_guard_lib::{CheckOptions, SprawlError};
+use sprawl_guard_lib::{CheckOptions, CheckStatus, SprawlError};
 
 use super::{
     CheckArgs, CheckFormat, Command, ConfigCommand, ConfigSubcommand, HumanJsonFormat,
@@ -81,7 +81,7 @@ fn ratchet_command_outcome(execution: Result<String>, quiet: bool) -> Result<Com
         })) => Ok(CommandOutcome::new(
             2,
             String::new(),
-            check_output::render_traversal_failure_human(&root, &unreadable_paths),
+            ratchet::render_refusal(&root, &unreadable_paths),
         )),
         Err(error) => Err(error),
     }
@@ -125,7 +125,6 @@ fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcom
     let load_options = args.project.load_options(default_root);
     let loaded = load_resolved_config(&load_options)?;
     let policy = loaded.resolved_config();
-    let config_source = policy.source().clone();
     let format = match args.format {
         Some(format) => format,
         None => check_format_from_config(&loaded.config.output.format),
@@ -133,65 +132,27 @@ fn execute_check(default_root: PathBuf, args: CheckArgs) -> Result<CommandOutcom
     let max_findings = args
         .max_findings
         .unwrap_or(loaded.config.output.max_findings);
-    let report = match run_check(CheckOptions {
+    let report = run_check(CheckOptions {
         root: load_options.root.clone(),
         policy,
         paths: args.paths,
         require_ratchet_current,
         unreadable_paths: args.unreadable_paths.map(Into::into),
-    }) {
-        Ok(report) => report,
-        Err(SprawlError::TraversalFailed {
-            root,
-            unreadable_paths,
-        }) if format == CheckFormat::Human => {
-            return Ok(CommandOutcome::new(
-                2,
-                String::new(),
-                check_output::render_check_traversal_failure_human(
-                    &root,
-                    &config_source,
-                    &unreadable_paths,
-                    max_findings,
-                ),
-            ));
-        }
-        Err(SprawlError::TraversalFailed {
-            root,
-            unreadable_paths,
-        }) if format == CheckFormat::Github => {
-            return Ok(CommandOutcome::new(
-                2,
-                String::new(),
-                check_output::render_check_traversal_failure_github(
-                    &root,
-                    &config_source,
-                    &unreadable_paths,
-                    max_findings,
-                ),
-            ));
-        }
-        Err(SprawlError::TraversalFailed {
-            root,
-            unreadable_paths,
-        }) if format == CheckFormat::Json => {
-            return Ok(CommandOutcome::new(
-                2,
-                check_output::render_traversal_failure_json(
-                    &root,
-                    &config_source,
-                    &unreadable_paths,
-                )?,
-                String::new(),
-            ));
-        }
-        Err(source) => return Err(source.into()),
-    };
+    })?;
     Ok(CommandOutcome::new(
-        if report.has_violations() { 1 } else { 0 },
+        check_exit_code(report.status()),
         check_output::render_check_report(&report, format, quiet, max_findings)?,
         String::new(),
     ))
+}
+
+/// Maps a check result to the documented exit code.
+const fn check_exit_code(status: CheckStatus) -> i32 {
+    match status {
+        CheckStatus::Passed => 0,
+        CheckStatus::Failed => 1,
+        CheckStatus::Error => 2,
+    }
 }
 
 fn require_ratchet_current_arg(args: &CheckArgs) -> Option<bool> {

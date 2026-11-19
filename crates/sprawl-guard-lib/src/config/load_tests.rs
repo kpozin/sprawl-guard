@@ -613,11 +613,12 @@ mod when_traversal_config_is_partial {
         }
 
         #[test]
-        fn the_schema_accepts_it_as_deprecated() {
+        fn the_schema_accepts_it_with_the_same_values_without_the_draft_04_invalid_keyword() {
             let schema = serde_json::to_value(super::super::authored_config_json_schema()).unwrap();
             let properties = &schema["definitions"]["PartialTraversalConfig"]["properties"];
 
-            assert_eq!(properties["max_file_bytes"]["deprecated"], true);
+            assert!(properties["max_file_bytes"].get("deprecated").is_none());
+
             assert_eq!(
                 properties["max_file_bytes"]["anyOf"],
                 properties["max_parsed_code_file_bytes"]["anyOf"]

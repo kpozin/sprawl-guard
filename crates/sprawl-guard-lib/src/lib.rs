@@ -15,15 +15,14 @@ mod test_support;
 mod value;
 
 pub use check::{
-    AnalysisCoverage, CheckErrorKind, CheckOptions, CheckReport, CheckStatus, CheckViolation,
+    AnalysisCoverage, AnalysisGaps, CheckOptions, CheckReport, CheckStatus, CheckViolation,
     CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, DetectedLanguageCount,
     DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
     DirectoryRatchetStaleMissingViolation, DirectoryViolationKind, FileLinesViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
-    NonEmptyCheckPaths, NonEmptyUnreadablePaths, RatchetEntryCount, RatchetLimit,
-    RatchetStaleMeasuredViolation, RatchetStaleMissingViolation, RatchetViolation,
-    RatchetViolationKind, ReportRoot, ReportRootError, ScanSummary, SelectedPaths,
-    check_without_ratchet,
+    NonEmptyCheckPaths, RatchetEntryCount, RatchetLimit, RatchetStaleMeasuredViolation,
+    RatchetStaleMissingViolation, RatchetViolation, RatchetViolationKind, ReportRoot,
+    ReportRootError, ScanSummary, SelectedPaths, UncountedFile, check_without_ratchet,
 };
 pub use classification::{UnreadablePath, UnreadablePathKind, UnreadablePathSeverity};
 pub use config::{
@@ -40,6 +39,7 @@ pub use resolved_limits::{
     SourceResolvedLimits,
 };
 pub use rust_cfg::{ExcludedItemCount, RustCfgTestInfo, RustCfgTestStatus};
+pub use value::file_bytes::FileBytes;
 pub use value::glob::{GlobPattern, GlobPatternError};
 pub use value::language::{LanguageId, LanguageIdError};
 pub use value::language_group::{CustomLanguageGroupId, LanguageGroupId, LanguageGroupIdError};

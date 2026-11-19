@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
-use sprawl_guard_lib::CheckReport;
-use sprawl_guard_lib::RelativePath;
+use sprawl_guard_lib::{CheckReport, CheckStatus, RelativePath, UnreadablePathSeverity};
+
+use super::gap_notices;
 use sprawl_guard_lib::check::{
     CheckViolation, DirectoryDirectFilesViolation, DirectoryViolationKind, FileLinesViolation,
     FileViolationKind, RatchetViolation,
@@ -29,9 +30,41 @@ pub(super) fn sarif_check_report(report: &CheckReport) -> Value {
                         "rules": rules()
                     }
                 },
+                "invocations": [invocation(report)],
                 "results": results(report)
             }
         ]
+    })
+}
+
+/// Describes the run itself: whether it analyzed everything, and each gap as a notification.
+///
+/// SARIF results are rule violations, so analysis gaps go here instead. A run whose gaps fail the
+/// check is not an execution success.
+fn invocation(report: &CheckReport) -> Value {
+    let notifications = gap_notices(
+        report,
+        report.unreadable_paths().len(),
+        report.uncounted_files().len(),
+    )
+    .map(|gap| {
+        let level = match gap.severity {
+            UnreadablePathSeverity::Error => "error",
+            UnreadablePathSeverity::Warning => "warning",
+        };
+        let mut notification = json!({
+            "level": level,
+            "message": { "text": gap.message },
+        });
+        if let Some(file) = gap.file {
+            notification["locations"] = json!([location(file)]);
+        }
+        notification
+    })
+    .collect::<Vec<_>>();
+    json!({
+        "executionSuccessful": report.status() != CheckStatus::Error,
+        "toolExecutionNotifications": notifications,
     })
 }
 

@@ -44,9 +44,10 @@ Checks the whole repository when no paths are given, or only the selected paths.
 
 <CliCommandReference path="sprawl-guard check" />
 
-`--require-ratchet-current` and `--no-require-ratchet-current` cannot be combined. With
-`--unreadable-paths warn`, a check can pass with a partial report. An unreadable selected path or
-source file is still an error.
+`--require-ratchet-current` and `--no-require-ratchet-current` cannot be combined. The check
+reports every unreadable path and every source file too large to count along with its violations.
+With `--unreadable-paths warn`, those gaps are warnings, so a check can pass with a partial report.
+A selected path that doesn't exist is still an error.
 
 ### `update [PATHS]...`
 
@@ -197,26 +198,30 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
 
 - Human output groups failures under "Files over the line limit", "Test files over the line limit",
   "Directories with too many direct files", "Test directories with too many direct files", and
-  "Stale ratchet entries". Each heading shows the group's total, as in
+  "Stale ratchet entries". Gaps in the analysis follow under "Skipped unreadable paths" and "Files
+  too large to count lines". Each heading shows the group's total, as in
   `Files over the line limit (3):`. Each failure reads like `src/big.rs: 700 lines (limit 400)`, or
   `src/big.rs: 700 lines (limit 400, ceiling 650)` when the file grew above its ratchet ceiling.
   Paths are relative to the root and never quoted; control characters in them are escaped.
-- Human output lists at most 50 findings: violations first, then warnings, then skipped unreadable
-  paths, so a failing check always shows why it failed. A group cut short ends with
-  `… and N more`, and a footer such as `Showing 50 of 1312 findings.` names
+- Human output lists at most 50 findings: gaps that fail the check first, then violations, then
+  warnings, then gaps that are only warnings, so a failing check always shows why it failed. A group
+  cut short ends with `… and N more`, and a footer such as `Showing 50 of 1312 findings.` names
   `--max-findings unlimited`. A directory with too many direct files names at most that many of
-  them. When unreadable paths stop the check, its report on stderr lists at most that many paths.
-  Set the cap with `check --max-findings <N|unlimited>` or `[output].max_findings`; the flag takes
-  precedence.
+  them. Set the cap with `check --max-findings <N|unlimited>` or `[output].max_findings`; the flag
+  takes precedence.
 - JSON output is a structured report with the root, selected paths, where the configuration came
   from, the line counter, coverage, warnings, and violations.
-- SARIF output follows SARIF 2.1.0 and covers check results.
-- GitHub output prints the human report, then one GitHub Actions `::error` annotation for each
-  violation the report lists.
-  - The human report, and the report of unreadable paths on stderr, sit between
-    `::stop-commands::` and its resume line, so that file names in them can't act as workflow
-    commands.
-  - Each annotation's title is the violation's [SARIF rule ID](#sarif-rule-ids).
+- SARIF output follows SARIF 2.1.0. Violations are results. Gaps in the analysis are
+  `toolExecutionNotifications` of the run's invocation, at level `error` or `warning`, and
+  `executionSuccessful` is `false` when they fail the check.
+- GitHub output prints the human report, then one GitHub Actions annotation for each violation and
+  gap the report lists: `::error` for violations and for gaps that fail the check, `::warning` for
+  the other gaps.
+  - The human report sits between `::stop-commands::` and its resume line, so that file names in it
+    can't act as workflow commands.
+  - Each violation's annotation title is its [SARIF rule ID](#sarif-rule-ids). Gap annotations have
+    the title `sprawl-guard/incomplete-analysis`, and those for files too large to count point at
+    the file.
   - File violations point at line 1 of the file. In GitHub Actions, the file's path is relative to
     `GITHUB_WORKSPACE`; otherwise it's relative to the root. A pull request's diff shows the
     annotation only when line 1 is part of the diff.
@@ -226,9 +231,9 @@ test file, its limits, matching overrides, its current lines, and Rust `cfg(test
     step log.
 
 Human check output starts with `Configuration: PATH`, or with
-`Configuration: built-in defaults (no sprawl-guard.toml in ROOT)` when there is no config file. That
-line appears even when the check stops on an unreadable path. With `--quiet`, a passing check prints
-nothing, and a failing check prints only the configuration line and its failures.
+`Configuration: built-in defaults (no sprawl-guard.toml in ROOT)` when there is no config file. With
+`--quiet`, a passing check prints nothing, and a failing check leaves out warnings and gaps that
+are only warnings.
 
 `check` takes its default format from `[output].format`, and `check --format` overrides it. Other
 commands ignore `[output].format` and default to `human`. `update` and `tighten` also support
@@ -280,21 +285,23 @@ A JSON report with one file violation looks like:
 
 The report fields are:
 
-- `status`: `passed` or `failed` for a completed check.
+- `status`: `passed`, `failed` when there are violations, or `error` when gaps in the analysis fail
+  the check under `[traversal].unreadable_paths = "fail"`.
 - `paths`: `"all"` for the whole repository, including a root path such as `.`; otherwise a list of
   normalized selected paths.
 - `config_source`: the config file used, or that only built-in defaults were used.
 - `counter`: the line counter.
-- `coverage`: whether every selected path could be read.
+- `coverage`: `complete`, or `partial` with the `unreadable_paths` below the root and the
+  `uncounted_files` too large to count, each with its size and the limit.
 - `summary`: the number of source files, distinct source directories, and languages checked, plus
   the number of remaining ratchet entries. Passing human output shows the same summary.
 - `warnings` and `violations`: structured diagnostics. A file or directory violation's `ratchet`
   field holds its ratchet ceiling when it grew above one, and is `null` when the ratchet file has no
   entry for it.
 
-When a path cannot be read, `check --format json` still prints a JSON report with `status: "error"`,
-and `check --format sarif` and `check --format github` print only a message on stderr. Other errors
-may also print only to stderr, so check the exit code before parsing stdout.
+When a path can't be read or a source file is too large to count, every format still prints the
+full report. Other errors print only a message on stderr, so check the exit code before parsing
+stdout.
 
 ```sh sprawl-guard title="Check as SARIF"
 sprawl-guard check --format sarif
@@ -310,7 +317,8 @@ sprawl-guard check --format sarif
 | `sprawl-guard/test-directory-direct-files` | A directory directly contains more test files than its limit.   |
 | `sprawl-guard/ratchet-stale`               | A ratchet entry's violation shrank or disappeared.              |
 
-Configuration, path, I/O, parsing, and unreadable-path problems are errors, not violations.
+Configuration, path, I/O, and parsing problems are errors, not violations. Gaps in the analysis
+aren't violations either; SARIF output reports them as notifications.
 
 ## Exit codes
 
@@ -320,11 +328,11 @@ Check the exit code before you parse JSON or SARIF output:
 sprawl-guard check --format json
 ```
 
-| Code | Meaning                                                                                              |
-| ---- | ---------------------------------------------------------------------------------------------------- |
-| `0`  | The command succeeded. For a check, it found no violations.                                          |
-| `1`  | A check found violations, or `config upgrade --check` found a pending upgrade.                       |
-| `2`  | An error in configuration, arguments, paths, I/O, parsing, unreadable paths, or internal processing. |
+| Code | Meaning                                                                                                              |
+| ---- | -------------------------------------------------------------------------------------------------------------------- |
+| `0`  | The command succeeded. For a check, it found no violations.                                                          |
+| `1`  | A check found violations, or `config upgrade --check` found a pending upgrade.                                       |
+| `2`  | A check had gaps that fail it, or an error in configuration, arguments, paths, I/O, parsing, or internal processing. |
 
 The npm package uses the same exit codes. If it can't start Sprawl Guard, it exits `2` with a
 message on stderr.

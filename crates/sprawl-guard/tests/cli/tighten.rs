@@ -385,3 +385,49 @@ mod when_traversal_is_incomplete {
         assert_eq!(stderr(&output), "");
     }
 }
+
+mod when_a_ratcheted_file_is_too_large_to_count {
+    use super::*;
+
+    #[test]
+    fn it_keeps_the_file_ceiling() {
+        let root = TempDir::new().unwrap();
+        write_config(
+            &root,
+            indoc! {r#"
+                [limits.max_lines_per_file]
+                production = 1
+
+                [traversal]
+                max_parsed_code_file_bytes = 8
+                unreadable_paths = "warn"
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_file(&root, "src/lib.rs", "fn too_large() {}\n");
+        write_ratchet(
+            &root,
+            indoc! {r#"
+                schema_version = 1
+
+                [[files]]
+                path = "src/lib.rs"
+                role = "production"
+                max_lines = 4
+            "#},
+        );
+
+        let (output, ratchet) = run_ratchet_file_write(&root, "tighten");
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(
+            production_file_ratchet_entry(&ratchet, "src/lib.rs")
+                .unwrap()
+                .max_lines
+                .get(),
+            4
+        );
+    }
+}

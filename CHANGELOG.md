@@ -8,12 +8,11 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 - `check` lists at most 50 findings in human and GitHub output, so a large first run keeps its
   summary on screen. Set the cap with `--max-findings <N|unlimited>` or `[output].max_findings`.
-  Violations take the listed slots before warnings and skipped unreadable paths. Group headings show
-  their totals, a group cut short ends with `… and N more`, and a footer gives how many findings
-  were shown out of the total. The cap also bounds the files a directory finding names and the
-  paths listed when unreadable paths stop the check. GitHub annotations cover only the listed
-  violations. The exit status still reflects every violation, and JSON and SARIF output list every
-  finding.
+  Analysis gaps that fail the check take the listed slots first, then violations, then warnings.
+  Group headings show their totals, a group cut short ends with `… and N more`, and a footer gives
+  how many findings were shown out of the total. The cap also bounds the files a directory finding
+  names. GitHub annotations cover only the listed findings. The exit status still reflects every
+  violation, and JSON and SARIF output list every finding.
 
 ### Changed
 
@@ -21,6 +20,17 @@ All notable changes to `sprawl-guard` will be documented in this file.
 - `[traversal].max_file_bytes` is now `[traversal].max_parsed_code_file_bytes`, since it limits only
   the files whose code lines are counted. The old name still loads; `config upgrade --check` reports
   it and `config upgrade --write` renames it.
+- `check` no longer stops at a source file too large to count, at a source file that fails to read
+  (now an unreadable path of kind `read_file_failed`), or at another unreadable path. It reports
+  every such gap along with every violation, in every output format. Under
+  `[traversal].unreadable_paths = "fail"` the gaps make the check exit `2`; under `"warn"` they are
+  warnings, so a file too large to count no longer exits `2` there.
+  - The JSON report's `status` is `error` in that case, `coverage` lists `uncounted_files` next to
+    `unreadable_paths`, and the `error` object is gone.
+  - SARIF output reports gaps as tool execution notifications and sets `executionSuccessful`.
+  - GitHub output annotates gaps with `::error` or `::warning`, and prints the report on stdout.
+  - A file too large to count keeps its ratchet ceiling, and `tighten` doesn't remove it.
+  - `update` and `tighten` still refuse to write after an unreadable path.
 
 ## [0.6.0-beta.1] - 2026-11-18
 

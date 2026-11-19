@@ -186,6 +186,13 @@ impl MeasuredRatchets {
         ));
     }
 
+    /// Records a file whose lines were not counted, because it was too large or failed to read,
+    /// so its line ceiling is not reported missing.
+    pub(super) fn record_uncounted_file(&mut self, path: &RelativePath, kind: FileViolationKind) {
+        self.files
+            .insert(FileRatchetKey::new(path.clone(), kind.role()));
+    }
+
     pub(super) fn record_directory(&mut self, measurement: &DirectoryDirectFilesMeasurement) {
         self.directories.insert(DirectoryRatchetKey::new(
             measurement.path.clone(),

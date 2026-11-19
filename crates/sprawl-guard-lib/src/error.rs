@@ -245,8 +245,8 @@ pub enum SprawlError {
     ParsedCodeFileTooLarge {
         /// Source file path.
         path: PathBuf,
-        /// File size in bytes.
-        size: u64,
+        /// File size.
+        size: crate::FileBytes,
         /// Configured `traversal.max_parsed_code_file_bytes`.
         limit: crate::config::ParsedCodeFileByteLimit,
     },

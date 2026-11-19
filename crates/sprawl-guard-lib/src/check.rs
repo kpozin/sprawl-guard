@@ -7,14 +7,14 @@ mod runner;
 
 pub(crate) use ratchet::RatchetState;
 pub use report::{
-    AnalysisCoverage, CheckErrorKind, CheckReport, CheckStatus, CheckViolation, CheckWarning,
+    AnalysisCoverage, AnalysisGaps, CheckReport, CheckStatus, CheckViolation, CheckWarning,
     CheckWarningKind, CheckedDirectoryCount, CheckedFileCount, CounterInfo, DetectedLanguageCount,
     DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
     DirectoryRatchetStaleMissingViolation, DirectoryViolationKind, FileLinesViolation,
     FileRatchetStaleMeasuredViolation, FileRatchetStaleMissingViolation, FileViolationKind,
-    NonEmptyUnreadablePaths, RatchetEntryCount, RatchetLimit, RatchetStaleMeasuredViolation,
-    RatchetStaleMissingViolation, RatchetViolation, RatchetViolationKind, ReportRoot,
-    ReportRootError, ScanSummary,
+    RatchetEntryCount, RatchetLimit, RatchetStaleMeasuredViolation, RatchetStaleMissingViolation,
+    RatchetViolation, RatchetViolationKind, ReportRoot, ReportRootError, ScanSummary,
+    UncountedFile,
 };
 pub(crate) use runner::measure_source;
 pub use runner::{

@@ -1,5 +1,5 @@
 use assert_fs::TempDir;
-use indoc::indoc;
+use indoc::{formatdoc, indoc};
 use serde_json::json;
 
 use super::common::*;
@@ -468,6 +468,7 @@ mod when_unreadable_paths_is_overridden {
                     "path": "real/cycle",
                     "severity": "warning",
                 }],
+                "uncounted_files": [],
             })
         );
         assert_eq!(stderr(&output), "");
@@ -486,32 +487,22 @@ mod when_default_unreadable_paths_fails {
         let (output, json) = run_check_json(&root);
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+        assert_eq!(json["status"], "error");
         assert_eq!(
-            json,
+            json["coverage"],
             json!({
-                "status": "error",
-                "root": root.path().canonicalize().unwrap().display().to_string(),
-                "config_source": {
-                    "kind": "authored",
-                    "path": root.path().canonicalize().unwrap().join("sprawl-guard.toml").display().to_string(),
-                },
-                "coverage": {
-                    "kind": "partial",
-                    "unreadable_paths": [{
-                        "detail": "symlink loop found",
-                        "kind": "symlink_loop",
-                        "path": "real/cycle",
-                        "severity": "error",
-                    }],
-                },
-                "warnings": [],
-                "error": {
-                    "kind": "traversal_failed",
-                    "message": "could not read 1 path(s)",
-                },
-                "violations": [],
+                "kind": "partial",
+                "unreadable_paths": [{
+                    "detail": "symlink loop found",
+                    "kind": "symlink_loop",
+                    "path": "real/cycle",
+                    "severity": "error",
+                }],
+                "uncounted_files": [],
             })
         );
+        assert_eq!(json["summary"]["files_checked"], 1);
+        assert!(json.get("error").is_none());
         assert_eq!(stderr(&output), "");
     }
 
@@ -524,10 +515,67 @@ mod when_default_unreadable_paths_fails {
         let stderr = stderr(&output);
 
         assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
-        assert_eq!(stdout(&output), "");
-        assert!(stderr.starts_with(AUTHORED_CONFIG_HEADER));
-        assert!(stderr.contains("Could not read 1 path(s) under "));
-        assert!(stderr.contains("symlink loop found at real/cycle"));
+        assert_eq!(stderr, "");
+        let stdout = stdout(&output);
+        assert!(stdout.starts_with(AUTHORED_CONFIG_HEADER));
+        assert!(stdout.contains("Skipped unreadable paths (1):"));
+        assert!(stdout.contains("symlink loop found at real/cycle"));
+    }
+}
+
+mod when_a_source_file_is_too_large_to_count {
+    use super::*;
+
+    fn write_oversized_source_fixture(root: &TempDir, policy: &str) {
+        write_config(
+            root,
+            &formatdoc! {r#"
+                [traversal]
+                max_parsed_code_file_bytes = 8
+                unreadable_paths = "{policy}"
+
+                [languages.rust]
+                enabled = true
+            "#},
+        );
+        write_file(root, "src/lib.rs", "fn too_large() {}\n");
+    }
+
+    #[test]
+    fn it_lists_the_file_and_exits_two_under_fail() {
+        let root = TempDir::new().unwrap();
+        write_oversized_source_fixture(&root, "fail");
+
+        let output = sprawl_guard(&root).arg("check").output().unwrap();
+
+        assert_exit_code(&output, exit_codes::OPERATIONAL_ERROR);
+        assert!(stdout(&output).contains(indoc! {"
+            Files too large to count lines (1):
+
+              src/lib.rs: 18 bytes is over traversal.max_parsed_code_file_bytes (8), so its lines were not counted
+        "}));
+        assert_eq!(stderr(&output), "");
+    }
+
+    #[test]
+    fn it_reports_the_file_as_a_warning_and_passes_under_warn() {
+        let root = TempDir::new().unwrap();
+        write_oversized_source_fixture(&root, "warn");
+
+        let (output, json) = run_check_json(&root);
+
+        assert_exit_code(&output, exit_codes::SUCCESS);
+        assert_eq!(json["status"], "passed");
+        assert_eq!(
+            json["coverage"]["uncounted_files"],
+            json!([{
+                "kind": "file_lines",
+                "severity": "warning",
+                "path": "src/lib.rs",
+                "size": 18,
+                "limit": 8,
+            }])
+        );
     }
 }
 

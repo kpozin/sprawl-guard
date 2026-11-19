@@ -1,20 +1,21 @@
 //! Which findings the human report lists under the finding cap, and in what order.
 
-use sprawl_guard_lib::CheckReport;
 use sprawl_guard_lib::check::{CheckViolation, DirectoryViolationKind, FileViolationKind};
+use sprawl_guard_lib::{CheckReport, CheckStatus};
 use sprawl_guard_lib::{FiniteOrUnlimited, MaxFindings};
 
 /// How many entries of each section the human report lists under the finding cap.
 ///
-/// Sections draw from one budget, failures first so that a failing run always shows why it
-/// failed: violations, then warnings, then unreadable paths. The report still prints them in its
-/// own order. Sections that `--quiet` hides neither count toward the total nor draw from the
-/// budget.
+/// Sections draw from one budget, in order of how much they decide the exit code, so that a
+/// failing run always shows why it failed: analysis gaps when they fail the check, then
+/// violations, then warnings, then analysis gaps that are only warnings. The report still prints them in its own order. Sections that
+/// `--quiet` hides neither count toward the total nor draw from the budget.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct FindingListing {
     pub(super) warnings: usize,
     pub(super) violations: usize,
     pub(super) unreadable_paths: usize,
+    pub(super) uncounted_files: usize,
     /// How many member files each listed directory finding names.
     pub(super) directory_files: usize,
     /// Findings in every printed section, listed or not.
@@ -36,25 +37,33 @@ impl FindingListing {
             remaining -= listed;
             listed
         };
-        let (warnings, unreadable_paths) = if quiet {
-            (0, 0)
+        let gaps_fail = report.status() == CheckStatus::Error;
+        let warnings = if quiet { 0 } else { report.warnings().len() };
+        let gaps = if quiet && !gaps_fail {
+            [0, 0]
         } else {
-            (report.warnings().len(), report.unreadable_paths().len())
+            [
+                report.unreadable_paths().len(),
+                report.uncounted_files().len(),
+            ]
         };
+        let failing_gaps = gaps_fail.then(|| gaps.map(&mut list));
         let violations = list(report.violations().len());
         let warnings = list(warnings);
-        let unreadable_paths = list(unreadable_paths);
+        let [unreadable_paths, uncounted_files] =
+            failing_gaps.unwrap_or_else(|| gaps.map(&mut list));
         Self {
             warnings,
             violations,
             unreadable_paths,
+            uncounted_files,
             directory_files: limit,
             total,
         }
     }
 
     pub(super) const fn listed(self) -> usize {
-        self.warnings + self.violations + self.unreadable_paths
+        self.warnings + self.violations + self.unreadable_paths + self.uncounted_files
     }
 }
 

@@ -21,26 +21,24 @@ use super::types::{ClassifiedSource, SourceDiscoveryReport, UnreadablePathSeveri
 /// because checks need one definitive set of language settings for each source
 /// file. Paths returned from this function are repository-relative and sorted
 /// deterministically for stable reports. Because this simple API cannot return
-/// unreadable paths, any recoverable unreadable path is reported as an
-/// error even when config would allow `check` to downgrade it to a warning.
+/// unreadable paths, any unreadable path below the root is reported as an
+/// error, whatever `traversal.unreadable_paths` says.
 pub fn discover_sources(root: &Path, config: &Config) -> Result<Vec<ClassifiedSource>> {
-    discover_sources_scoped(root, config, &[])
+    let report = discover_sources_report(root, config, &[], Some(UnreadablePathPolicy::Fail))?;
+    if !report.unreadable_paths.is_empty() {
+        return Err(SprawlError::TraversalFailed {
+            root: resolve_root(root)?,
+            unreadable_paths: report.unreadable_paths,
+        });
+    }
+    Ok(report.sources)
 }
 
-/// Discovers source files below caller-supplied repository-relative selected paths.
+/// Discovers source files, and the paths below the root that could not be read.
 ///
-/// The walk skips paths outside the selected paths. That lets a check on selected paths avoid
-/// visiting unrelated subtrees before those files can produce traversal errors
-/// or path-dependent classification errors.
-pub(crate) fn discover_sources_scoped(
-    root: &Path,
-    config: &Config,
-    scopes: &[RelativePath],
-) -> Result<Vec<ClassifiedSource>> {
-    Ok(discover_sources_report(root, config, scopes, Some(UnreadablePathPolicy::Fail))?.sources)
-}
-
-/// Discovers source files and recoverable unreadable paths.
+/// The walk skips paths outside `scopes` when any are given, so a check of selected paths does
+/// not visit unrelated subtrees. The unreadable-path policy sets only each path's severity;
+/// discovery always finishes.
 pub(crate) fn discover_sources_report(
     root: &Path,
     config: &Config,
@@ -53,7 +51,7 @@ pub(crate) fn discover_sources_report(
     let mut unreadable_paths = Vec::new();
     let mut visited_entries = 0_u32;
     let policy = unreadable_paths_override.unwrap_or(config.traversal.unreadable_paths);
-    let severity = unreadable_path_severity(policy);
+    let severity = UnreadablePathSeverity::from(policy);
 
     for result in walk_sources_scoped(&root, config, scopes) {
         let Some(entry) = collect_walk_entry(
@@ -94,23 +92,10 @@ pub(crate) fn discover_sources_report(
 
     sources.sort_by(|left, right| left.path.cmp(&right.path));
     unreadable_paths.sort_by(|left, right| left.sort_key().cmp(&right.sort_key()));
-    if policy == UnreadablePathPolicy::Fail && !unreadable_paths.is_empty() {
-        return Err(SprawlError::TraversalFailed {
-            root,
-            unreadable_paths,
-        });
-    }
     Ok(SourceDiscoveryReport {
         sources,
         unreadable_paths,
     })
-}
-
-fn unreadable_path_severity(policy: UnreadablePathPolicy) -> UnreadablePathSeverity {
-    match policy {
-        UnreadablePathPolicy::Fail => UnreadablePathSeverity::Error,
-        UnreadablePathPolicy::Warn => UnreadablePathSeverity::Warning,
-    }
 }
 
 #[cfg(test)]

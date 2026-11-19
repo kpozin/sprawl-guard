@@ -20,7 +20,7 @@ pub struct TraversalConfig {
     pub max_entries: TraversalEntryLimit,
     /// Largest source file, in bytes, whose code lines are parsed and counted.
     pub max_parsed_code_file_bytes: ParsedCodeFileByteLimit,
-    /// How unreadable paths below the root affect `check`.
+    /// Whether gaps in analysis fail `check`.
     pub unreadable_paths: UnreadablePathPolicy,
 }
 
@@ -50,17 +50,17 @@ impl SymlinkTraversal {
     }
 }
 
-/// How the scan handles descendant paths it cannot read.
+/// Whether gaps in analysis fail the check.
 ///
-/// This does not affect failures to resolve the root or selected paths, or read and count failures for
-/// already-discovered source files. Those errors make the check result
-/// incomplete and remain operational failures.
+/// Gaps are paths below the root that could not be read, including discovered source files, and
+/// source files too large to count. The check reports every gap and every violation under either
+/// policy. Failures to resolve the root or selected paths still stop the run.
 #[derive(Clone, Copy, Debug, Eq, JsonSchema, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum UnreadablePathPolicy {
-    /// List the unreadable paths found while scanning, then fail.
+    /// Report every gap, and fail the check with exit code `2` when there are any.
     Fail,
-    /// Report the unreadable paths found while scanning as warnings, and continue.
+    /// Report every gap as a warning, and let violations alone decide the result.
     Warn,
 }
 
@@ -160,9 +160,11 @@ pub(super) const BYTE_LIMIT_KEY: &str = "max_parsed_code_file_bytes";
 pub(super) const DEPRECATED_BYTE_LIMIT_KEY: &str = "max_file_bytes";
 
 /// Lists the deprecated byte-limit name in the schema, so schema validation accepts
-/// what the loader accepts and editors mark the old name as deprecated.
+/// what the loader accepts and editors describe the old name as deprecated.
 ///
-/// The serde alias alone is invisible to schemars.
+/// The serde alias alone is invisible to schemars. The description carries the deprecation
+/// because the published schema is draft-04, which has no `deprecated` keyword, and SchemaStore
+/// rejects unknown keywords.
 fn add_deprecated_byte_limit_name(schema: &mut schemars::Schema) {
     let Some(properties) = schema
         .get_mut("properties")
@@ -174,7 +176,6 @@ fn add_deprecated_byte_limit_name(schema: &mut schemars::Schema) {
         return;
     };
     if let Some(property) = deprecated.as_object_mut() {
-        property.insert("deprecated".to_owned(), true.into());
         property.insert(
             "description".to_owned(),
             "Deprecated name of `max_parsed_code_file_bytes`. Run `sprawl-guard config upgrade` to rename it."

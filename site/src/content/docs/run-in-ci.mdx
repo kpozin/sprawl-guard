@@ -268,5 +268,7 @@ files, and `always_run: true` runs it on commits that only delete files.
 
 For code-scanning tools, use `sprawl-guard check --format sarif`. For your own scripts, use
 `--format json`. Read the exit code before you parse the output: `0` means the check passed, `1`
-means it found violations, and `2` means an error, which may leave the output empty. See
-[CLI and output](/sprawl-guard/reference/cli-and-output/#output-formats) for the formats.
+means it found violations, and `2` means gaps in the analysis failed the check (under the default
+`unreadable_paths = "fail"`) or it hit an error. An error other than a gap in the analysis leaves
+the output empty. See [CLI and output](/sprawl-guard/reference/cli-and-output/#output-formats) for
+the formats.

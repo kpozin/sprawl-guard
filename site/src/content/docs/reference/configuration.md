@@ -98,10 +98,17 @@ instead of reading rules from the link's target.
 | `same_file_system`           | boolean, `true`              | Stay on the root's filesystem.                              |
 | `max_entries`                | positive integer, `1000000`  | Maximum visited filesystem entries.                         |
 | `max_parsed_code_file_bytes` | positive integer, `10485760` | Largest source file whose code lines Sprawl Guard counts.   |
-| `unreadable_paths`           | enum, `"fail"`               | `fail` or `warn` for unreadable paths below the root.       |
+| `unreadable_paths`           | enum, `"fail"`               | `fail` or `warn` for gaps in what `check` could analyze.    |
 
-A source file larger than `max_parsed_code_file_bytes` stops the command with exit code `2`. Exclude
-large generated files instead of raising the limit.
+Sprawl Guard doesn't count the lines of a source file larger than `max_parsed_code_file_bytes`.
+`check` lists the file and keeps checking everything else. Exclude large generated files instead of
+raising the limit.
+
+Paths below the root that can't be read and source files too large to count are gaps in the
+analysis. `check` reports every gap along with every violation. With `unreadable_paths = "fail"`,
+any gap makes `check` exit `2`. With `"warn"`, gaps are warnings, and violations alone decide the
+exit code. `update` and `tighten` refuse to write the ratchet file after an unreadable path under
+either setting.
 
 `max_file_bytes` is a deprecated name for `max_parsed_code_file_bytes` and still loads. Run
 `sprawl-guard config upgrade --write` to rename it; setting both names is an error. The

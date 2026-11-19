@@ -6,10 +6,9 @@ use std::path::{Path, PathBuf};
 use indoc::{formatdoc, indoc};
 
 use super::*;
+use crate::check::report::{CheckViolation, DirectoryViolationKind, RatchetViolationKind};
 use crate::config::Config;
-use crate::test_support::{
-    assert_symlink_loop_error, load_config, write_config, write_rust_enabled_config,
-};
+use crate::test_support::{load_config, write_config, write_rust_enabled_config};
 use crate::{
     CheckStatus, CheckWarningKind, DirectoryDirectFilesViolation, RatchetViolation, RelativePath,
 };
@@ -292,29 +291,106 @@ mod when_source_exceeds_the_production_file_limit {
 }
 
 mod when_source_exceeds_the_byte_size_limit {
+    use crate::classification::UnreadablePathSeverity;
+    use crate::config::UnreadablePathPolicy;
+
     use super::*;
 
-    #[test]
-    fn it_reports_a_file_size_error_before_counting() {
-        let tempdir = tempfile::tempdir().unwrap();
+    fn write_oversized_source_fixture(root: &Path) {
         write_config(
-            tempdir.path(),
+            root,
             indoc! {r#"
                 [traversal]
-                max_parsed_code_file_bytes = 8
+                max_parsed_code_file_bytes = 20
+
+                [limits.max_lines_per_file]
+                production = 1
 
                 [languages.rust]
                 enabled = true
             "#},
         );
-        write_file(tempdir.path(), "src/lib.rs", "fn too_large() {}\n");
+        write_file(root, "src/lib.rs", "fn too_large_function() {}\n");
+        write_file(root, "src/b.rs", "fn a(){}\nfn b(){}\n");
+    }
 
-        let error = check_root(tempdir.path()).unwrap_err();
+    mod under_the_fail_policy {
+        use super::*;
 
-        assert!(matches!(
-            error,
-            crate::SprawlError::ParsedCodeFileTooLarge { limit, .. } if limit.into_inner() == 8
-        ));
+        #[test]
+        fn it_reports_the_uncounted_file_and_other_violations_with_error_status() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_oversized_source_fixture(tempdir.path());
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Error);
+            assert_eq!(report.uncounted_files().len(), 1);
+            let uncounted = &report.uncounted_files()[0];
+            assert_eq!(uncounted.path.as_str(), "src/lib.rs");
+            assert_eq!(uncounted.size.into_inner(), 27);
+            assert_eq!(uncounted.limit.into_inner(), 20);
+            assert_eq!(uncounted.severity, UnreadablePathSeverity::Error);
+            let violations = file_violations(&report);
+            assert_eq!(violations.len(), 1);
+            assert_eq!(violations[0].path.as_str(), "src/b.rs");
+        }
+
+        #[test]
+        fn it_keeps_the_ratchet_ceiling_of_the_uncounted_file() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_oversized_source_fixture(tempdir.path());
+            write_ratchet(
+                tempdir.path(),
+                indoc! {r#"
+                    schema_version = 1
+
+                    [[files]]
+                    path = "src/lib.rs"
+                    role = "production"
+                    max_lines = 5
+                "#},
+            );
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            assert!(ratchet_violations(&report).is_empty());
+        }
+    }
+
+    mod under_the_warn_policy {
+        use super::*;
+
+        #[test]
+        fn it_reports_the_uncounted_file_as_a_warning_and_lets_violations_decide() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_oversized_source_fixture(tempdir.path());
+
+            let report =
+                check_with_traversal_policy(tempdir.path(), vec![], UnreadablePathPolicy::Warn)
+                    .unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Failed);
+            assert_eq!(report.uncounted_files().len(), 1);
+            assert_eq!(
+                report.uncounted_files()[0].severity,
+                UnreadablePathSeverity::Warning
+            );
+        }
+
+        #[test]
+        fn it_passes_when_the_uncounted_file_is_the_only_finding() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_oversized_source_fixture(tempdir.path());
+            fs::remove_file(tempdir.path().join("src/b.rs")).unwrap();
+
+            let report =
+                check_with_traversal_policy(tempdir.path(), vec![], UnreadablePathPolicy::Warn)
+                    .unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Passed);
+            assert!(!report.analysis_complete());
+        }
     }
 
     #[test]
@@ -345,13 +421,14 @@ mod when_recoverable_traversal_errors_occur {
 
     use crate::classification::UnreadablePathSeverity;
 
+    use crate::config::UnreadablePathPolicy;
+
     use super::*;
 
-    #[test]
-    fn it_collects_unreadable_paths_before_failing_in_fail_mode() {
-        let tempdir = tempfile::tempdir().unwrap();
+    /// Writes one readable source next to a symlink that loops back to its parent.
+    fn write_symlink_loop_fixture(root: &Path) {
         write_config(
-            tempdir.path(),
+            root,
             indoc! {r#"
                 [traversal]
                 follow_symlinks = "directories"
@@ -360,32 +437,189 @@ mod when_recoverable_traversal_errors_occur {
                 enabled = true
             "#},
         );
-        write_file(tempdir.path(), "real/lib.rs", "fn a() {}\n");
-        symlink("..", tempdir.path().join("real/cycle")).unwrap();
+        write_file(root, "real/lib.rs", "fn a() {}\n");
+        symlink("..", root.join("real/cycle")).unwrap();
+    }
 
-        let error = check_root(tempdir.path()).unwrap_err();
+    #[test]
+    fn it_reports_unreadable_paths_with_error_status_in_fail_mode() {
+        let tempdir = tempfile::tempdir().unwrap();
+        write_symlink_loop_fixture(tempdir.path());
 
-        assert_symlink_loop_error(error);
+        let report = check_root(tempdir.path()).unwrap();
+
+        assert_eq!(report.status(), CheckStatus::Error);
+        assert_eq!(report.unreadable_paths().len(), 1);
+        assert_eq!(
+            report.unreadable_paths()[0].severity,
+            UnreadablePathSeverity::Error
+        );
+    }
+
+    mod with_an_unreadable_source_file_and_a_line_violation {
+        use std::os::unix::fs::PermissionsExt;
+
+        use crate::classification::UnreadablePathKind;
+
+        use super::*;
+
+        fn write_fixture(root: &Path) {
+            write_config(
+                root,
+                indoc! {r#"
+                    [limits.max_lines_per_file]
+                    production = 1
+
+                    [languages.rust]
+                    enabled = true
+                "#},
+            );
+            write_rust_source_with_function_count(root, "src/lib.rs", 2);
+            write_file(root, "src/locked.rs", "fn a() {}\n");
+            fs::set_permissions(
+                root.join("src/locked.rs"),
+                fs::Permissions::from_mode(0o000),
+            )
+            .unwrap();
+        }
+
+        fn assert_reports_both(report: &CheckReport) {
+            let [unreadable] = report.unreadable_paths() else {
+                panic!("expected one unreadable path: {report:?}");
+            };
+            assert_eq!(unreadable.kind, UnreadablePathKind::ReadFileFailed);
+            assert_eq!(
+                unreadable.path.as_ref().map(RelativePath::as_str),
+                Some("src/locked.rs")
+            );
+            let violations = file_violations(report);
+            assert_eq!(violations.len(), 1);
+            assert_eq!(violations[0].path.as_str(), "src/lib.rs");
+        }
+
+        #[test]
+        fn it_reports_both_with_error_status_under_fail() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_fixture(tempdir.path());
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Error);
+            assert_reports_both(&report);
+        }
+
+        #[test]
+        fn it_reports_both_with_failed_status_under_warn() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_fixture(tempdir.path());
+
+            let report =
+                check_with_traversal_policy(tempdir.path(), vec![], UnreadablePathPolicy::Warn)
+                    .unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Failed);
+            assert_reports_both(&report);
+        }
+
+        #[test]
+        fn it_keeps_the_unreadable_file_ratchet_entry_current() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_fixture(tempdir.path());
+            write_ratchet(
+                tempdir.path(),
+                indoc! {r#"
+                    schema_version = 1
+
+                    [[files]]
+                    path = "src/locked.rs"
+                    role = "production"
+                    max_lines = 5
+                "#},
+            );
+
+            let report = check_with_ratchet_current(tempdir.path(), true).unwrap();
+
+            assert!(ratchet_violations(&report).is_empty());
+        }
+    }
+
+    mod with_oversized_files_and_a_line_violation {
+        use super::*;
+
+        fn write_fixture(root: &Path) {
+            write_config(
+                root,
+                indoc! {r#"
+                    [traversal]
+                    follow_symlinks = "directories"
+                    max_parsed_code_file_bytes = 40
+
+                    [limits.max_lines_per_file]
+                    production = 1
+
+                    [languages.rust]
+                    enabled = true
+                "#},
+            );
+            write_file(
+                root,
+                "real/big_a.rs",
+                &"// padding padding padding\n".repeat(2),
+            );
+            write_file(
+                root,
+                "real/big_b.rs",
+                &"// padding padding padding\n".repeat(2),
+            );
+            write_rust_source_with_function_count(root, "real/lib.rs", 2);
+            symlink("..", root.join("real/cycle")).unwrap();
+        }
+
+        fn assert_reports_every_finding(report: &CheckReport) {
+            assert_eq!(report.unreadable_paths().len(), 1);
+            let mut uncounted = report
+                .uncounted_files()
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>();
+            uncounted.sort_unstable();
+            assert_eq!(uncounted, ["real/big_a.rs", "real/big_b.rs"]);
+            assert_eq!(file_violations(report).len(), 1);
+        }
+
+        #[test]
+        fn it_reports_every_finding_with_error_status_under_fail() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_fixture(tempdir.path());
+
+            let report = check_root(tempdir.path()).unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Error);
+            assert_reports_every_finding(&report);
+        }
+
+        #[test]
+        fn it_reports_every_finding_with_failed_status_under_warn() {
+            let tempdir = tempfile::tempdir().unwrap();
+            write_fixture(tempdir.path());
+
+            let report =
+                check_with_traversal_policy(tempdir.path(), vec![], UnreadablePathPolicy::Warn)
+                    .unwrap();
+
+            assert_eq!(report.status(), CheckStatus::Failed);
+            assert_reports_every_finding(&report);
+        }
     }
 
     #[test]
     fn it_marks_warn_mode_reports_partial_without_failing_the_check() {
         let tempdir = tempfile::tempdir().unwrap();
-        write_config(
-            tempdir.path(),
-            indoc! {r#"
-                [traversal]
-                follow_symlinks = "directories"
-                unreadable_paths = "warn"
+        write_symlink_loop_fixture(tempdir.path());
 
-                [languages.rust]
-                enabled = true
-            "#},
-        );
-        write_file(tempdir.path(), "real/lib.rs", "fn a() {}\n");
-        symlink("..", tempdir.path().join("real/cycle")).unwrap();
-
-        let report = check_root(tempdir.path()).unwrap();
+        let report =
+            check_with_traversal_policy(tempdir.path(), vec![], UnreadablePathPolicy::Warn)
+                .unwrap();
 
         assert_eq!(report.status(), CheckStatus::Passed);
         assert!(!report.analysis_complete());

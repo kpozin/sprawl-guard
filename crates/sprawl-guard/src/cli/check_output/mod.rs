@@ -1,26 +1,22 @@
 mod github;
 mod listing;
 mod sarif;
-mod traversal_failure;
 
 use std::path::Path;
 
-use sprawl_guard_lib::CheckReport;
 use sprawl_guard_lib::check::{
     CheckViolation, CheckWarning, CheckWarningKind, DirectoryDirectFilesViolation,
     FileLinesViolation, RatchetViolation, RatchetViolationKind,
 };
+use sprawl_guard_lib::{CheckReport, CheckStatus};
 use sprawl_guard_lib::{
-    ConfigSource, FiniteOrUnlimited, MaxFindings, UnreadablePath, UnreadablePathKind,
+    ConfigSource, FiniteOrUnlimited, MaxFindings, RelativePath, UncountedFile, UnreadablePath,
+    UnreadablePathKind, UnreadablePathSeverity,
 };
 
 use super::{CheckFormat, display_relative};
 use crate::error::{CliError, Result};
 use listing::{FindingListing, ViolationGroup, violations_in_display_order};
-pub(super) use traversal_failure::{
-    render_check_traversal_failure_github, render_check_traversal_failure_human,
-    render_traversal_failure_human, render_traversal_failure_json,
-};
 
 #[cfg(test)]
 fn missing_directory_ratchet(
@@ -57,7 +53,7 @@ pub(super) fn render_check_report(
         CheckFormat::Github => Ok(github::github_check_report(
             &human_check_report(report, quiet, listing),
             report,
-            listing.violations,
+            listing,
         )),
         CheckFormat::Json => serde_json::to_string_pretty(report)
             .map(|output| format!("{output}\n"))
@@ -70,7 +66,8 @@ pub(super) fn render_check_report(
 
 fn human_check_report(report: &CheckReport, quiet: bool, listing: FindingListing) -> String {
     let mut output = String::new();
-    if quiet && !report.has_violations() {
+    let status = report.status();
+    if quiet && status == CheckStatus::Passed {
         return output;
     }
     write_config_source_notice(&mut output, report);
@@ -80,19 +77,31 @@ fn human_check_report(report: &CheckReport, quiet: bool, listing: FindingListing
     if report.has_violations() {
         write_violation_groups(&mut output, report, listing);
     } else {
-        if report.selected_paths().is_all() {
-            output.push_str("No sprawl-guard violations found.\n");
-        } else {
-            output.push_str("No sprawl-guard violations found in the selected paths.\n");
-        }
+        output.push_str(match (status, report.selected_paths().is_all()) {
+            (CheckStatus::Error, _) => {
+                "No sprawl-guard violations found in the files that could be analyzed.\n"
+            }
+            (_, true) => "No sprawl-guard violations found.\n",
+            (_, false) => "No sprawl-guard violations found in the selected paths.\n",
+        });
         write_scan_summary(&mut output, report);
     }
-    if !quiet {
+    if !quiet || status == CheckStatus::Error {
         write_unreadable_paths(&mut output, report, listing.unreadable_paths);
+        write_uncounted_files(&mut output, report, listing.uncounted_files);
+    }
+    if status == CheckStatus::Error {
+        start_section(&mut output);
+        output.push_str(INCOMPLETE_ANALYSIS_NOTE);
     }
     write_truncation_footer(&mut output, listing.listed(), listing.total);
     output
 }
+
+/// Explains why a run without violations still failed, and how to change that.
+const INCOMPLETE_ANALYSIS_NOTE: &str = "The check failed because it could not analyze everything \
+    it selected. Fix the paths listed above, or set traversal.unreadable_paths = \"warn\" to report them \
+    without failing.\n";
 
 /// Says how many findings the report lists, when the cap left some out.
 fn write_truncation_footer(output: &mut String, listed: usize, total: usize) {
@@ -158,7 +167,7 @@ fn write_scan_summary(output: &mut String, report: &CheckReport) {
         plural(languages_detected, "language", "languages"),
     ));
     let ratchet_entries = summary.ratchet_entries.into_inner();
-    if ratchet_entries > 0 {
+    if ratchet_entries > 0 && report.status() == CheckStatus::Passed {
         output.push_str(&format!(
             "Passed with {ratchet_entries} ratchet {} remaining.\n",
             plural(ratchet_entries, "entry", "entries"),
@@ -210,6 +219,68 @@ fn write_unreadable_paths(output: &mut String, report: &CheckReport, listed: usi
     output.extend(unlisted_message(unreadable_paths.len(), listed));
 }
 
+fn write_uncounted_files(output: &mut String, report: &CheckReport, listed: usize) {
+    let uncounted_files = report.uncounted_files();
+    if uncounted_files.is_empty() {
+        return;
+    }
+    write_section_heading(
+        output,
+        "Files too large to count lines",
+        uncounted_files.len(),
+    );
+    for file in &uncounted_files[..listed] {
+        output.push_str("  ");
+        output.push_str(&uncounted_file_message(file));
+        output.push('\n');
+    }
+    output.extend(unlisted_message(uncounted_files.len(), listed));
+}
+
+/// Describes one source file whose lines were not counted, on a single line.
+fn uncounted_file_message(file: &UncountedFile) -> String {
+    format!(
+        "{}: {} bytes is over traversal.max_parsed_code_file_bytes ({}), so its lines were not counted",
+        display_relative(file.path.as_str()),
+        file.size,
+        file.limit,
+    )
+}
+
+/// One gap in a check's analysis, as machine-readable output reports it.
+pub(super) struct GapNotice<'report> {
+    /// Whether the gap fails the check.
+    pub(super) severity: UnreadablePathSeverity,
+    /// The file the gap is about, when it is a file the user can open.
+    pub(super) file: Option<&'report RelativePath>,
+    /// One-line description that names the path.
+    pub(super) message: String,
+}
+
+/// Returns the first `unreadable_paths` unreadable paths and the first `uncounted_files`
+/// uncounted files of the report, in the order the human report lists them.
+pub(super) fn gap_notices(
+    report: &CheckReport,
+    unreadable_paths: usize,
+    uncounted_files: usize,
+) -> impl Iterator<Item = GapNotice<'_>> {
+    let unreadable = report.unreadable_paths()[..unreadable_paths]
+        .iter()
+        .map(|path| GapNotice {
+            severity: path.severity,
+            file: None,
+            message: unreadable_path_message(path),
+        });
+    let uncounted = report.uncounted_files()[..uncounted_files]
+        .iter()
+        .map(|file| GapNotice {
+            severity: file.severity,
+            file: Some(&file.path),
+            message: uncounted_file_message(file),
+        });
+    unreadable.chain(uncounted)
+}
+
 /// Describes one unreadable path on a single line: what failed, where, and the backend detail.
 pub(super) fn unreadable_path_message(unreadable_path: &UnreadablePath) -> String {
     let path = display_relative(
@@ -233,6 +304,7 @@ fn unreadable_path_kind_message(kind: UnreadablePathKind) -> &'static str {
         UnreadablePathKind::SymlinkLoop => "symlink loop found",
         UnreadablePathKind::BrokenSymlink => "broken symlink",
         UnreadablePathKind::IgnoreParseFailed => "failed to parse ignore rule",
+        UnreadablePathKind::ReadFileFailed => "failed to read source file",
     }
 }
 
@@ -355,11 +427,11 @@ mod tests {
     use serde_json::json;
     use sprawl_guard_lib::check::FileViolationKind;
     use sprawl_guard_lib::{
-        CheckViolation, CheckWarning, CheckWarningKind, CheckedDirectoryCount, CheckedFileCount,
-        DetectedLanguageCount, DiagnosticDetail, DirectFiles, DirectoryDirectFilesViolation,
-        DirectoryRatchetStaleMeasuredViolation, DirectoryViolationKind, FileLinesViolation,
-        FileRatchetStaleMeasuredViolation, LanguageGroupId, LineCount, LineLimit,
-        NonEmptyUnreadablePaths, RatchetCount, RatchetEntryCount, RatchetLimit,
+        AnalysisCoverage, CheckViolation, CheckWarning, CheckWarningKind, CheckedDirectoryCount,
+        CheckedFileCount, DetectedLanguageCount, DiagnosticDetail, DirectFiles,
+        DirectoryDirectFilesViolation, DirectoryRatchetStaleMeasuredViolation,
+        DirectoryViolationKind, FileLinesViolation, FileRatchetStaleMeasuredViolation,
+        LanguageGroupId, LineCount, LineLimit, RatchetCount, RatchetEntryCount, RatchetLimit,
         RatchetStaleMeasuredViolation, RatchetViolation, RelativePath, ScanSummary,
         UnreadablePathSeverity,
     };
@@ -745,19 +817,21 @@ mod tests {
 
         #[test]
         fn it_reports_unreadable_paths_after_the_success_status() {
-            let report = CheckReport::partial(
+            let report = CheckReport::with_coverage(
                 report_root(),
                 ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![],
-                NonEmptyUnreadablePaths::new(vec![UnreadablePath {
-                    kind: UnreadablePathKind::ReadDirFailed,
-                    severity: UnreadablePathSeverity::Warning,
-                    path: Some(RelativePath::new("generated").unwrap()),
-                    detail: DiagnosticDetail::new("permission denied"),
-                }])
-                .unwrap(),
+                AnalysisCoverage::new(
+                    vec![UnreadablePath {
+                        kind: UnreadablePathKind::ReadDirFailed,
+                        severity: UnreadablePathSeverity::Warning,
+                        path: Some(RelativePath::new("generated").unwrap()),
+                        detail: DiagnosticDetail::new("permission denied"),
+                    }],
+                    vec![],
+                ),
                 vec![],
             );
 
@@ -796,17 +870,16 @@ mod tests {
         }
 
         fn report_with_every_section() -> CheckReport {
-            CheckReport::partial(
+            CheckReport::with_coverage(
                 report_root(),
                 ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![rust_cfg_warning()],
-                NonEmptyUnreadablePaths::new(vec![
-                    unreadable_path("generated"),
-                    unreadable_path("vendor"),
-                ])
-                .unwrap(),
+                AnalysisCoverage::new(
+                    vec![unreadable_path("generated"), unreadable_path("vendor")],
+                    vec![],
+                ),
                 vec![CheckViolation::FileLines(violation(
                     FileViolationKind::FileLines,
                     "src/lib.rs",
@@ -892,17 +965,16 @@ mod tests {
 
         #[test]
         fn it_ends_a_passing_report_with_the_footer() {
-            let report = CheckReport::partial(
+            let report = CheckReport::with_coverage(
                 report_root(),
                 ConfigSource::BuiltIn,
                 counter_info(),
                 scan_summary(),
                 vec![],
-                NonEmptyUnreadablePaths::new(vec![
-                    unreadable_path("generated"),
-                    unreadable_path("vendor"),
-                ])
-                .unwrap(),
+                AnalysisCoverage::new(
+                    vec![unreadable_path("generated"), unreadable_path("vendor")],
+                    vec![],
+                ),
                 vec![],
             );
 
@@ -940,6 +1012,232 @@ mod tests {
                 .collect::<Vec<_>>();
 
             assert_eq!(listed, vec![&report.violations()[1]]);
+        }
+    }
+
+    mod when_analysis_has_gaps {
+        use sprawl_guard_lib::FileBytes;
+        use sprawl_guard_lib::config::ParsedCodeFileByteLimit;
+
+        use super::*;
+
+        fn uncounted_file(severity: UnreadablePathSeverity) -> UncountedFile {
+            UncountedFile {
+                kind: FileViolationKind::FileLines,
+                severity,
+                path: RelativePath::new("src/big.rs").unwrap(),
+                size: FileBytes::new(20),
+                limit: ParsedCodeFileByteLimit::try_new(8).unwrap(),
+            }
+        }
+
+        fn report_with_gap(
+            severity: UnreadablePathSeverity,
+            violations: Vec<FileLinesViolation>,
+        ) -> CheckReport {
+            CheckReport::with_coverage(
+                report_root(),
+                ConfigSource::BuiltIn,
+                counter_info(),
+                ScanSummary::new(
+                    CheckedFileCount::new(3),
+                    CheckedDirectoryCount::new(2),
+                    DetectedLanguageCount::new(1),
+                    RatchetEntryCount::new(2),
+                ),
+                vec![rust_cfg_warning()],
+                AnalysisCoverage::new(vec![], vec![uncounted_file(severity)]),
+                violations
+                    .into_iter()
+                    .map(CheckViolation::FileLines)
+                    .collect(),
+            )
+        }
+
+        mod that_fail_the_check {
+            use super::*;
+
+            #[test]
+            fn it_lists_the_file_and_ends_with_a_note_instead_of_the_ratchet_summary() {
+                let report = report_with_gap(UnreadablePathSeverity::Error, vec![]);
+
+                let output = render_human(&report, false, FiniteOrUnlimited::Unlimited);
+
+                assert!(output.ends_with(indoc! {r#"
+                    No sprawl-guard violations found in the files that could be analyzed.
+                    Checked 3 source files in 2 directories across 1 language.
+
+                    Files too large to count lines (1):
+
+                      src/big.rs: 20 bytes is over traversal.max_parsed_code_file_bytes (8), so its lines were not counted
+
+                    The check failed because it could not analyze everything it selected. Fix the paths listed above, or set traversal.unreadable_paths = "warn" to report them without failing.
+                "#}));
+            }
+
+            #[test]
+            fn it_shows_the_gaps_when_quiet() {
+                let report = report_with_gap(UnreadablePathSeverity::Error, vec![]);
+
+                let output = render_human(&report, true, FiniteOrUnlimited::Unlimited);
+
+                assert!(output.contains("Files too large to count lines (1):"));
+                assert!(!output.contains("Warnings"));
+            }
+
+            #[test]
+            fn it_lists_the_gaps_before_warnings_under_the_cap() {
+                let report = report_with_gap(
+                    UnreadablePathSeverity::Error,
+                    vec![violation(FileViolationKind::FileLines, "src/lib.rs")],
+                );
+
+                let output = render_human(
+                    &report,
+                    false,
+                    FiniteOrUnlimited::Finite(MaxFindings::new(2).unwrap()),
+                );
+
+                assert!(output.contains("Warnings (1):\n\n  … and 1 more\n"));
+                assert!(output.contains("  src/big.rs: 20 bytes"));
+            }
+
+            mod when_the_cap_leaves_one_slot {
+                use super::*;
+
+                fn report() -> CheckReport {
+                    report_with_gap(
+                        UnreadablePathSeverity::Error,
+                        vec![violation(FileViolationKind::FileLines, "src/lib.rs")],
+                    )
+                }
+
+                fn render(format: CheckFormat) -> String {
+                    render_check_report(
+                        &report(),
+                        format,
+                        false,
+                        FiniteOrUnlimited::Finite(MaxFindings::new(1).unwrap()),
+                    )
+                    .unwrap()
+                }
+
+                #[test]
+                fn it_lists_the_gap_that_fails_the_check_instead_of_the_violation() {
+                    let output = render(CheckFormat::Human);
+
+                    assert!(output.contains("  src/big.rs: 20 bytes"));
+                    assert!(!output.contains("  src/lib.rs:"));
+                }
+
+                #[test]
+                fn it_annotates_only_the_gap() {
+                    let output = render(CheckFormat::Github);
+
+                    assert!(output.contains(
+                        "\n::error file=src/big.rs,line=1,title=sprawl-guard/incomplete-analysis::"
+                    ));
+                    assert!(!output.contains("file=src/lib.rs"));
+                }
+            }
+
+            #[test]
+            fn it_annotates_the_gap_as_an_error_on_its_file() {
+                let report = report_with_gap(UnreadablePathSeverity::Error, vec![]);
+
+                let output = render_check_report(
+                    &report,
+                    CheckFormat::Github,
+                    false,
+                    FiniteOrUnlimited::Unlimited,
+                )
+                .unwrap();
+
+                assert!(output.contains(
+                    "\n::error file=src/big.rs,line=1,title=sprawl-guard/incomplete-analysis::src/big.rs: 20 bytes"
+                ));
+            }
+
+            #[test]
+            fn it_marks_the_sarif_run_unsuccessful() {
+                let report = report_with_gap(UnreadablePathSeverity::Error, vec![]);
+
+                let output: serde_json::Value = serde_json::from_str(
+                    &render_check_report(
+                        &report,
+                        CheckFormat::Sarif,
+                        false,
+                        FiniteOrUnlimited::Unlimited,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+
+                assert_eq!(
+                    output["runs"][0]["invocations"],
+                    json!([{
+                        "executionSuccessful": false,
+                        "toolExecutionNotifications": [{
+                            "level": "error",
+                            "message": {
+                                "text": "src/big.rs: 20 bytes is over traversal.max_parsed_code_file_bytes (8), so its lines were not counted",
+                            },
+                            "locations": [{
+                                "physicalLocation": {
+                                    "artifactLocation": { "uri": "src/big.rs" },
+                                    "region": { "startLine": 1 },
+                                },
+                            }],
+                        }],
+                    }])
+                );
+            }
+        }
+
+        mod that_are_only_warnings {
+            use super::*;
+
+            #[test]
+            fn it_hides_the_gaps_when_quiet() {
+                let report = report_with_gap(
+                    UnreadablePathSeverity::Warning,
+                    vec![violation(FileViolationKind::FileLines, "src/lib.rs")],
+                );
+
+                let output = render_human(&report, true, FiniteOrUnlimited::Unlimited);
+
+                assert!(!output.contains("Files too large"));
+                assert!(!output.contains("The check failed because"));
+            }
+
+            #[test]
+            fn it_annotates_the_gap_as_a_warning() {
+                let report = report_with_gap(UnreadablePathSeverity::Warning, vec![]);
+
+                let output = render_check_report(
+                    &report,
+                    CheckFormat::Github,
+                    false,
+                    FiniteOrUnlimited::Unlimited,
+                )
+                .unwrap();
+
+                assert!(output.contains("\n::warning file=src/big.rs,line=1,"));
+            }
+
+            #[test]
+            fn it_keeps_the_sarif_run_successful() {
+                let report = report_with_gap(UnreadablePathSeverity::Warning, vec![]);
+
+                let output = sarif::sarif_check_report(&report);
+
+                let invocation = &output["runs"][0]["invocations"][0];
+                assert_eq!(invocation["executionSuccessful"], true);
+                assert_eq!(
+                    invocation["toolExecutionNotifications"][0]["level"],
+                    "warning"
+                );
+            }
         }
     }
 

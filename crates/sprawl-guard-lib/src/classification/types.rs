@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use super::explain_directory::DirectoryExplanation;
 use crate::code_line_counter::LineMeasurement;
+use crate::config::UnreadablePathPolicy;
 use crate::{
     DiagnosticDetail, LanguageGroupId, LanguageId, RelativePath, RustCfgTestInfo,
     SourceResolvedLimits,
@@ -131,16 +132,27 @@ pub enum UnreadablePathKind {
     BrokenSymlink,
     /// An ignore file could not be fully parsed.
     IgnoreParseFailed,
+    /// A discovered source file could not be read, so its lines were not counted.
+    ReadFileFailed,
 }
 
-/// Severity assigned to a unreadable path after config and CLI overrides.
+/// Whether a gap in analysis fails the check, from `traversal.unreadable_paths` after CLI overrides.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum UnreadablePathSeverity {
-    /// The unreadable path fails the run after discovery finishes.
+    /// The gap fails the check once the run has reported everything else.
     Error,
-    /// The unreadable path makes analysis partial but does not fail the run by itself.
+    /// The gap makes analysis partial but does not fail the check by itself.
     Warning,
+}
+
+impl From<UnreadablePathPolicy> for UnreadablePathSeverity {
+    fn from(policy: UnreadablePathPolicy) -> Self {
+        match policy {
+            UnreadablePathPolicy::Fail => Self::Error,
+            UnreadablePathPolicy::Warn => Self::Warning,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
