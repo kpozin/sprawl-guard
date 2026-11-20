@@ -10,6 +10,8 @@ const TEMPORARY_ROOT = mkdtempSync(path.join(tmpdir(), "docs-fix-"));
 const RELEASE_TAG = "v1.2.3";
 const DOCS_BRANCH = `refs/heads/docs/${RELEASE_TAG}`;
 const GUIDE_PATH = "site/src/content/docs/guide.md";
+/** A stylesheet whose last line is blank. */
+const SPACED_PATH = "site/src/styles/spaced.css";
 
 after(() => {
   rmSync(TEMPORARY_ROOT, { force: true, recursive: true });
@@ -39,6 +41,7 @@ interface FixtureCommits {
   readonly code: string;
   readonly conflicting: string;
   readonly docs: string;
+  readonly endsInBlankLine: string;
   readonly followUp: string;
   readonly intoDocs: string;
   readonly mixed: string;
@@ -67,6 +70,7 @@ function createFixture(): Fixture {
 
   const released = commitFiles(work, "Release", {
     [GUIDE_PATH]: "first line\nsecond line\n",
+    [SPACED_PATH]: "rule\n\n",
     "src/lib.rs": "fn released() {}\n",
     "src/notes.txt": "maintainer notes\n",
   });
@@ -91,12 +95,18 @@ function createFixture(): Fixture {
     "site/public/card.png": "png\n",
     "src/lib.rs": "fn unreleased() {}\nfn more() {}\nfn card() {}\n",
   });
+  // The patch for this change ends with the unchanged blank line, which a diff writes as a space.
+  const endsInBlankLine = commitFiles(work, "Reword rule", { [SPACED_PATH]: "rule, reworded\n\n" });
   git(work, "switch", "--quiet", "--create", "feature", released);
   const unmerged = commitFiles(work, "Draft guide", { "site/src/content/docs/draft.md": "draft\n" });
   git(work, "push", "--quiet", "origin", "main", "feature", RELEASE_TAG, `${released}:${DOCS_BRANCH}`);
   git(root, "clone", "--quiet", origin, clone);
 
-  return { clone, commits: { asset, code, conflicting, docs, followUp, intoDocs, mixed, quotedName, released, unmerged }, origin };
+  return {
+    clone,
+    commits: { asset, code, conflicting, docs, endsInBlankLine, followUp, intoDocs, mixed, quotedName, released, unmerged },
+    origin,
+  };
 }
 
 function apply(fixture: Fixture, docsCommit: string) {
@@ -168,6 +178,20 @@ describe("applyDocsFix", () => {
 
         assert.ok(result.kind === "applied");
         assert.equal(originBranch(fixture), result.commit);
+      });
+    });
+
+    describe("and the commit's change ends before an unchanged blank line", () => {
+      it("applies the change with the blank line kept", () => {
+        const fixture = createFixture();
+
+        const result = apply(fixture, fixture.commits.endsInBlankLine);
+
+        assert.ok(result.kind === "applied");
+        assert.equal(
+          git(fixture.origin, "cat-file", "-s", `${result.commit}:${SPACED_PATH}`),
+          String("rule, reworded\n\n".length),
+        );
       });
     });
 

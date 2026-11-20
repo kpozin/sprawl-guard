@@ -229,18 +229,27 @@ type PickResult =
  * to the documentation directory, so the commit's other changes can't conflict.
  */
 function pickDocumentation(git: (...gitArgs: readonly string[]) => GitResult, commit: ReleaseCommit): PickResult {
-  const patch = git("diff", "--binary", "--no-renames", `${commit}^`, commit, "--", DOCUMENTATION_DIRECTORY);
-  if (patch.kind === "failed") {
-    return gitFailure("diff", patch.detail);
-  }
-  if (patch.stdout.length === 0) {
-    return { kind: "no_documentation_changes", docsCommit: commit };
-  }
   const patchDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "docs-fix-"));
   try {
     const patchFile = path.join(patchDirectory, "documentation.patch");
-    // `runGit` trims output, and `git apply` needs the patch's final newline.
-    fs.writeFileSync(patchFile, `${patch.stdout}\n`);
+    // Git writes the patch itself, because `runGit` trims output, and a patch can end in a line
+    // that is only a space: an unchanged blank line.
+    const patch = git(
+      "diff",
+      "--binary",
+      "--no-renames",
+      `--output=${patchFile}`,
+      `${commit}^`,
+      commit,
+      "--",
+      DOCUMENTATION_DIRECTORY,
+    );
+    if (patch.kind === "failed") {
+      return gitFailure("diff", patch.detail);
+    }
+    if (fs.statSync(patchFile).size === 0) {
+      return { kind: "no_documentation_changes", docsCommit: commit };
+    }
     const applied = git("apply", "--3way", "--index", patchFile);
     if (applied.kind === "failed") {
       return { kind: "cherry_pick_failed", detail: applied.detail };
