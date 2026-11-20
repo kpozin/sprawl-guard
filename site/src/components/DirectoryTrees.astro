@@ -51,8 +51,7 @@ import organizedTree from "../assets/directory-tree-organized.svg";
     gap: 1rem;
     margin-top: 1.5rem;
   }
-  .beside-directory-trees > :global(p),
-  .beside-directory-trees > :global(div[id]) {
+  .beside-directory-trees > :global(:not(.directory-trees)) {
     order: 2;
   }
   .beside-directory-trees > :global(p:first-of-type) {

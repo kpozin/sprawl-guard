@@ -139,7 +139,7 @@ pnpm exec sprawl-guard check
           id: "index",
           title: "Sprawl Guard",
           description: "Keep source trees navigable.",
-          body: `<div id="supported-languages">\n\nSupported languages. Run \`sprawl-guard languages\`.\n\n</div>`,
+          body: `<a id="supported-languages"></a>Supported languages. Run \`sprawl-guard languages\`.`,
           hero: {
             tagline:
               'Any<a href="#supported-languages" aria-label="Supported languages">*</a> language.',
@@ -157,7 +157,7 @@ pnpm exec sprawl-guard check
       );
       assert.match(
         result.value,
-        /<a id="supported-languages"><\/a>\n\nSupported languages\. Run `sprawl-guard languages`\./u,
+        /<a id="supported-languages"><\/a>Supported languages\. Run `sprawl-guard languages`\./u,
       );
     });
 
@@ -212,13 +212,13 @@ After.`,
   });
 
   describe("when an entry contains an unsupported component", () => {
-    test("rejects executable attributes on a prose container", () => {
+    test("rejects executable attributes on an anchor target", () => {
       const result = renderDocumentationMarkdown(
         {
           id: "index",
           title: "Sprawl Guard",
           description: "Keep source trees navigable.",
-          body: '<div id="note" onClick="run()">\n\nNote.\n\n</div>',
+          body: '<a id="note" onClick="run()"></a>Note.',
         },
         routes,
       );

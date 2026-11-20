@@ -13,6 +13,7 @@ import {
 import { cliCommandReferenceNodes } from "./cli-reference-nodes.ts";
 import { findCliReferenceCommand, type CliReferenceError } from "./cli-reference.ts";
 import {
+  anchorTargetHtml,
   componentImportKind,
   hasOnlyStringAttributes,
   requiredStringAttribute,
@@ -225,8 +226,14 @@ function transformNode(
       return unsupported(context.entryId, "MDX expression");
     case "mdxJsxFlowElement":
       return transformComponent(node, context);
-    case "mdxJsxTextElement":
-      return unsupported(context.entryId, node.name ?? "MDX fragment");
+    case "mdxJsxTextElement": {
+      if (node.name !== "a") return unsupported(context.entryId, node.name ?? "MDX fragment");
+      const html = anchorTargetHtml(node);
+      if (html === undefined) {
+        return malformed(context.entryId, "a", "expected an empty anchor with only an id");
+      }
+      return { ok: true, value: [{ type: "html", value: html }] };
+    }
     case "yaml":
     case "toml":
       return { ok: true, value: [] };
@@ -299,19 +306,6 @@ function transformComponent(
   node: MdxJsxFlowElement,
   context: TransformContext,
 ): Result<RootContent[], MarkdownRenderError> {
-  if (node.name === "div") {
-    const id = requiredStringAttribute(node, "id");
-    if (!id || !hasOnlyStringAttributes(node, ["id"])) {
-      return malformed(context.entryId, "div", "expected a prose container with an id");
-    }
-    const escapedId = id.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
-    const children = transformChildren(node.children, context);
-    if (!children.ok) return children;
-    return {
-      ok: true,
-      value: [{ type: "html", value: `<a id="${escapedId}"></a>` }, ...children.value],
-    };
-  }
   const kind = node.name === null ? undefined : context.components.get(node.name);
   if (kind === undefined) return unsupported(context.entryId, node.name ?? "MDX fragment");
 

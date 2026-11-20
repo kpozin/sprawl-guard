@@ -1,6 +1,9 @@
 import type { ImportDeclaration } from "acorn";
-import type { MdxJsxFlowElement } from "satteri";
+import type { MdxJsxFlowElement, MdxJsxTextElement } from "satteri";
 import type { DocsEntryId } from "./routes.ts";
+
+/** A JSX element in MDX, either on its own lines or inside a paragraph. */
+type MdxJsxElement = MdxJsxFlowElement | MdxJsxTextElement;
 
 export type ComponentKind =
   | "steps"
@@ -36,7 +39,7 @@ export function componentImportKind(
 }
 
 /** Reads a uniquely specified literal string attribute. */
-export function requiredStringAttribute(node: MdxJsxFlowElement, name: string): string | undefined {
+export function requiredStringAttribute(node: MdxJsxElement, name: string): string | undefined {
   const matches = node.attributes.filter(
     (attribute) => attribute.type === "mdxJsxAttribute" && attribute.name === name,
   );
@@ -45,9 +48,20 @@ export function requiredStringAttribute(node: MdxJsxFlowElement, name: string): 
   return typeof match?.value === "string" ? match.value : undefined;
 }
 
+/**
+ * Writes an empty anchor that gives a link a target inside prose, such as the note the homepage
+ * tagline links to, as HTML that the Markdown export keeps. Returns `undefined` unless the anchor
+ * has only a literal `id` and no content.
+ */
+export function anchorTargetHtml(node: MdxJsxTextElement): string | undefined {
+  const id = requiredStringAttribute(node, "id");
+  if (!id || !hasOnlyStringAttributes(node, ["id"]) || node.children.length > 0) return undefined;
+  return `<a id="${id.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}"></a>`;
+}
+
 /** Accepts only literal string attributes with one of the allowed names. */
 export function hasOnlyStringAttributes(
-  node: MdxJsxFlowElement,
+  node: MdxJsxElement,
   allowedNames: readonly string[],
 ): boolean {
   return node.attributes.every(
