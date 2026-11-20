@@ -4,6 +4,8 @@ All notable changes to `sprawl-guard` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-19
+
 ### Changed
 
 - `file_sizes` in the ratchet file is now a table keyed by path, such as
