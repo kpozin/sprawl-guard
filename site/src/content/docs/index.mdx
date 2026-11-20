@@ -22,9 +22,10 @@ import DirectoryTrees from "../../components/DirectoryTrees.astro";
 <DirectoryTrees>
 
 Coding agents (and some coding humans!) like to crowd code into giant, unnavigable files and messy
-flat directories with little organization. To help battle this entropy, Sprawl Guard counts the
-lines in each file (using [Tokei](https://github.com/XAMPPRocky/tokei)) and the source files
-directly inside each directory, and enforces limits that you set.
+flat directories with little organization. This makes code harder to understand, edit, and debug,
+and makes agents waste precious tokens re-reading giant files. To help battle this entropy,
+Sprawl Guard counts the lines in each file (using [Tokei](https://github.com/XAMPPRocky/tokei))
+and the source files directly inside each directory, and enforces limits that you set.
 
 (Sprawl Guard can only admonish your agent when it goes over the limits; proper reorganization
 requires reasoning.)

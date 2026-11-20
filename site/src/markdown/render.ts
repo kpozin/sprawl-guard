@@ -1,10 +1,19 @@
 import { parse, type ImportDeclaration } from "acorn";
-import type { Code, List, ListItem, Paragraph, PhrasingContent, Root, RootContent } from "mdast";
+import type {
+  BlockContent,
+  Code,
+  List,
+  ListItem,
+  Paragraph,
+  PhrasingContent,
+  Root,
+  RootContent,
+} from "mdast";
 import { gfmToMarkdown } from "mdast-util-gfm";
 import { toMarkdown } from "mdast-util-to-markdown";
 import { mdxToMdast, type MdastNode, type MdxJsxFlowElement } from "satteri";
 
-import { containsCliCommandBlock, installationNote } from "./cli-command-nodes.ts";
+import { containsCliCommands, installationNote } from "./cli-command-nodes.ts";
 import {
   formatCliCommandBlockError,
   parseCodeBlock,
@@ -116,9 +125,11 @@ export function renderDocumentationMarkdown(
     type: "root",
     children: [
       { type: "heading", depth: 1, children: [{ type: "text", value: source.title }] },
-      paragraph(source.description),
-      ...heroNodes(source.hero, context),
-      ...(containsCliCommandBlock(tree.children) ? [installationNote()] : []),
+      // A hero's tagline restates the description, so a page shows only one of them.
+      ...(source.hero === undefined
+        ? [paragraph(source.description)]
+        : heroNodes(source.hero, context)),
+      ...(containsCliCommands(tree.children) ? installationNote() : []),
       ...transformedBody.value,
     ],
   };
@@ -225,7 +236,9 @@ function transformNode(
     case "mdxTextExpression":
       return unsupported(context.entryId, "MDX expression");
     case "mdxJsxFlowElement":
-      return transformComponent(node, context);
+      return node.name === "details"
+        ? transformDetails(node, context)
+        : transformComponent(node, context);
     case "mdxJsxTextElement": {
       if (node.name !== "a") return unsupported(context.entryId, node.name ?? "MDX fragment");
       const html = anchorTargetHtml(node);
@@ -302,6 +315,40 @@ function transformCode(
   }
 }
 
+/**
+ * Expands a collapsed section, since agents can't open one: its summary becomes a bold paragraph
+ * ahead of its content.
+ */
+function transformDetails(
+  node: MdxJsxFlowElement,
+  context: TransformContext,
+): Result<RootContent[], MarkdownRenderError> {
+  const [summary, ...content] = node.children;
+  if (
+    node.attributes.length !== 0 ||
+    summary?.type !== "mdxJsxFlowElement" ||
+    summary.name !== "summary" ||
+    summary.attributes.length !== 0
+  ) {
+    return malformed(context.entryId, "details", "expected no attributes and a summary first");
+  }
+  const title = transformChildren(summary.children, context);
+  if (!title.ok) return title;
+  const titleText = title.value.filter(isPhrasing);
+  if (titleText.length === 0 || titleText.length !== title.value.length) {
+    return malformed(context.entryId, "summary", "expected one line of text");
+  }
+  const rest = transformChildren(content, context);
+  if (!rest.ok) return rest;
+  return {
+    ok: true,
+    value: [
+      { type: "paragraph", children: [{ type: "strong", children: titleText }] },
+      ...rest.value,
+    ],
+  };
+}
+
 function transformComponent(
   node: MdxJsxFlowElement,
   context: TransformContext,
@@ -339,7 +386,7 @@ function transformTabs(
     return malformed(context.entryId, "Tabs", "expected only a string syncKey attribute");
   }
 
-  const children: RootContent[] = [];
+  const items: ListItem[] = [];
   for (const child of node.children) {
     if (
       child.type !== "mdxJsxFlowElement" ||
@@ -354,9 +401,13 @@ function transformTabs(
     }
     const content = transformChildren(child.children, context);
     if (!content.ok) return content;
-    children.push(paragraphStrong(label), ...content.value);
+    items.push({
+      type: "listItem",
+      children: [paragraphStrong(label), ...(content.value as BlockContent[])],
+    });
   }
-  return { ok: true, value: children };
+  // Each tab's content nests under its label, so readers can tell where the tabs end.
+  return { ok: true, value: [{ type: "list", ordered: false, spread: true, children: items }] };
 }
 
 function transformCliCommandReference(
@@ -386,8 +437,7 @@ function transformCliCommandReference(
   return { ok: true, value: cliCommandReferenceNodes(command.value) };
 }
 
-function heroNodes(hero: MarkdownHero | undefined, context: TransformContext): RootContent[] {
-  if (hero === undefined) return [];
+function heroNodes(hero: MarkdownHero, context: TransformContext): RootContent[] {
   const items: ListItem[] = hero.actions.map((action) => ({
     type: "listItem",
     children: [
@@ -414,6 +464,32 @@ function paragraphStrong(value: string): Paragraph {
 
 function paragraphWithChildren(children: PhrasingContent[]): Paragraph {
   return { type: "paragraph", children };
+}
+
+/** The node types that make up a line of text, listed in full so the compiler flags new ones. */
+const PHRASING_TYPES: Readonly<Record<PhrasingContent["type"], true>> = {
+  break: true,
+  delete: true,
+  emphasis: true,
+  footnoteReference: true,
+  html: true,
+  image: true,
+  imageReference: true,
+  inlineCode: true,
+  inlineMath: true,
+  link: true,
+  linkReference: true,
+  mdxJsxTextElement: true,
+  mdxTextExpression: true,
+  strong: true,
+  subscript: true,
+  superscript: true,
+  text: true,
+  textDirective: true,
+};
+
+function isPhrasing(node: RootContent): node is PhrasingContent {
+  return Object.hasOwn(PHRASING_TYPES, node.type);
 }
 
 function invalidEntryId(error: DocumentationRouteError): Result<never, MarkdownRenderError> {

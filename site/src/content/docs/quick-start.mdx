@@ -17,18 +17,12 @@ command-line tool with Cargo or Homebrew:
 pnpm add --save-dev @kpozin/sprawl-guard
 ```
 
-Command examples on this site have a pnpm tab. For a command written in the text, such as
-`sprawl-guard check`, type `pnpm exec sprawl-guard` in place of `sprawl-guard`.
-
   </TabItem>
   <TabItem label="npm">
 
 ```sh
 npm install --save-dev @kpozin/sprawl-guard
 ```
-
-Command examples on this site have an npm tab. For a command written in the text, such as
-`sprawl-guard check`, type `npm exec -- @kpozin/sprawl-guard` in place of `sprawl-guard`.
 
   </TabItem>
   <TabItem label="uv">
@@ -37,17 +31,17 @@ Command examples on this site have an npm tab. For a command written in the text
 uv add --dev sprawl-guard
 ```
 
-Command examples on this site have a uv tab. For a command written in the text, such as
-`sprawl-guard check`, type `uv run sprawl-guard` in place of `sprawl-guard`.
+<details>
+<summary>Supported systems</summary>
 
-To install Sprawl Guard outside a project, run `uv tool install sprawl-guard`,
-`pipx install sprawl-guard`, or `pip install sprawl-guard`. Then type commands as the Cargo and
-Homebrew tabs show them.
+- macOS
+- Windows on x64
+- Linux on x64 and Arm: Ubuntu 22.04, Debian 12, Fedora 36, and later releases
+- Alpine Linux on x64
 
-PyPI has Sprawl Guard for macOS, Windows on x64, Alpine Linux on x64, and other Linux
-distributions on x64 and Arm from Ubuntu 22.04, Debian 12, and Fedora 36 onward. It has none for
-Red Hat Enterprise Linux 9, Rocky Linux 9, AlmaLinux 9, or Amazon Linux 2023. If uv or pip can't
-find a version that runs on your system, install with Cargo.
+On other systems, install with Cargo.
+
+</details>
 
   </TabItem>
   <TabItem label="Cargo">
@@ -66,10 +60,15 @@ brew install kpozin/tap/sprawl-guard
 Homebrew installs one copy for the whole machine and upgrades it whenever you upgrade your other
 packages. Use it to try Sprawl Guard or to check repositories that you don't maintain.
 
-On Linux, the Homebrew copy runs on Ubuntu 22.04, Debian 12, Fedora 36, and later releases. It
-doesn't run on older releases or on Red Hat Enterprise Linux 9, Rocky Linux 9, AlmaLinux 9, or
-Amazon Linux 2023. There, `sprawl-guard` fails with an error that mentions `GLIBC`; install with
-Cargo instead.
+<details>
+<summary>Supported systems</summary>
+
+- macOS
+- Linux: Ubuntu 22.04, Debian 12, Fedora 36, and later releases
+
+On other systems, install with Cargo.
+
+</details>
 
 If a project's CI runs Sprawl Guard, your local copy should match the version that CI uses. To
 install that version, follow [Run in CI](/sprawl-guard/run-in-ci/#run-the-check-before-you-commit).
