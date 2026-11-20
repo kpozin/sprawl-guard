@@ -5,6 +5,11 @@ import DefaultFooter from "@astrojs/starlight/components/Footer.astro";
 <DefaultFooter />
 <small class="copyright">© 2026 Konstantin Pozin</small>
 
+<script>
+  // The footer renders on every page, so it loads the script that every page's synced variants need.
+  import "../scripts/synced-variants.ts";
+</script>
+
 <style>
   @layer starlight.components {
     .copyright {

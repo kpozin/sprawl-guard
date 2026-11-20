@@ -7,11 +7,14 @@ import {
   CLI_COMMANDS_FLAG,
   INSTALLATIONS,
   PACKAGE_MANAGER_SYNC_KEY,
+  commandFor,
   commandsFor,
   formatCliCommandBlockError,
+  inlineCommandArguments,
   parseCodeBlock,
   type CliCommandBlock,
 } from "../markdown/cli-commands.ts";
+import { replaceWithSyncedVariants } from "../markdown/synced-variants.ts";
 
 /** Local names for the tab components, chosen so they can't clash with a page's own imports. */
 const TABS_COMPONENT = "SprawlGuardCliTabs";
@@ -22,7 +25,8 @@ const TABS_IMPORT = `import { Tabs as ${TABS_COMPONENT}, TabItem as ${TAB_ITEM_C
 
 /**
  * Shows each code block flagged as Sprawl Guard commands as synced tabs, one per installation, so
- * readers copy the command that runs the CLI the way they installed it.
+ * readers copy the command that runs the CLI the way they installed it. Commands written as inline
+ * code in the text follow the same tabs.
  */
 export default function cliCommandTabs(): AstroIntegration {
   return {
@@ -41,7 +45,10 @@ export default function cliCommandTabs(): AstroIntegration {
   };
 }
 
-/** Creates the plugin for one document. Tabs are MDX components, so plain Markdown can't have them. */
+/**
+ * Creates the plugin for one document. Tabs are MDX components, so plain Markdown can't have
+ * command blocks, but it can have inline commands.
+ */
 export function cliCommandTabsPlugin({ fileURL, sourceFormat }: PluginFactoryContext) {
   const page = fileURL?.pathname ?? "a Markdown document";
   let addedTabs = false;
@@ -56,6 +63,19 @@ export function cliCommandTabsPlugin({ fileURL, sourceFormat }: PluginFactoryCon
       }
       addedTabs = true;
       return commandTabs(node, parsed.value.block);
+    },
+    inlineCode(node, context) {
+      const argumentsText = inlineCommandArguments(node.value);
+      if (argumentsText === undefined) return;
+      replaceWithSyncedVariants(
+        node,
+        context,
+        PACKAGE_MANAGER_SYNC_KEY,
+        INSTALLATIONS.map((installation) => ({
+          label: installation.label,
+          content: { type: "inlineCode", value: commandFor(installation, argumentsText) },
+        })),
+      );
     },
     after(root, context) {
       if (addedTabs) context.prependChild(root, { type: "mdxjsEsm", value: TABS_IMPORT });

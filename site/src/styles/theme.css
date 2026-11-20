@@ -18,7 +18,30 @@
   text-wrap: pretty;
 }
 
+/*
+ * On narrow screens Starlight moves the header's social links into the sidebar menu, so pages
+ * without a sidebar, such as the homepage, would lose them. Those pages keep them in the header,
+ * at the end, followed by the search button.
+ */
+@media screen and (width < 50rem) {
+  :root:not([data-has-sidebar]) header .right-group {
+    display: flex;
+  }
+  :root:not([data-has-sidebar]) header .title-wrapper {
+    margin-inline-end: auto;
+  }
+  :root:not([data-has-sidebar]) header :has(> site-search) {
+    order: 1;
+  }
+  :root:not([data-has-sidebar]) header .right-group > :not(.social-icons),
+  :root:not([data-has-sidebar]) header .social-icons::after {
+    display: none;
+  }
+}
+
+/* Starlight colors links only in page content, so the homepage tagline would show browser blue. */
 .hero .tagline a {
+  color: var(--sl-color-text-accent);
   text-decoration: none;
 }
 

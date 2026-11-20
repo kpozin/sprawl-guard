@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { markdownToMdast, mdxToMdast } from "satteri";
+import { markdownToHtml, markdownToMdast, mdxToMdast } from "satteri";
 
 import { cliCommandTabsPlugin } from "./cli-command-tabs.ts";
 
@@ -57,6 +57,52 @@ describe("CLI command tabs", () => {
     test("leaves the page as it is", () => {
       const source = "```sh\ncargo install sprawl-guard\n```";
       assert.deepEqual(mdxToMdast(source, options), mdxToMdast(source));
+    });
+  });
+
+  describe("when the text has a command as inline code", () => {
+    describe("and the command is in prose", () => {
+      test("shows the command as written and hides each installation's until a tab is picked", () => {
+        assert.equal(
+          markdownToHtml("Run `sprawl-guard check`.", options).html,
+          '<p>Run <span class="synced-variants" data-sync-key="package-manager">' +
+            "<span><code>sprawl-guard check</code></span>" +
+            '<span data-sync-label="pnpm" hidden data-pagefind-ignore><code>pnpm exec sprawl-guard check</code></span>' +
+            '<span data-sync-label="npm" hidden data-pagefind-ignore><code>npm exec -- @kpozin/sprawl-guard check</code></span>' +
+            '<span data-sync-label="uv" hidden data-pagefind-ignore><code>uv run sprawl-guard check</code></span>' +
+            '<span data-sync-label="Cargo" hidden data-pagefind-ignore><code>sprawl-guard check</code></span>' +
+            '<span data-sync-label="Homebrew" hidden data-pagefind-ignore><code>sprawl-guard check</code></span>' +
+            "</span>.</p>\n",
+        );
+      });
+    });
+
+    describe("and the command is inside a package-manager tab", () => {
+      test("shows only that tab's command", () => {
+        const tree = mdxToMdast(
+          '<Tabs syncKey="package-manager"><TabItem label="uv">\n\nRun `sprawl-guard check`.\n\n</TabItem></Tabs>',
+          options,
+        );
+        assert.match(
+          JSON.stringify(tree),
+          /"type":"inlineCode","value":"uv run sprawl-guard check"/u,
+        );
+        assert.doesNotMatch(JSON.stringify(tree), /syncedVariants/u);
+      });
+    });
+
+    describe("and the command is in a heading", () => {
+      test("keeps the command as written, so the heading has one anchor", () => {
+        const source = "## `sprawl-guard check`";
+        assert.deepEqual(markdownToMdast(source, options), markdownToMdast(source));
+      });
+    });
+
+    describe("and the code names the program without arguments", () => {
+      test("keeps the name as written", () => {
+        const source = "Install `sprawl-guard`.";
+        assert.deepEqual(markdownToMdast(source, options), markdownToMdast(source));
+      });
     });
   });
 

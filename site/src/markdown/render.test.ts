@@ -60,8 +60,14 @@ pnpm exec sprawl-guard check
       if (!result.ok) return;
       assert.match(result.value, /^# Quick start\n\nInstall and run the first check\./u);
       assert.match(result.value, /^### Installation commands$/mu);
-      assert.match(result.value, /\*\*npm\*\*[\s\S]*npm exec -- @kpozin\/sprawl-guard check/u);
-      assert.match(result.value, /\*\*pnpm\*\*[\s\S]*pnpm exec sprawl-guard check/u);
+      assert.match(
+        result.value,
+        /^- \*\*npm\*\*\n\n {2}```sh\n {2}npm exec -- @kpozin\/sprawl-guard check\n {2}```$/mu,
+      );
+      assert.match(
+        result.value,
+        /^- \*\*pnpm\*\*\n\n {2}```sh\n {2}pnpm exec sprawl-guard check/mu,
+      );
       assert.match(result.value, /1\. Inspect the repository\./u);
       assert.match(result.value, /2\. \[Run in CI\]\(\/sprawl-guard\/run-in-ci\.md\)\./u);
     });
@@ -161,7 +167,7 @@ pnpm exec sprawl-guard check
       );
     });
 
-    test("includes its text and actions but not its image", () => {
+    test("includes its text and actions but not the description or its image", () => {
       const result = renderDocumentationMarkdown(
         {
           id: "index",
@@ -181,6 +187,7 @@ pnpm exec sprawl-guard check
       assert.match(result.value, /Keep changes focused\./u);
       assert.match(result.value, /\[Get started\]\(\/sprawl-guard\/quick-start\.md\)/u);
       assert.doesNotMatch(result.value, /image/u);
+      assert.doesNotMatch(result.value, /navigable/u);
     });
   });
 
@@ -207,6 +214,46 @@ After.`,
       assert.deepEqual(result, {
         ok: true,
         value: "# Sprawl Guard\n\nKeep source trees navigable.\n\nBeside.\n\nAfter.\n",
+      });
+    });
+  });
+
+  describe("when an entry has a collapsed section", () => {
+    const render = (body: string) =>
+      renderDocumentationMarkdown(
+        { id: "quick-start", title: "Start", description: "Install.", body },
+        routes,
+      );
+
+    describe("and it opens with a summary", () => {
+      test("shows the summary in bold followed by the content", () => {
+        assert.deepEqual(
+          render("<details>\n<summary>Supported systems</summary>\n\n- macOS\n\n</details>"),
+          { ok: true, value: "# Start\n\nInstall.\n\n**Supported systems**\n\n- macOS\n" },
+        );
+      });
+    });
+
+    describe("and it has no summary", () => {
+      test("fails", () => {
+        const result = render("<details>\n\n- macOS\n\n</details>");
+        assert.equal(result.ok, false);
+      });
+    });
+
+    describe("and its summary is empty", () => {
+      test("fails", () => {
+        const result = render("<details>\n<summary></summary>\n\n- macOS\n\n</details>");
+        assert.equal(result.ok, false);
+      });
+    });
+
+    describe("and its summary has paragraphs", () => {
+      test("fails", () => {
+        const result = render(
+          "<details>\n<summary>\n\nSupported systems\n\nOther details\n\n</summary>\n\n- macOS\n\n</details>",
+        );
+        assert.equal(result.ok, false);
       });
     });
   });
@@ -362,16 +409,29 @@ import { TabItem } from "@astrojs/starlight/components";
       test("explains once how to run the commands through a package manager", () => {
         assert.ok(result.ok);
         const note =
-          "Commands on this page run `sprawl-guard` as installed with Cargo or Homebrew. If you installed Sprawl Guard with pnpm, npm, or uv, replace `sprawl-guard` with `pnpm exec sprawl-guard`, `npm exec -- @kpozin/sprawl-guard`, or `uv run sprawl-guard`.";
+          "Commands on this page run `sprawl-guard` as installed with Cargo or Homebrew. If you installed Sprawl Guard with a package manager, run it this way instead:\n\n- pnpm: `pnpm exec sprawl-guard`\n- npm: `npm exec -- @kpozin/sprawl-guard`\n- uv: `uv run sprawl-guard`\n";
         assert.equal(result.value.split(note).length - 1, 1);
       });
     });
 
     describe("and no block is flagged", () => {
-      test("leaves out the package-manager note", () => {
-        const result = render("```sh\ncargo install sprawl-guard\n```");
-        assert.ok(result.ok);
-        assert.doesNotMatch(result.value, /Commands on this page/u);
+      describe("but the text has an inline command", () => {
+        test("keeps the command as written and adds the package-manager note", () => {
+          const result = render("Run `sprawl-guard check`.");
+          assert.ok(result.ok);
+          assert.match(result.value, /Run `sprawl-guard check`\./u);
+          assert.match(result.value, /Commands on this page/u);
+        });
+      });
+
+      describe("and the text names the program only", () => {
+        test("leaves out the package-manager note", () => {
+          const result = render(
+            "Install `sprawl-guard`.\n\n```sh\ncargo install sprawl-guard\n```",
+          );
+          assert.ok(result.ok);
+          assert.doesNotMatch(result.value, /Commands on this page/u);
+        });
       });
     });
 

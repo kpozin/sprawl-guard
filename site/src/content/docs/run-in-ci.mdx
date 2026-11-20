@@ -217,9 +217,7 @@ repos:
   </TabItem>
   <TabItem label="uv">
 
-pre-commit installs the version that `additional_dependencies` names into the hook's own
-environment, so every developer runs that version. Name the version that the CI workflow pins,
-and change both together.
+The hook runs the version that `uv.lock` pins, the same one CI uses.
 
 ```yaml title=".pre-commit-config.yaml"
 repos:
@@ -227,9 +225,8 @@ repos:
     hooks:
       - id: sprawl-guard
         name: Sprawl Guard
-        entry: sprawl-guard check
-        language: python
-        additional_dependencies: ["sprawl-guard==<VERSION>"]
+        entry: uv run --locked sprawl-guard check
+        language: system
         always_run: true
         pass_filenames: false
 ```
