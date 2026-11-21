@@ -1,6 +1,8 @@
-import type { ImportDeclaration } from "acorn";
-import type { MdxJsxFlowElement, MdxJsxTextElement } from "satteri";
-import type { DocsEntryId } from "./routes.ts";
+import { parse, type ImportDeclaration } from "acorn";
+import type { MdastNode, MdxJsxFlowElement, MdxJsxTextElement } from "satteri";
+
+import { unsupported, type MarkdownRenderError } from "./render-errors.ts";
+import type { DocsEntryId, Result } from "./routes.ts";
 
 /** A JSX element in MDX, either on its own lines or inside a paragraph. */
 type MdxJsxElement = MdxJsxFlowElement | MdxJsxTextElement;
@@ -18,8 +20,61 @@ const starlightComponentKinds = new Map<string, ComponentKind>([
   ["TabItem", "tab_item"],
 ]);
 
+/**
+ * Maps each component an entry imports to its kind. Fails on any other module statement, since
+ * the Markdown export can't run code.
+ */
+export function collectComponentBindings(
+  nodes: readonly MdastNode[],
+  entryId: DocsEntryId,
+): Result<ReadonlyMap<string, ComponentKind>, MarkdownRenderError> {
+  const bindings = new Map<string, ComponentKind>();
+  for (const node of nodes) {
+    if (node.type !== "mdxjsEsm") continue;
+
+    let program;
+    try {
+      program = parse(node.value, { ecmaVersion: "latest", sourceType: "module" });
+    } catch {
+      return unsupported(entryId, "malformed MDX module declaration");
+    }
+
+    for (const statement of program.body) {
+      if (statement.type !== "ImportDeclaration") {
+        return unsupported(entryId, "MDX export");
+      }
+      const result = collectImportBindings(statement, entryId, bindings);
+      if (!result.ok) return result;
+    }
+  }
+  return { ok: true, value: bindings };
+}
+
+function collectImportBindings(
+  declaration: ImportDeclaration,
+  entryId: DocsEntryId,
+  bindings: Map<string, ComponentKind>,
+): Result<void, MarkdownRenderError> {
+  const source = String(declaration.source.value);
+  for (const specifier of declaration.specifiers) {
+    const kind = componentImportKind(source, specifier, entryId);
+    if (kind === undefined) {
+      return unsupported(entryId, `${specifier.local.name} imported from ${source}`);
+    }
+    if (bindings.has(specifier.local.name)) {
+      return unsupported(entryId, `duplicate import binding ${specifier.local.name}`);
+    }
+    bindings.set(specifier.local.name, kind);
+  }
+
+  if (declaration.specifiers.length === 0) {
+    return unsupported(entryId, `side-effect import from ${source}`);
+  }
+  return { ok: true, value: undefined };
+}
+
 /** Identifies the components whose content can be exported to Markdown. */
-export function componentImportKind(
+function componentImportKind(
   source: string,
   specifier: ImportDeclaration["specifiers"][number],
   entryId: DocsEntryId,

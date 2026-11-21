@@ -1,4 +1,3 @@
-import { parse, type ImportDeclaration } from "acorn";
 import type {
   BlockContent,
   Code,
@@ -14,25 +13,26 @@ import { toMarkdown } from "mdast-util-to-markdown";
 import { mdxToMdast, type MdastNode, type MdxJsxFlowElement } from "satteri";
 
 import { containsCliCommands, installationNote } from "./cli-command-nodes.ts";
-import {
-  formatCliCommandBlockError,
-  parseCodeBlock,
-  type CliCommandBlockError,
-} from "./cli-commands.ts";
+import { parseCodeBlock } from "./cli-commands.ts";
 import { cliCommandReferenceNodes } from "./cli-reference-nodes.ts";
-import { findCliReferenceCommand, type CliReferenceError } from "./cli-reference.ts";
+import { findCliReferenceCommand } from "./cli-reference.ts";
 import {
   anchorTargetHtml,
-  componentImportKind,
+  collectComponentBindings,
   hasOnlyStringAttributes,
   requiredStringAttribute,
   type ComponentKind,
 } from "./mdx-elements.ts";
 import {
+  invalidEntryId,
+  malformed,
+  unsupported,
+  type MarkdownRenderError,
+} from "./render-errors.ts";
+import {
   parseDocsEntryId,
   rewriteDocumentationLink,
   type DocsEntryId,
-  type DocumentationRouteError,
   type DocumentationRoutes,
   type Result,
 } from "./routes.ts";
@@ -54,43 +54,6 @@ export interface DocumentationEntrySource {
   readonly body: string;
   readonly hero?: MarkdownHero;
 }
-
-export type MarkdownRenderError =
-  | {
-      readonly kind: "invalid_entry_id";
-      readonly entryId: string;
-    }
-  | {
-      readonly kind: "missing_documentation_route";
-      readonly entryId: DocsEntryId;
-    }
-  | {
-      readonly kind: "unsupported_mdx_construct";
-      readonly entryId: DocsEntryId;
-      readonly construct: string;
-    }
-  | {
-      readonly kind: "malformed_mdx_component";
-      readonly entryId: DocsEntryId;
-      readonly component: string;
-      readonly detail: string;
-    }
-  | {
-      readonly kind: "cli_reference";
-      readonly entryId: DocsEntryId;
-      readonly cause: CliReferenceError;
-    }
-  | {
-      readonly kind: "cli_command_block";
-      readonly entryId: DocsEntryId;
-      readonly cause: CliCommandBlockError;
-    }
-  | {
-      /** A shell block that runs only Sprawl Guard but lacks the flag that gives it tabs. */
-      readonly kind: "unflagged_cli_command_block";
-      readonly entryId: DocsEntryId;
-      readonly value: string;
-    };
 
 interface TransformContext {
   readonly entryId: DocsEntryId;
@@ -141,75 +104,6 @@ export function renderDocumentationMarkdown(
       listItemIndent: "one",
     }),
   };
-}
-
-/** Formats a structured rendering failure at an Astro build boundary. */
-export function formatMarkdownRenderError(error: MarkdownRenderError): string {
-  switch (error.kind) {
-    case "invalid_entry_id":
-      return `Invalid documentation entry ID: ${JSON.stringify(error.entryId)}`;
-    case "missing_documentation_route":
-      return `Missing Markdown route for documentation entry: ${error.entryId}`;
-    case "unsupported_mdx_construct":
-      return `Unsupported MDX construct in ${error.entryId}: ${error.construct}`;
-    case "malformed_mdx_component":
-      return `Malformed ${error.component} in ${error.entryId}: ${error.detail}`;
-    case "cli_reference":
-      return `Invalid CLI reference in ${error.entryId}: ${error.cause.kind}`;
-    case "cli_command_block":
-      return `Invalid command block in ${error.entryId}: ${formatCliCommandBlockError(error.cause)}`;
-    case "unflagged_cli_command_block":
-      return `Command block in ${error.entryId} needs the sprawl-guard fence flag: ${JSON.stringify(error.value)}`;
-  }
-}
-
-function collectComponentBindings(
-  nodes: readonly MdastNode[],
-  entryId: DocsEntryId,
-): Result<ReadonlyMap<string, ComponentKind>, MarkdownRenderError> {
-  const bindings = new Map<string, ComponentKind>();
-  for (const node of nodes) {
-    if (node.type !== "mdxjsEsm") continue;
-
-    let program;
-    try {
-      program = parse(node.value, { ecmaVersion: "latest", sourceType: "module" });
-    } catch {
-      return unsupported(entryId, "malformed MDX module declaration");
-    }
-
-    for (const statement of program.body) {
-      if (statement.type !== "ImportDeclaration") {
-        return unsupported(entryId, "MDX export");
-      }
-      const result = collectImportBindings(statement, entryId, bindings);
-      if (!result.ok) return result;
-    }
-  }
-  return { ok: true, value: bindings };
-}
-
-function collectImportBindings(
-  declaration: ImportDeclaration,
-  entryId: DocsEntryId,
-  bindings: Map<string, ComponentKind>,
-): Result<void, MarkdownRenderError> {
-  const source = String(declaration.source.value);
-  for (const specifier of declaration.specifiers) {
-    const kind = componentImportKind(source, specifier, entryId);
-    if (kind === undefined) {
-      return unsupported(entryId, `${specifier.local.name} imported from ${source}`);
-    }
-    if (bindings.has(specifier.local.name)) {
-      return unsupported(entryId, `duplicate import binding ${specifier.local.name}`);
-    }
-    bindings.set(specifier.local.name, kind);
-  }
-
-  if (declaration.specifiers.length === 0) {
-    return unsupported(entryId, `side-effect import from ${source}`);
-  }
-  return { ok: true, value: undefined };
 }
 
 function transformChildren(
@@ -490,29 +384,4 @@ const PHRASING_TYPES: Readonly<Record<PhrasingContent["type"], true>> = {
 
 function isPhrasing(node: RootContent): node is PhrasingContent {
   return Object.hasOwn(PHRASING_TYPES, node.type);
-}
-
-function invalidEntryId(error: DocumentationRouteError): Result<never, MarkdownRenderError> {
-  if (error.kind === "invalid_entry_id") {
-    return { ok: false, error: { kind: "invalid_entry_id", entryId: error.entryId } };
-  }
-  throw new Error(`Unexpected route error while parsing an entry ID: ${error.kind}`);
-}
-
-function unsupported(entryId: DocsEntryId, construct: string): Result<never, MarkdownRenderError> {
-  return {
-    ok: false,
-    error: { kind: "unsupported_mdx_construct", entryId, construct },
-  };
-}
-
-function malformed(
-  entryId: DocsEntryId,
-  component: string,
-  detail: string,
-): Result<never, MarkdownRenderError> {
-  return {
-    ok: false,
-    error: { kind: "malformed_mdx_component", entryId, component, detail },
-  };
 }
