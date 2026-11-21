@@ -1,11 +1,8 @@
 import type { APIRoute, GetStaticPaths } from "astro";
 import { getCollection, type CollectionEntry } from "astro:content";
 
-import {
-  formatMarkdownRenderError,
-  renderDocumentationMarkdown,
-  type DocumentationEntrySource,
-} from "../markdown/render.ts";
+import { formatMarkdownRenderError } from "../markdown/render-errors.ts";
+import { renderDocumentationMarkdown, type DocumentationEntrySource } from "../markdown/render.ts";
 import { createDocumentationRoutes, isGenerated404EntryId } from "../markdown/routes.ts";
 
 interface MarkdownPageProps {
